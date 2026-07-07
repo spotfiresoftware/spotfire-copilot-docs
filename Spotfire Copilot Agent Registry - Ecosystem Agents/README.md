@@ -32,6 +32,20 @@ See [MCP Servers](MCP%20Servers/README.md) for the section index and glossary. I
 - [Spotfire License MCP Server](MCP%20Servers/Spotfire%20Copilot%20-%20Spotfire%20License%20MCP%20Server%20Deployment%20Guide.md)
 - [Tavily MCP Server](MCP%20Servers/Spotfire%20Copilot%20-%20Tavily%20MCP%20Server%20Deployment%20Guide.md)
 
+## Agent user guides
+
+End-user guides for the agents hosted by the agent server. See [Agents](Agents/README.md) for the full index, or go directly to a guide:
+
+- [OSDU Agent](Agents/Spotfire%20Copilot%20-%20OSDU%20Agent%20User%20Guide.md)
+- [Databricks Agent](Agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md)
+- [Databricks Genie Agent](Agents/Spotfire%20Copilot%20-%20Databricks%20Genie%20Agent%20User%20Guide.md)
+- [Data Virtualization (DV) Agent](Agents/Spotfire%20Copilot%20-%20Data%20Virtualization%20%28DV%29%20Agent%20User%20Guide.md)
+- [Snowflake Agent](Agents/Spotfire%20Copilot%20-%20Snowflake%20Agent%20User%20Guide.md)
+- [Spotfire Library Metadata Agent](Agents/Spotfire%20Copilot%20-%20Spotfire%20Library%20Metadata%20Agent%20User%20Guide.md)
+- [Spotfire License Management Agent](Agents/Spotfire%20Copilot%20-%20Spotfire%20License%20Management%20Agent%20User%20Guide.md)
+- [Tavily Web Search Agent](Agents/Spotfire%20Copilot%20-%20Tavily%20Web%20Search%20Agent%20User%20Guide.md)
+- [Daily Drilling Reports (DDR) Agent](Agents/Spotfire%20Copilot%20-%20Daily%20Drilling%20Reports%20%28DDR%29%20Agent%20User%20Guide.md)
+
 ## Shared reference
 
 - **[Artifact Sources and Access](Spotfire%20Copilot%20-%20Artifact%20Sources%20and%20Access.md)** — OCI registry login, artifact pull validation, and version selection policy shared by all guides in this section.
