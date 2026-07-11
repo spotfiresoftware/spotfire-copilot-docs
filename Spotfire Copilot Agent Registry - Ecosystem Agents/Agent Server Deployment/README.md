@@ -1,6 +1,6 @@
-# LangGraph DeepAgents Servers
+# Agent Server Deployment
 
-Deployment guides for the DeepAgents agent server — an agent harness in the LangChain ecosystem that hosts one or more A2A agents and executes stateful, multi-step workflows on the open-source LangGraph runtime.
+The ecosystem agents are **not** deployed one by one. They are hosted by a single **LangGraph DeepAgents server** — an agent harness in the LangChain ecosystem that hosts one or more A2A agents and executes stateful, multi-step workflows on the LangGraph runtime. A single server deployment can host **all** agents or any **subset** you choose to enable.
 
 Two deployment variants are published. Choose the one that matches your licensing and runtime model:
 

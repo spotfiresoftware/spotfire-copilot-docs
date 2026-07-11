@@ -59,7 +59,7 @@ For full background on Genie, see the upstream documentation:
 
 This agent is not deployed standalone. Before you can invoke it from the Spotfire Copilot Panel, two components must already be deployed and reachable in your environment:
 
-- **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../LangGraph%20DeepAgents%20Servers/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../LangGraph%20DeepAgents%20Servers/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
+- **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
 - **`databricks-genie` MCP server** — the agent's only tools (`genie_ask`, `genie_poll_response`) call this MCP server at runtime. The MCP server is configured with the Databricks workspace and the Genie Spaces it is allowed to address.
 
 In addition, on the Databricks side you need:

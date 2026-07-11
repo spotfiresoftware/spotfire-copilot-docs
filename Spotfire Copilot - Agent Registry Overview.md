@@ -45,8 +45,8 @@ The Platform Integrations Container comes pre-packaged with the full set of ecos
 
 Two deployment paths are available depending on your licensing model:
 
-- [LangGraph DeepAgents Server — Licensed Deployment Guide](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/LangGraph%20DeepAgents%20Servers/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md)
-- [LangGraph DeepAgents Server — OSS Deployment Guide](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/LangGraph%20DeepAgents%20Servers/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md)
+- [LangGraph DeepAgents Server — Licensed Deployment Guide](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md)
+- [LangGraph DeepAgents Server — OSS Deployment Guide](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md)
 
 **Agents hosted in this container:**
 
