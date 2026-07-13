@@ -68,7 +68,7 @@ For background on Cortex Analyst and Cortex Search, see the upstream documentati
 
 This agent is not deployed standalone. Before you can invoke it from the Spotfire Copilot Panel, two components must already be deployed and reachable in your environment:
 
-- **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
+- **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
 - **`snowflake` MCP server** — the agent's only tools (`Finance_and_Risk_Assessment_Semantic_View`, `Support_Tickets_Cortex_Search`, `SQL_Execution_Tool`, `Send_Email`) call this MCP server at runtime. The MCP server is configured with the Snowflake account, warehouse, role, semantic view, search service, and email integration it is allowed to address.
 
 In addition, on the Snowflake side you need:

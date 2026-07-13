@@ -45,20 +45,20 @@ The Platform Integrations Container comes pre-packaged with the full set of ecos
 
 Two deployment paths are available depending on your licensing model:
 
-- [LangGraph DeepAgents Server — Licensed Deployment Guide](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md)
-- [LangGraph DeepAgents Server — OSS Deployment Guide](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md)
+- [LangGraph DeepAgents Server — Licensed Deployment Guide](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md)
+- [LangGraph DeepAgents Server — OSS Deployment Guide](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md)
 
 **Agents hosted in this container:**
 
 *Ecosystem Agents:*
-- [Agent for OSDU™](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agents/Spotfire%20Copilot%20-%20OSDU%20Agent%20User%20Guide.md)
-- [Agent for Spotfire® Data Virtualization](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agents/Spotfire%20Copilot%20-%20Data%20Virtualization%20%28DV%29%20Agent%20User%20Guide.md)
-- [Agent for Databricks](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md)
-- [Agent for Databricks Genie](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agents/Spotfire%20Copilot%20-%20Databricks%20Genie%20Agent%20User%20Guide.md)
-- [Agent for Snowflake Cortex](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agents/Spotfire%20Copilot%20-%20Snowflake%20Agent%20User%20Guide.md)
-- [Agent for Spotfire® Server (Library)](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agents/Spotfire%20Copilot%20-%20Spotfire%20Library%20Metadata%20Agent%20User%20Guide.md)
-- [Agent for Spotfire® Server (License Management)](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agents/Spotfire%20Copilot%20-%20Spotfire%20License%20Management%20Agent%20User%20Guide.md)
-- [Agent for Tavily](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agents/Spotfire%20Copilot%20-%20Tavily%20Web%20Search%20Agent%20User%20Guide.md)
+- [Agent for OSDU™](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20OSDU%20Agent%20User%20Guide.md)
+- [Agent for Spotfire® Data Virtualization](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Data%20Virtualization%20%28DV%29%20Agent%20User%20Guide.md)
+- [Agent for Databricks](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md)
+- [Agent for Databricks Genie](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Databricks%20Genie%20Agent%20User%20Guide.md)
+- [Agent for Snowflake Cortex](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Snowflake%20Agent%20User%20Guide.md)
+- [Agent for Spotfire® Server (Library)](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Spotfire%20Library%20Metadata%20Agent%20User%20Guide.md)
+- [Agent for Spotfire® Server (License Management)](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Spotfire%20License%20Management%20Agent%20User%20Guide.md)
+- [Agent for Tavily](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Tavily%20Web%20Search%20Agent%20User%20Guide.md)
 
 **Continuous Expansion:** The list of available agents will continue to grow as we expand vertical coverage and ecosystem integrations.
 
@@ -84,9 +84,9 @@ In addition to the A2A container-based deployment, selected agents are also avai
 
 The following agents are currently available via MCP:
 
-- [Agent for Daily Drilling Reports](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/Agents/Spotfire%20Copilot%20-%20Daily%20Drilling%20Reports%20%28DDR%29%20Agent%20User%20Guide.md)
+- [Agent for Daily Drilling Reports](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Daily%20Drilling%20Reports%20%28DDR%29%20Agent%20User%20Guide.md)
 - [All Ecosystem Agents (OSDU™, SDV, Databricks, Tavily and Spotfire® Server)](https://community.spotfire.com/articles/spotfire/mcp-enabled-agents-user-guide/)
 
 Additional agents are being progressively exposed via MCP.
 
-For deploying the MCP servers that back these agents, see the [MCP server deployment guides](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/MCP%20Servers/README.md).
+For deploying the MCP servers that back these agents, see the [MCP server deployment guides](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/mcp-servers/README.md).

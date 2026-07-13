@@ -1,6 +1,6 @@
 # Artifact Sources and Access
 
-This document defines the standard artifact source and access workflow shared by the Ecosystem Agents deployment guides (the [Agent Server Deployment](Agent%20Server%20Deployment/README.md) and [MCP Servers](MCP%20Servers/README.md) guides).
+This document defines the standard artifact source and access workflow shared by the Ecosystem Agents deployment guides (the [Agent Server Deployment](agent-server-deployment/README.md) and [MCP Servers](mcp-servers/README.md) guides).
 
 ## Table of Contents
 

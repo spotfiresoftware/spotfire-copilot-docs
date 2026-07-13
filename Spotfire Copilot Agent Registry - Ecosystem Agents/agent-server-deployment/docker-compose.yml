@@ -1,0 +1,63 @@
+# DeepAgents OSS server — OCI image-pull deployment (app + Postgres + Redis).
+# Copy .env.example to .env first (set AGENT_IMAGE_REF), then: docker compose up -d
+# Endpoints: /healthz, /readyz, and per-agent A2A at /a2a/<agent_id>.
+#
+# Deploy the required MCP server stacks FIRST (see ../mcp-servers/<server>/), then start this.
+
+name: deepagents-oss
+
+volumes:
+  deepagents-oss-postgres-data:
+
+services:
+  deepagents-oss-redis:
+    image: redis:7-alpine
+    ports:
+      - "6390:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  deepagents-oss-postgres:
+    image: postgres:16
+    ports:
+      - "5443:5432"
+    environment:
+      POSTGRES_DB: deepagents_checkpoints
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - deepagents-oss-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d deepagents_checkpoints"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+
+  deepagents-oss:
+    image: ${AGENT_IMAGE_REF}
+    # Image is built for linux/amd64; pin platform so it runs under emulation
+    # on Apple Silicon (arm64) hosts. Override with AGENT_PLATFORM if needed.
+    platform: ${AGENT_PLATFORM:-linux/amd64}
+    depends_on:
+      deepagents-oss-redis:
+        condition: service_healthy
+      deepagents-oss-postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # Linux only — uncomment so host.docker.internal resolves to the host,
+    # allowing the agent to reach MCP servers running in other compose stacks:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s

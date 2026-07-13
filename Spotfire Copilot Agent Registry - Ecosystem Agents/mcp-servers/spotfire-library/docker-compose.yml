@@ -1,0 +1,15 @@
+# Spotfire Library MCP server — OCI image-pull deployment.
+# Copy .env.example to .env first. Endpoints: /mcp, /healthz, /readyz.
+
+services:
+  mcp-spotfire-lib:
+    image: ${MCP_IMAGE_REF}
+    # Image is built for linux/amd64; pin platform so it runs under emulation
+    # on Apple Silicon (arm64) hosts. Override with MCP_PLATFORM if needed.
+    platform: ${MCP_PLATFORM:-linux/amd64}
+    container_name: mcp-spotfire-lib
+    env_file:
+      - .env
+    ports:
+      - "${PORT}:${PORT}"
+    restart: unless-stopped

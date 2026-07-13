@@ -39,8 +39,8 @@ The agent works independently of the surrounding analysis or dashboard. It does 
 
 This agent is not deployed standalone. Before you can invoke it from the Spotfire Copilot Panel, two components must already be deployed and reachable in your environment:
 
-- **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../Agent%20Server%20Deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
-- **`energy-ddr-neo4j` MCP server** — the agent's tools call this MCP server at runtime. See the [Energy DDR Neo4j MCP server user guide](../MCP%20Servers/Energy%20DDR%20Neo4j/Spotfire%20Copilot%20-%20Energy%20DDR%20Neo4j%20MCP%20Server%20User%20Guide.md) and [deployment guide](../MCP%20Servers/Energy%20DDR%20Neo4j/Spotfire%20Copilot%20-%20Energy%20DDR%20Neo4j%20MCP%20Server%20Deployment%20Guide.md).
+- **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
+- **`energy-ddr-neo4j` MCP server** — the agent's tools call this MCP server at runtime. See the [Energy DDR Neo4j MCP server user guide](../mcp-servers/energy-ddr-neo4j/Spotfire%20Copilot%20-%20Energy%20DDR%20Neo4j%20MCP%20Server%20User%20Guide.md) and [deployment guide](../mcp-servers/energy-ddr-neo4j/Spotfire%20Copilot%20-%20Energy%20DDR%20Neo4j%20MCP%20Server%20Deployment%20Guide.md).
 
 If either component is missing or unreachable, the agent will not appear in the Copilot Panel, or it will fail to answer with a tool-related error.
 
