@@ -184,7 +184,7 @@ Use this when PostgreSQL and Redis are managed externally.
 
 #### 5.1.1 Create Values File (`values.yaml`)
 
-Use the app-only example in Section 6.1 and adapt values for your environment.
+Use the app-only example in [Section 6.1 — Minimal `values.yaml` (App-Only)](#61-minimal-valuesyaml-app-only) and adapt values for your environment.
 
 #### 5.1.2 Install
 

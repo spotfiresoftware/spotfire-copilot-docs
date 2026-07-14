@@ -99,7 +99,7 @@ Version selection policy:
 
 ## 3. Docker Compose Deployment
 
-> Ready-to-use `docker-compose.yml` and `.env.example` are provided alongside this guide in the same folder. Copy `.env.example` to `.env`, fill in your values, then run `docker compose up -d`.
+> Ready-to-use [`docker-compose.yml`](docker-compose.yml) and [`.env.example`](.env.example) are provided alongside this guide in the same folder. Copy [`.env.example`](.env.example) to `.env`, fill in your values, then run `docker compose up -d`.
 
 ### 3.1 Create `.env`
 

@@ -229,7 +229,7 @@ Primary audience: app teams.
 
 This option is best for local dev/test and small non-production environments.
 
-> Ready-to-use `docker-compose.yml` and `.env.example` are provided alongside this guide in the same folder. Copy `.env.example` to `.env`, fill in your values (including `AGENT_IMAGE_REF`), deploy the required MCP server stacks first (see `../mcp-servers/<server>/`), then run `docker compose up -d`.
+> Ready-to-use [`docker-compose.yml`](docker-compose.yml) and [`.env.example`](.env.example) are provided alongside this guide in the same folder. Copy [`.env.example`](.env.example) to `.env`, fill in your values (including `AGENT_IMAGE_REF`), deploy the required MCP server stacks first (see [`../mcp-servers/`](../mcp-servers/)), then run `docker compose up -d`.
 
 ### 4.1 Create a Deployment Folder
 
