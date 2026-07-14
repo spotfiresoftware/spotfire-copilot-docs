@@ -603,15 +603,35 @@ collection named `spotfiredocs`:
 
 ```bash
 curl -X POST http://localhost:8080/load_spotfire_docs \
-  -H "Authorization: Bearer <token>"
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"create_index": true}'
 ```
 
 This endpoint:
-- Reads all PDFs from `/app/docs/docs_spotfire_analyst_um/` (pre-installed in the image)
-- Creates (or replaces) a collection/index named **`spotfiredocs`**
-- Sets `drop_old=True` — all previous data in the `spotfiredocs` index is replaced
-- Uses the `fast` partitioning strategy
+- Reads the bundled Spotfire documentation PDFs (pre-installed in the image), loading each
+  bundled document **once**
+- Creates (or replaces) a collection/index named **`spotfiredocs`** by default
 - **No volume mount required** — the documents are already inside the container
+
+**Request body parameters:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `create_index` | boolean | `false` | When `true`, the target index is (re)created before loading. When `false`, the index must already exist. |
+| `index_name` | string | `spotfiredocs` | Name of the index to load the bundled documentation into. Must be all lowercase and contain only alphanumeric characters and hyphens. Leave unset to use the default `spotfiredocs` collection that the Orchestrator queries for Help/HowTo. |
+
+> **📌 Custom index name.** Set `index_name` to load the bundled Spotfire documentation
+> into a collection of your choosing — for example, to keep it separate per environment or
+> to fit within a constrained vector-store tier. If you use a non-default name, configure
+> the Orchestrator to query that collection for Help/HowTo intents.
+>
+> ```bash
+> curl -X POST http://localhost:8080/load_spotfire_docs \
+>   -H "Authorization: Bearer <token>" \
+>   -H "Content-Type: application/json" \
+>   -d '{"create_index": true, "index_name": "my-spotfire-docs"}'
+> ```
 
 > **⚠️ Important: Source metadata.** Each chunk stored in the vector database includes a
 > `source` metadata field containing the original filename (e.g., `SPOT_sfire_client_14_6.pdf`).
