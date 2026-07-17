@@ -37,6 +37,8 @@
 
 This guide explains how to deploy the Databricks MCP server from OCI artifacts and validate connectivity to Unity Catalog and SQL Warehouse.
 
+> 📺 **Video walkthrough:** [Deploy a Databricks MCP server and the DeepAgents (OSS) agent server that hosts it](https://youtu.be/C3DbxVsfdqk) — a hands-on companion to this guide that also covers deploying the agent server that consumes this MCP server.
+
 ### 1.2 Scope
 
 This guide covers Docker Compose and Kubernetes deployment paths, plus validation, upgrade, and uninstall.

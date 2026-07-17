@@ -4,6 +4,8 @@
 
 The agents are built on the [LangChain](https://www.langchain.com/) ecosystem and its LangGraph runtime. The guides here cover deploying them on a **LangGraph DeepAgents server** that Spotfire ships as container images. The images are portable — run them locally with Docker Compose, on managed cloud services like Azure Container Apps or AWS Elastic Container Service, or use the provided Helm charts to deploy to any Kubernetes cluster. Because the agents are standard LangGraph graphs, they are not tied to that server — you can also run them on any LangGraph-compatible runtime (for example AWS Bedrock AgentCore or the Google Cloud Vertex AI Agent Engine).
 
+> 📺 **Video walkthrough:** [Deploy a Databricks MCP server and the DeepAgents (OSS) agent server that hosts it](https://youtu.be/C3DbxVsfdqk) — a hands-on companion to the [Databricks MCP Server Deployment Guide](mcp-servers/databricks/Spotfire%20Copilot%20-%20Databricks%20MCP%20Server%20Deployment%20Guide.md) and the [LangGraph DeepAgents Server (OSS) Deployment Guide](agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md). It walks through deploying and validating the MCP server, then standing up the OSS agent server wired to it and confirming the agent is ready to register with the orchestrator.
+
 ## How it fits together
 
 There are three layers. You deploy the bottom two and wire them together with URLs and tokens:
