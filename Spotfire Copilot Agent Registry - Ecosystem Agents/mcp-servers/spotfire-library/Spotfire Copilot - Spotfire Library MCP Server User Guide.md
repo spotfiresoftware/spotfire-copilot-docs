@@ -2,7 +2,7 @@
 
 spotfire × library × metadata
 
-The `spotfire-lib` MCP server (internal name `sflib`) exposes a curated set of tools for browsing a Spotfire Server's library — listing registered data connectors, discovering Spotfire Analysis files (DXPs) with filters, and retrieving detailed metadata for a specific DXP.
+The `spotfire-lib` MCP server (internal name `sflib`) exposes a curated set of tools for browsing a Spotfire Server's library — listing registered data connectors (with filters), retrieving detailed metadata for a specific connector, discovering Spotfire Analysis files (DXPs) with filters, and retrieving detailed metadata for a specific DXP.
 
 ## Table of Contents
 
@@ -11,6 +11,7 @@ The `spotfire-lib` MCP server (internal name `sflib`) exposes a curated set of t
 - [Connecting](#connecting)
 - [Tool Reference](#tool-reference)
   - [Connector Discovery](#connector-discovery)
+  - [Connector Metadata](#connector-metadata)
   - [DXP Discovery](#dxp-discovery)
   - [DXP Metadata](#dxp-metadata)
 - [Example Payloads](#example-payloads)
@@ -22,11 +23,12 @@ The `spotfire-lib` MCP server (internal name `sflib`) exposes a curated set of t
 
 This MCP server is the backend for the [Spotfire Library Metadata Agent](../../agents/Spotfire%20Copilot%20-%20Spotfire%20Library%20Metadata%20Agent%20User%20Guide.md). It wraps the Spotfire Server's library REST endpoints behind a small set of focused tools:
 
-- Connector discovery (all connectors registered on the Spotfire Server, with type and properties).
+- Connector discovery with server-side filtering by creator, title fragment, and library path prefix, with a configurable result limit.
+- Connector metadata retrieval (connector type, connection properties, and permissions) by item ID.
 - DXP discovery with server-side filtering by creator, title fragment, and library path prefix, with a configurable result limit.
-- DXP metadata retrieval (tables, columns, pages, bookmarks, embedded data flags, permissions, and versions) by item ID.
+- DXP metadata retrieval (path, item properties, and permissions) by item ID.
 
-All tools return a **JSON string** representing the Spotfire Server response. Clients typically parse this back into structured data before presenting it. Errors from the Spotfire Server are returned as part of the JSON payload (e.g. an `error` field) rather than thrown as exceptions.
+All tools return a **JSON string** representing the Spotfire Server response. Clients typically parse this back into structured data before presenting it. Failures are returned as short plain-text status messages (for example `"No dxps found"`, `"No data connections found"`, or `"Failed to get access token"`) rather than thrown as exceptions. When a discovery result would be too large to return reliably, the list tools instead return a JSON object whose `status` is `"too_many_results"`, with guidance to refine the query.
 
 ## Deployment and Prerequisites
 
@@ -47,14 +49,22 @@ Backend configuration (`SF_URL`, `SF_CLIENT_ID`, `SF_CLIENT_SECRET`) is set on t
 ### Connector Discovery
 
 #### `get_data_connections_tool`
-- **Purpose:** Retrieve all data connectors registered on the Spotfire Server. Connectors enable Spotfire to load data from external systems (Snowflake, Oracle, TDV, ODBC, Information Links, etc.).
-- **Inputs:** _none_.
-- **Output:** A JSON string with an `items` array. Each connector entry typically includes:
-  - **Basic info** — `id`, `title`, `path`, `type`, `description`.
-  - **User metadata** — `createdBy`, `modifiedBy`, `permissions`.
-  - **Properties** — connector-specific keys such as `Spotfire.ConnectionSourceDatabase`, `Spotfire.Connector`.
-  - **Versioning** — `versionId`, `itemVersions`.
+- **Purpose:** Retrieve the data connectors registered on the Spotfire Server with optional server-side filtering and limiting. Connectors enable Spotfire to load data from external systems (Snowflake, Oracle, TDV, ODBC, Information Links, etc.).
+- **Inputs:**
+  - `created_by` (str, optional) — Filter by creator display name (contains match).
+  - `title_contains` (str, optional) — Filter by title text (contains match).
+  - `path_prefix` (str, optional) — Filter by library path prefix (e.g. `/public/Connections`).
+  - `limit` (int, optional, default `100`) — Maximum number of connector entries to return.
+- **Output:** A JSON string with `count`, `returned`, the applied `filters`, and an `items` array. Each connector entry is trimmed to `id`, `title`, `path`, `type`, `createdBy`, and `modified`. If the result set is too large to return reliably, the tool instead returns a `status: "too_many_results"` object with guidance to refine the query.
 - **When to use:** Answering "what connectors are available?" or "can I connect to system X?" questions.
+
+### Connector Metadata
+
+#### `get_dataconnection_metadata_tool`
+- **Purpose:** Retrieve detailed library metadata for a single data connection item.
+- **Inputs:** `dataconnection_id` (str, required) — The Spotfire library item ID of the data connection.
+- **Output:** A JSON string with basic info (`id`, `title`, `path`, `type`, `description`), user metadata (`createdBy`, `modifiedBy`, `permissions`), and connector-specific `properties` (key/value pairs such as `Spotfire.ConnectionSourceDatabase` or `Spotfire.Connector`, when the Spotfire Server records them). The large preview-thumbnail property (`Spotfire.Preview.Thumb`) is stripped out to keep the payload small.
+- **When to use:** "Show details for the `SalesDB` data connection", "what source database / connector type does X use?", "who can access this connection?".
 
 ### DXP Discovery
 
@@ -73,10 +83,11 @@ Backend configuration (`SF_URL`, `SF_CLIENT_ID`, `SF_CLIENT_SECRET`) is set on t
 ### DXP Metadata
 
 #### `get_dxp_metadata_tool`
-- **Purpose:** Retrieve detailed metadata for a single DXP, including tables, columns, pages, bookmarks, permissions, and version history.
+- **Purpose:** Retrieve detailed library metadata for a single DXP item.
 - **Inputs:** `dxp_id` (str, required) — The Spotfire library item ID of the DXP.
-- **Output:** A JSON string with basic info, user metadata, properties (table/column/page counts, embedded-data flag, bookmark count), and versioning.
-- **When to use:** "Show details for `SalesAnalysis.dxp`", "how many tables/columns/pages in DXP X?", "who can access this DXP?", "version history for this DXP".
+- **Output:** A JSON string with the item's basic info (`id`, `title`, `path`, `type`, `description`), user metadata (`createdBy`, `modifiedBy`, `permissions`), and its `properties` — the key/value pairs the Spotfire Server attaches to the item. The large preview-thumbnail property (`Spotfire.Preview.Thumb`) is stripped out to keep the payload small.
+- **When to use:** "Show library details for `SalesAnalysis.dxp`", "who created / who can access this DXP?", "what properties are set on this DXP?".
+- **Note:** This returns the DXP's *library* metadata; it does not open the analysis file, so it does not compute per-analysis internals such as table, column, page, or bookmark counts unless the Spotfire Server has recorded them as item properties.
 
 ## Example Payloads
 
@@ -86,6 +97,17 @@ Backend configuration (`SF_URL`, `SF_CLIENT_ID`, `SF_CLIENT_SECRET`) is set on t
 {
   "name": "get_data_connections_tool",
   "arguments": {}
+}
+```
+
+### Get full metadata for a specific data connection
+
+```json
+{
+  "name": "get_dataconnection_metadata_tool",
+  "arguments": {
+    "dataconnection_id": "0f9e8d7c-6b5a-4321-fedc-ba9876543210"
+  }
 }
 ```
 

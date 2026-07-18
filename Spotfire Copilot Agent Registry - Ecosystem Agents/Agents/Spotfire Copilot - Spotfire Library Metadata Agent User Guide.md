@@ -2,7 +2,7 @@
 
 spotfire × library × metadata
 
-The Spotfire Library Metadata Agent is a specialist AI agent that browses a Spotfire Server's library to answer questions about available data connectors and Spotfire Analysis files (DXPs), including their metadata, properties, and versions.
+The Spotfire Library Metadata Agent is a specialist AI agent that browses a Spotfire Server's library to answer questions about available data connectors and Spotfire Analysis files (DXPs), including their metadata, properties, and permissions.
 
 ## Table of Contents
 
@@ -16,9 +16,10 @@ The Spotfire Library Metadata Agent is a specialist AI agent that browses a Spot
 - [How the Workflow Operates](#how-the-workflow-operates)
   - [Stage 1: Orientation](#stage-1-orientation)
   - [Stage 2: Connector Discovery](#stage-2-connector-discovery)
-  - [Stage 3: DXP Discovery](#stage-3-dxp-discovery)
-  - [Stage 4: DXP Metadata](#stage-4-dxp-metadata)
-  - [Stage 5: Multi-step Workflows](#stage-5-multi-step-workflows)
+  - [Stage 3: Connector Metadata](#stage-3-connector-metadata)
+  - [Stage 4: DXP Discovery](#stage-4-dxp-discovery)
+  - [Stage 5: DXP Metadata](#stage-5-dxp-metadata)
+  - [Stage 6: Multi-step Workflows](#stage-6-multi-step-workflows)
 - [Typical End-to-End Session](#typical-end-to-end-session)
 - [Key Benefits](#key-benefits)
 - [Tips for Best Results](#tips-for-best-results)
@@ -30,7 +31,7 @@ The Spotfire Library Metadata Agent is a specialist AI agent that browses a Spot
 
 The Spotfire Library Metadata Agent is a conversational assistant available inside the Spotfire Copilot Panel. It is connected to a Spotfire Server's Library Service through a dedicated MCP server and is designed to answer questions in natural language — no Library Administration console, REST API calls, or item ID lookups required.
 
-The agent uses a set of specialized tools to list the data connectors registered on the Spotfire Server, browse the DXP files available in the library (with filters by creator, title, and path), and retrieve detailed metadata for a specific DXP, including its data tables, columns, pages, bookmarks, and versions.
+The agent uses a set of specialized tools to list the data connectors registered on the Spotfire Server (with filters), retrieve detailed metadata for a specific connector, browse the DXP files available in the library (with filters by creator, title, and path), and retrieve detailed library metadata for a specific DXP, including its properties, permissions, and authorship.
 
 The agent works independently of the surrounding analysis or dashboard. It does not receive marked rows, table data, or column metadata from a visualization — it only acts on the questions and instructions you type into the Spotfire Copilot Panel, and all answers come from the Spotfire Server library through the agent's tools.
 
@@ -71,9 +72,10 @@ If a required reference is missing (for example, an explicit DXP when asking for
 
 The agent reads from a Spotfire Server library through the `spotfire-lib` MCP server. Typical content includes:
 
-- **Data connectors** — every connector registered on the server, with type, description, properties, and permissions.
+- **Data connectors** — every connector registered on the server, with type, path, creator, and modified date.
+- **Connector metadata** — for a specific connector: its library properties (e.g. source database, connector type), authorship, and permissions.
 - **DXP files** — Spotfire Analysis files in the library, with title, path, creator, and modified date.
-- **DXP metadata** — for a specific DXP: tables and columns counts, pages, bookmarks, embedded data flags, version history, and permissions.
+- **DXP metadata** — for a specific DXP: its library properties, authorship, and permissions (the item metadata the Spotfire Server stores; not the analysis internals).
 
 The agent does **not** open or render DXPs, ingest spreadsheet uploads, or read marked rows from a visualization. Read access is determined by the credentials configured on the MCP server (a Spotfire Server client ID and secret).
 
@@ -84,9 +86,10 @@ The Spotfire Library Metadata Agent groups its tools into the following capabili
 | Capability                  | What It Does                                                                                       | Example Request                                              |
 | --------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | Connector Discovery         | List every data connector registered on the Spotfire Server and inspect its type and properties     | "What connectors are available?"                             |
+| Connector Metadata          | Return detailed library metadata for a specific connector — properties, connector type, authorship, and permissions | "Show details for the `SalesDB` data connection."            |
 | Connectivity Q&A            | Answer questions about whether a particular system can be reached through existing connectors        | "Can I connect to Snowflake from this server?"               |
 | DXP Discovery               | List DXPs in the library with filters by author, title, and path                                     | "What DXPs has Evie created under `/public/Energy`?"         |
-| DXP Metadata                | Return detailed metadata for a specific DXP — tables, columns, pages, bookmarks, versions            | "Show details for `SalesAnalysis.dxp`."                      |
+| DXP Metadata                | Return detailed library metadata for a specific DXP — properties, authorship, and permissions        | "Show details for `SalesAnalysis.dxp`."                      |
 | Library Navigation          | Combine filters to drill into a subtree of the library                                               | "List the marketing reports modified this year."             |
 | Inventory Summaries         | Combine multiple tool calls to summarize library content                                              | "How many DXPs are under `/public/Sales`?"                   |
 
@@ -117,7 +120,19 @@ The agent guides you through a natural, question-and-answer flow. There is no up
 
 **What you get back:** The list of connectors with their types and properties, and a direct answer about whether a specific connector type is present.
 
-### Stage 3: DXP Discovery
+### Stage 3: Connector Metadata
+
+**When to use:** You want full details for a specific data connection.
+
+**Example prompts:**
+- "Show details for the `SalesDB` data connection."
+- "What database does the `MarketingWarehouse` connection point to?"
+- "Which connector type does `FinanceDB` use?"
+- "Who can access the `SalesDB` connection?"
+
+**What you get back:** A consolidated library-metadata record covering the connection's basic info, connector type, stored properties (e.g. source database), authorship, and permissions.
+
+### Stage 4: DXP Discovery
 
 **When to use:** You want to find Spotfire Analysis files by author, title, or library path.
 
@@ -130,26 +145,26 @@ The agent guides you through a natural, question-and-answer flow. There is no up
 
 **What you get back:** A list of DXPs scoped to your filters, each with its title, path, author, and modified date. The agent applies server-side filtering to keep responses focused.
 
-### Stage 4: DXP Metadata
+### Stage 5: DXP Metadata
 
-**When to use:** You want full details for a specific DXP.
+**When to use:** You want full library details for a specific DXP.
 
 **Example prompts:**
 - "Show details for `SalesAnalysis.dxp`."
-- "How many tables and columns are in `MarketingReport.dxp`?"
-- "What pages and bookmarks are in DXP `<id>`?"
+- "What properties are set on `MarketingReport.dxp`?"
+- "Who created DXP `<id>`?"
 - "Who can access `QuarterlyReview.dxp`?"
 
-**What you get back:** A consolidated metadata record covering tables/column counts, pages, bookmarks, embedded data flags, permissions, properties, and version history.
+**What you get back:** A consolidated library-metadata record covering the item's basic info, authorship, permissions, and the properties the Spotfire Server has stored for it.
 
-### Stage 5: Multi-step Workflows
+### Stage 6: Multi-step Workflows
 
 **When to use:** Your question combines discovery and metadata.
 
 **Example prompts:**
-- "Find DXPs by Evie under `/public/Energy` and tell me how many tables each one has."
-- "List the most recent sales DXPs and show me the page count for the top one."
-- "What connectors are available, and which DXPs use the Snowflake connector?"
+- "Find DXPs by Evie under `/public/Energy` and show the properties and permissions for the most recent one."
+- "List the most recent sales DXPs and show the library details for the top one."
+- "What connectors are available, and who created the Snowflake connection?"
 
 **What you get back:** A consolidated answer where the agent has chained tools internally (list → filter → metadata lookup) and reports a summary with brief notes about intermediate steps.
 
@@ -186,11 +201,12 @@ You:    Show details for WellPerformance.dxp.
 
 Agent:  WellPerformance.dxp
         - Path: /public/Energy/WellPerformance.dxp
+        - Type: spotfire.dxp
         - Created by: Evie
-        - Tables: 4, Columns: 87, Pages: 6
-        - Bookmarks: 3
-        - Embedded data: yes
-        - Latest version: 12 (modified 2026-04-12)
+        - Last modified: 2026-04-12
+        - Permissions: Read/Write (Energy group), Read (public)
+        - Properties: the item properties recorded by the
+          Spotfire Server (e.g. DisplayName, ContentSize)
 
 You:    Thanks.
 ```
@@ -201,7 +217,7 @@ You:    Thanks.
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | Natural-language library browsing    | Discover connectors, DXPs, and their metadata in plain English without opening the Library Administration tools.             |
 | Server-side filtering                | DXP queries support filters by creator, title, and path, keeping responses focused even for large libraries.                  |
-| Rich DXP metadata                    | One call returns tables, columns, pages, bookmarks, embedded data flags, permissions, and version history.                    |
+| Rich library metadata                | One call returns an item's basic info, authorship, permissions, and stored properties for a connector or DXP.                 |
 | Connectivity Q&A                     | Quickly answer "can I reach system X?" questions by checking the registered connectors.                                       |
 | Combines discovery and detail        | Multi-step questions are handled by chaining tools internally and presenting a single answer.                                 |
 | Works independently                  | No need to mark rows or attach tables — the agent acts on the question you type in the Spotfire Copilot Panel.               |
