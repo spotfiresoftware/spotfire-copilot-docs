@@ -2,7 +2,7 @@
 
 spotfire × library × metadata
 
-The Spotfire Library Metadata Agent is a specialist AI agent that browses a Spotfire Server's library to answer questions about available data connectors and Spotfire Analysis files (DXPs), including their metadata, properties, and permissions.
+The Spotfire Library Metadata Agent is a specialist AI agent that browses a Spotfire Server's library to answer questions about library items of any kind — Spotfire Analysis files (DXPs), data connections, information links, data functions, columns, folders, and more — including their metadata, properties, and permissions.
 
 ## Table of Contents
 
@@ -13,13 +13,13 @@ The Spotfire Library Metadata Agent is a specialist AI agent that browses a Spot
   - [What You Provide](#what-you-provide)
   - [What Data Is Available](#what-data-is-available)
 - [What the Agent Can Do](#what-the-agent-can-do)
+- [Supported Item Types](#supported-item-types)
 - [How the Workflow Operates](#how-the-workflow-operates)
   - [Stage 1: Orientation](#stage-1-orientation)
-  - [Stage 2: Connector Discovery](#stage-2-connector-discovery)
-  - [Stage 3: Connector Metadata](#stage-3-connector-metadata)
-  - [Stage 4: DXP Discovery](#stage-4-dxp-discovery)
-  - [Stage 5: DXP Metadata](#stage-5-dxp-metadata)
-  - [Stage 6: Multi-step Workflows](#stage-6-multi-step-workflows)
+  - [Stage 2: Discovery (list & search)](#stage-2-discovery-list--search)
+  - [Stage 3: Item Details](#stage-3-item-details)
+  - [Stage 4: Connectivity Q&A](#stage-4-connectivity-qa)
+  - [Stage 5: Multi-step Workflows](#stage-5-multi-step-workflows)
 - [Typical End-to-End Session](#typical-end-to-end-session)
 - [Key Benefits](#key-benefits)
 - [Tips for Best Results](#tips-for-best-results)
@@ -31,7 +31,7 @@ The Spotfire Library Metadata Agent is a specialist AI agent that browses a Spot
 
 The Spotfire Library Metadata Agent is a conversational assistant available inside the Spotfire Copilot Panel. It is connected to a Spotfire Server's Library Service through a dedicated MCP server and is designed to answer questions in natural language — no Library Administration console, REST API calls, or item ID lookups required.
 
-The agent uses a set of specialized tools to list the data connectors registered on the Spotfire Server (with filters), retrieve detailed metadata for a specific connector, browse the DXP files available in the library (with filters by creator, title, and path), and retrieve detailed library metadata for a specific DXP, including its properties, permissions, and authorship.
+The agent uses two generic library tools: one to list/search items of a chosen kind (with filters by creator, title, and path), and one to retrieve the full library metadata of a single item by its id. It maps your natural-language request to the right item kind, so you can ask about DXPs, data connections, information links, data functions, columns, folders, and more.
 
 The agent works independently of the surrounding analysis or dashboard. It does not receive marked rows, table data, or column metadata from a visualization — it only acts on the questions and instructions you type into the Spotfire Copilot Panel, and all answers come from the Spotfire Server library through the agent's tools.
 
@@ -60,22 +60,21 @@ The agent only needs **natural-language questions**. To get focused answers, men
 
 | Reference          | Examples                                                       |
 | ------------------ | -------------------------------------------------------------- |
+| Item kind          | "DXPs", "data connections", "information links", "data functions" |
 | Library path       | `/public/Energy`, `/Users/jdoe/Reports`                        |
 | Author             | "created by Evie", "made by John Doe"                          |
 | Title fragment     | "sales", "drilling", "marketing report"                        |
-| Connector type     | TDV, Snowflake, Information Links, Oracle, ODBC                |
-| DXP identifier     | `SalesAnalysis.dxp`, or a specific item ID for deep metadata   |
+| System (connectivity) | TDV, Snowflake, Oracle, ODBC                                |
+| Item identifier    | a name like `SalesAnalysis.dxp`, or a specific item ID for exact metadata |
 
-If a required reference is missing (for example, an explicit DXP when asking for its tables and columns), the agent will ask a short clarifying question rather than guess.
+If the item kind is ambiguous, or a required reference is missing (for example, an explicit item when asking for its properties), the agent will ask a short clarifying question rather than guess.
 
 ### What Data Is Available
 
 The agent reads from a Spotfire Server library through the `spotfire-lib` MCP server. Typical content includes:
 
-- **Data connectors** — every connector registered on the server, with type, path, creator, and modified date.
-- **Connector metadata** — for a specific connector: its library properties (e.g. source database, connector type), authorship, and permissions.
-- **DXP files** — Spotfire Analysis files in the library, with title, path, creator, and modified date.
-- **DXP metadata** — for a specific DXP: its library properties, authorship, and permissions (the item metadata the Spotfire Server stores; not the analysis internals).
+- **Library items of any kind** — DXPs, data connections, information links, data functions, data sources, visualization mods, columns, folders, and more (see [Supported Item Types](#supported-item-types)) — each with `id`, `title`, `path`, `type`, creator, and modified date.
+- **Item metadata** — for a specific item: its library `properties` (key/value pairs — e.g. a data connection's source database and connector type), authorship, permissions, and type. This is the item metadata the Spotfire Server stores; for a DXP it is not the analysis internals.
 
 The agent does **not** open or render DXPs, ingest spreadsheet uploads, or read marked rows from a visualization. Read access is determined by the credentials configured on the MCP server (a Spotfire Server client ID and secret).
 
@@ -85,13 +84,18 @@ The Spotfire Library Metadata Agent groups its tools into the following capabili
 
 | Capability                  | What It Does                                                                                       | Example Request                                              |
 | --------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Connector Discovery         | List every data connector registered on the Spotfire Server and inspect its type and properties     | "What connectors are available?"                             |
-| Connector Metadata          | Return detailed library metadata for a specific connector — properties, connector type, authorship, and permissions | "Show details for the `SalesDB` data connection."            |
-| Connectivity Q&A            | Answer questions about whether a particular system can be reached through existing connectors        | "Can I connect to Snowflake from this server?"               |
-| DXP Discovery               | List DXPs in the library with filters by author, title, and path                                     | "What DXPs has Evie created under `/public/Energy`?"         |
-| DXP Metadata                | Return detailed library metadata for a specific DXP — properties, authorship, and permissions        | "Show details for `SalesAnalysis.dxp`."                      |
-| Library Navigation          | Combine filters to drill into a subtree of the library                                               | "List the marketing reports modified this year."             |
-| Inventory Summaries         | Combine multiple tool calls to summarize library content                                              | "How many DXPs are under `/public/Sales`?"                   |
+| Discovery (list & search)   | List or search library items of a chosen kind, with filters by author, title, and path              | "What information links are available under `/public`?"      |
+| Item Details                | Return the full library metadata for a specific item — type, properties, authorship, permissions    | "Show details for `SalesDB` / `SalesAnalysis.dxp`."          |
+| Item Children               | List the direct children of an item — e.g. the columns of a data source, or the contents of a folder | "What columns does the `SalesData` data source have?"        |
+| Connectivity Q&A            | Answer whether a particular system can be reached through the registered data connections            | "Can I connect to Snowflake from this server?"               |
+| Library Navigation          | Combine filters to drill into a subtree of the library for any item kind                             | "List the marketing DXPs modified this year."                |
+| Inventory Summaries         | Combine multiple tool calls to summarize library content                                              | "How many data functions are under `/public/Analytics`?"     |
+
+## Supported Item Types
+
+You can ask the agent to discover or inspect any of these kinds — it maps your wording to the right kind automatically:
+
+DXPs (analysis files), data connections (connectors), information links, data functions, data sources, connection data sources, visualization mods, action mods, SBDF data files, shapes, filters, joins, procedures, DXP scripts, color schemes, folders, columns, and automation service jobs.
 
 ## How the Workflow Operates
 
@@ -99,71 +103,57 @@ The agent guides you through a natural, question-and-answer flow. There is no up
 
 ### Stage 1: Orientation
 
-**When to use:** You want to know what is available on the Spotfire Server before drilling in.
+**When to use:** You want to know what is available before drilling in.
 
 **Example prompts:**
 - "What can you do?"
 - "What connectors are available in this Spotfire server?"
 - "List the DXPs in the library."
 
-**What you get back:** A capability summary or a JSON-derived list of connectors / DXPs.
+**What you get back:** A capability summary or a list of items of the requested kind.
 
-### Stage 2: Connector Discovery
+### Stage 2: Discovery (list & search)
 
-**When to use:** You want to know which external systems can be reached through this Spotfire Server.
-
-**Example prompts:**
-- "What connectors are available?"
-- "Can I connect to TDV from here?"
-- "Can I connect to Snowflake?"
-- "What data sources can I access through Information Links?"
-
-**What you get back:** The list of connectors with their types and properties, and a direct answer about whether a specific connector type is present.
-
-### Stage 3: Connector Metadata
-
-**When to use:** You want full details for a specific data connection.
+**When to use:** You want to find items of a given kind by author, title, or library path.
 
 **Example prompts:**
-- "Show details for the `SalesDB` data connection."
-- "What database does the `MarketingWarehouse` connection point to?"
-- "Which connector type does `FinanceDB` use?"
-- "Who can access the `SalesDB` connection?"
+- "What DXPs has Evie created under `/public/Energy`?"
+- "Which data connections have `Sales` in the title?"
+- "What information links live under `/public`?"
+- "List up to 25 data functions by John Doe."
 
-**What you get back:** A consolidated library-metadata record covering the connection's basic info, connector type, stored properties (e.g. source database), authorship, and permissions.
+**What you get back:** A list of items scoped to your filters, each with `id`, `title`, `path`, `type`, author, and modified date. The agent applies server-side filtering to keep responses focused.
 
-### Stage 4: DXP Discovery
+### Stage 3: Item Details
 
-**When to use:** You want to find Spotfire Analysis files by author, title, or library path.
-
-**Example prompts:**
-- "What DXPs are available?"
-- "What DXPs has Evie created?"
-- "Which DXPs have `Sales` in the title?"
-- "What DXPs are under `/public/Energy`?"
-- "List up to 25 DXPs by John Doe under `/public/Reports`."
-
-**What you get back:** A list of DXPs scoped to your filters, each with its title, path, author, and modified date. The agent applies server-side filtering to keep responses focused.
-
-### Stage 5: DXP Metadata
-
-**When to use:** You want full library details for a specific DXP.
+**When to use:** You want the full library metadata for one specific item.
 
 **Example prompts:**
 - "Show details for `SalesAnalysis.dxp`."
-- "What properties are set on `MarketingReport.dxp`?"
-- "Who created DXP `<id>`?"
-- "Who can access `QuarterlyReview.dxp`?"
+- "What source database does the `MarketingWarehouse` connection use?"
+- "What properties are set on `<item>`?"
+- "Who created / who can access `<item>`?"
 
-**What you get back:** A consolidated library-metadata record covering the item's basic info, authorship, permissions, and the properties the Spotfire Server has stored for it.
+**What you get back:** A consolidated library-metadata record covering the item's basic info, type, authorship, permissions, and stored properties. If you gave only a name, the agent first lists that kind to resolve the item's id. You can also list the item's **children** (e.g. the columns of a data source, or the contents of a folder) using the same id.
 
-### Stage 6: Multi-step Workflows
+### Stage 4: Connectivity Q&A
 
-**When to use:** Your question combines discovery and metadata.
+**When to use:** You want to know whether an external system can be reached through this Spotfire Server.
+
+**Example prompts:**
+- "Can I connect to Snowflake?"
+- "Can I connect to TDV from here?"
+- "What systems can I integrate with?"
+
+**What you get back:** The agent checks the registered data connections and answers whether a specific system is present, quoting the matching connection (or listing the closest alternatives).
+
+### Stage 5: Multi-step Workflows
+
+**When to use:** Your question combines discovery and item details.
 
 **Example prompts:**
 - "Find DXPs by Evie under `/public/Energy` and show the properties and permissions for the most recent one."
-- "List the most recent sales DXPs and show the library details for the top one."
+- "List the most recent data functions and show the details for the top one."
 - "What connectors are available, and who created the Snowflake connection?"
 
 **What you get back:** A consolidated answer where the agent has chained tools internally (list → filter → metadata lookup) and reports a summary with brief notes about intermediate steps.
@@ -173,18 +163,16 @@ The agent guides you through a natural, question-and-answer flow. There is no up
 ```
 You:    What can you do?
 
-Agent:  [Returns the capability summary covering connector
-         discovery, DXP discovery with filters, DXP metadata
-         lookups, and multi-step library workflows.]
+Agent:  [Returns the capability summary covering discovery of any
+         item kind, item-metadata lookups, connectivity Q&A, and
+         multi-step library workflows.]
 
-You:    What connectors are available in this Spotfire server?
+You:    What information links are available under /public?
 
-Agent:  The server has the following connectors:
-        - Snowflake (Spotfire.Connector)
-        - Oracle (Spotfire.Connector)
-        - TDV / Data Virtualization (Spotfire.Connector)
-        - Information Links (legacy)
-        - ODBC
+Agent:  Found 3 information links under /public:
+        1. id=il-01 | title=SalesByRegion   | path=/public/IL/SalesByRegion   | createdBy=Evie
+        2. id=il-02 | title=InventoryLevels | path=/public/IL/InventoryLevels | createdBy=John Doe
+        3. id=il-03 | title=CustomerChurn   | path=/public/IL/CustomerChurn   | createdBy=Evie
 
 You:    Can I connect to Snowflake?
 
@@ -215,21 +203,23 @@ You:    Thanks.
 
 | Benefit                              | Description                                                                                                                  |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Natural-language library browsing    | Discover connectors, DXPs, and their metadata in plain English without opening the Library Administration tools.             |
-| Server-side filtering                | DXP queries support filters by creator, title, and path, keeping responses focused even for large libraries.                  |
-| Rich library metadata                | One call returns an item's basic info, authorship, permissions, and stored properties for a connector or DXP.                 |
-| Connectivity Q&A                     | Quickly answer "can I reach system X?" questions by checking the registered connectors.                                       |
+| Natural-language library browsing    | Discover any library item kind and its metadata in plain English without opening the Library Administration tools.           |
+| Any item type                        | One agent covers DXPs, data connections, information links, data functions, columns, folders, and more.                      |
+| Server-side filtering                | Discovery queries support filters by creator, title, and path, keeping responses focused even for large libraries.           |
+| Rich library metadata                | One call returns an item's basic info, type, authorship, permissions, and stored properties — for any kind.                  |
+| Connectivity Q&A                     | Quickly answer "can I reach system X?" questions by checking the registered data connections.                                |
 | Combines discovery and detail        | Multi-step questions are handled by chaining tools internally and presenting a single answer.                                 |
 | Works independently                  | No need to mark rows or attach tables — the agent acts on the question you type in the Spotfire Copilot Panel.               |
 
 ## Tips for Best Results
 
+- **Name the item kind.** Say "information links", "data functions", "data connections", or "DXPs" so the agent picks the right kind; if it's ambiguous it will ask.
 - **Filter early.** Mentioning a path prefix (`/public/Energy`) or author ("created by Evie") narrows the result set on the server side.
 - **Use title fragments.** Saying "DXPs with `sales` in the title" leverages server-side title contains-matching for fast, focused results.
 - **Cap your list.** For exploratory queries, asking for "the top 20" or "up to 25" keeps responses easy to scan.
-- **Reference a DXP explicitly.** When you want metadata, name the DXP (`SalesAnalysis.dxp`) or paste its ID for an exact lookup.
-- **Ask connectivity questions plainly.** "Can I connect to Snowflake?" is enough — the agent will check the connector list and answer.
-- **Stack questions.** It is fine to ask "List DXPs by Evie under `/public/Energy` and tell me how many tables the most recent one has" — the agent will chain the tool calls.
+- **Reference an item explicitly.** When you want metadata, name the item (`SalesAnalysis.dxp`) or paste its ID for an exact lookup.
+- **Ask connectivity questions plainly.** "Can I connect to Snowflake?" is enough — the agent will check the data connections and answer.
+- **Stack questions.** It is fine to ask "List DXPs by Evie under `/public/Energy` and show the properties of the most recent one" — the agent will chain the tool calls.
 - **Ask for help anytime.** Typing `help` or `what can you do?` returns the capability summary.
 
 ## Glossary
@@ -237,7 +227,8 @@ You:    Thanks.
 | Term                         | Definition                                                                                                                |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Spotfire Server              | The server that hosts the Spotfire library, user accounts, connectors, and web/automation services.                       |
-| Library                      | A hierarchical store on the Spotfire Server containing DXP files, data connections, information links, and other items.   |
+| Library                      | A hierarchical store on the Spotfire Server containing DXP files, data connections, information links, data functions, and many other item kinds. |
+| Library item / Item type     | Any object stored in the library. Its `type` (e.g. `spotfire.dxp`, `spotfire.dataconnection`, `spotfire.query`) determines its kind. |
 | DXP                          | A Spotfire Analysis file (`*.dxp`) containing visualizations, data tables, pages, bookmarks, and configuration.           |
 | Connector                    | A registered connection to an external system (Snowflake, Oracle, TDV, ODBC, etc.) that DXPs can use as a data source.    |
 | Information Link             | A legacy Spotfire mechanism for defining reusable, parameterized SQL queries against a data source.                       |
