@@ -543,6 +543,15 @@ config:
   osduMcpServerUrl: "https://mcp-osdu.<your-host>/mcp"
   osduMcpServerTransport: "streamable-http"
 
+  # Per-agent model override (optional): run ONE agent on a different model or
+  # provider than deepagentsModel above. Example -- osdu_agent on Azure while the
+  # rest stay on OpenAI (uncomment to use):
+  # extraEnv:
+  #   OSDU_DEEPAGENTS_MODEL: "azure_openai:my-osdu-deployment"
+  #   OSDU_AZURE_OPENAI_ENDPOINT: "https://<resource>.openai.azure.com"
+  #   OSDU_OPENAI_API_VERSION: "2024-10-21"
+  # Prefixes: OSDU, DATABRICKS, GENIE, DV, SFLIB, SFLIC, TAVILY, MILVUS, DDR, SUPPORT, SNOWFLAKE.
+
 secret:
   create: false
   existingSecretName: "deepagents-oss-secrets"
