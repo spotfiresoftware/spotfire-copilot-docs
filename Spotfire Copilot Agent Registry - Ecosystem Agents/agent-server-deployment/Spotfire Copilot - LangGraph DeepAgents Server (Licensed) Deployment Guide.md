@@ -274,6 +274,7 @@ Quick-start minimum set:
   - `OPENAI_API_KEY` for `openai:*`
   - `ANTHROPIC_API_KEY` for `anthropic:*`
   - `GOOGLE_API_KEY` for `google:*`
+  - Azure OpenAI: set `DEEPAGENTS_MODEL=azure_openai:<deployment-name>` (the value after the colon is the Azure **deployment** name, not the model name) plus `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION`.
 - For each enabled agent integration, set its `*_MCP_SERVER_URL`.
 - Set per-server `*_MCP_BEARER_TOKEN` values as required by your MCP backends, or set `MCP_BEARER_TOKEN` as a shared fallback.
 - Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored.
@@ -287,7 +288,11 @@ Commonly optional:
 
 | Variable | Required | Description | Example |
 |---|---|---|---|
-| DEEPAGENTS_MODEL | Yes | Model spec in `<provider>:<model>` format. | `openai:gpt-5.1` |
+| DEEPAGENTS_MODEL | Yes | Model spec in `<provider>:<model>` format. Use `openai:<model>` for public OpenAI or `azure_openai:<deployment-name>` for Azure OpenAI (the value after the colon is the Azure deployment name). | `openai:gpt-5.1` |
+| DEEPAGENTS_MODEL_PROVIDER | No | Optional. Not needed when `DEEPAGENTS_MODEL` uses the `azure_openai:` prefix. Only set to `azure` to force the Azure path when `DEEPAGENTS_MODEL` has no provider prefix (a bare deployment name). | `azure` |
+| AZURE_OPENAI_ENDPOINT | Conditional | Azure OpenAI resource endpoint. Required when `DEEPAGENTS_MODEL=azure_openai:*`. | `https://<resource>.openai.azure.com` |
+| AZURE_OPENAI_API_KEY | Conditional | Azure OpenAI API key. Required when `DEEPAGENTS_MODEL=azure_openai:*` (unless using Azure AD). | `<azure-openai-key>` |
+| OPENAI_API_VERSION | Conditional | Azure OpenAI API version. Required when `DEEPAGENTS_MODEL=azure_openai:*`. `AZURE_OPENAI_API_VERSION` is also accepted. | `2024-10-21` |
 | OPENAI_API_KEY | Conditional | Required when using an OpenAI model. | `<openai-key>` |
 | ANTHROPIC_API_KEY | Conditional | Required when using an Anthropic model. | `<anthropic-key>` |
 | GOOGLE_API_KEY | Conditional | Required when using a Google model. | `<google-key>` |
