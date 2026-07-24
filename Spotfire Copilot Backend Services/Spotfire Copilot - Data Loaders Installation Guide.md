@@ -1,8 +1,12 @@
 # Spotfire Copilot™ — Data Loaders Installation Guide
 
-> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, and 2.3.4 &nbsp;|&nbsp; **Last updated:** 23 June 2026 &nbsp;|&nbsp; **Applies to:** Data Loader Services
+> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, and 2.3.7 &nbsp;|&nbsp; **Last updated:** 24 July 2026 &nbsp;|&nbsp; **Applies to:** Data Loader Services
 >
-> This guide covers data-loader versions **2.3.0**, **2.3.1**, **2.3.2**, and **2.3.4**. For new deployments, use **2.3.4**.
+> This guide covers data-loader versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, and **2.3.7**. For new deployments, use **2.3.7**.
+>
+> ## What's new in 2.3.7
+>
+> **Redis metadata filtering now works out of the box.** When a RAG query is scoped to a single document — for example `{"source": "myfile.pdf"}` — Redis previously rejected the query with **`Unknown field at offset 1 near source`** because the metadata was stored but never declared as an indexed RediSearch field. From **2.3.7** the Redis data loader declares filterable fields at index-creation time, indexing **whatever metadata keys the ingested documents carry** (for PDFs, `source` as a tag and `page` as numeric) — matching the behaviour of the other supported vector stores. New indexes are filterable immediately; for an index built by an earlier loader, re-run the load with `drop_old=true`, or apply the in-place remediation in **§13 Troubleshooting → Document loading errors**. See **§6 Step 3 — Choose Your Knowledge Base (Vector Database) → Redis** for details and the optional `REDIS_FILTERABLE_FIELDS` override.
 >
 > ## Before you start: registry access is required for current images
 >
@@ -10,7 +14,7 @@
 >
 > ## Milvus PDF loading fix
 >
-> The Milvus / Zilliz PDF-ingestion failure that surfaces as **`ConnectionNotExistException`** during `/load` was fixed in **2.3.2**. That fix remains included in **2.3.4**, which is the recommended tag for all current data-loader deployments.
+> The Milvus / Zilliz PDF-ingestion failure that surfaces as **`ConnectionNotExistException`** during `/load` was fixed in **2.3.2**. That fix remains included in **2.3.4** and all later releases, including the recommended **2.3.7** tag.
 
 ---
 
@@ -121,8 +125,8 @@ All current images are hosted on the credentialed OCI registry at **`copilotoci.
 
 | Image | Description | Best For |
 |---|---|---|
-| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4` | **Basic text loader.** Extracts text from PDFs using PyPDF. Fast, lightweight, reliable. | Text-heavy PDFs, simple documents |
-| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.4` | **Advanced OCR loader.** Uses Unstructured.io for full document analysis — OCR, table extraction, layout preservation. | Scanned documents, image-heavy PDFs, complex layouts |
+| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7` | **Basic text loader.** Extracts text from PDFs using PyPDF. Fast, lightweight, reliable. | Text-heavy PDFs, simple documents |
+| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.7` | **Advanced OCR loader.** Uses Unstructured.io for full document analysis — OCR, table extraction, layout preservation. | Scanned documents, image-heavy PDFs, complex layouts |
 
 > **Which one should I use?** Start with the **Basic (PyPDF)** loader. It handles most
 > text-based PDFs well and is significantly faster. Only use the Advanced (Unstructured)
@@ -135,8 +139,8 @@ local PDFs or Azure Blob Storage:
 
 | Image | Description |
 |---|---|
-| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.4` | Load PDFs into Azure Cognitive Search |
-| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-azblob:2.3.4` | Load documents from Azure Blob Storage into Azure Cognitive Search |
+| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.7` | Load PDFs into Azure Cognitive Search |
+| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-azblob:2.3.7` | Load documents from Azure Blob Storage into Azure Cognitive Search |
 
 ### Plugin-based approach (recommended)
 
@@ -312,7 +316,7 @@ VECTORDB_URI=http://your-milvus-host:19530
 VECTORDB_TOKEN=root:Milvus
 ```
 
-Use **2.3.4** for Milvus and Zilliz deployments. Versions before **2.3.2** can fail during document ingestion with `ConnectionNotExistException` even though the target collection or index is created.
+Use **2.3.7** for Milvus and Zilliz deployments. Versions before **2.3.2** can fail during document ingestion with `ConnectionNotExistException` even though the target collection or index is created.
 
 ### Qdrant
 
@@ -340,6 +344,28 @@ VECTORDB_PLUGIN_ENTRY_POINT=plugins.vectordbs.redis:RedisRetrieverPlugin
 
 REDIS_URL=redis://your-redis-host:6379
 ```
+
+> **Metadata filtering (scoping RAG to a specific document).** The orchestrator
+> can scope a RAG query to one document by passing a metadata filter such as
+> `metadata_filter={"source": "myfile.pdf"}`. For this to work on Redis, the
+> `source` (and `page`) metadata must be declared as **indexed** RediSearch
+> fields when the index is created — not just stored on each document. The Redis
+> data loader now declares these fields automatically at index-creation time, in
+> line with the other supported vector stores (Milvus, Zilliz, Qdrant), which
+> all expose a filterable `source` field.
+>
+> - **Filterable fields:** by default the loader indexes **whatever metadata
+>   keys the ingested documents carry** (currently `source` as TAG and `page` as
+>   NUMERIC), so the filterable fields match the document shape automatically.
+>   To pin an explicit set instead, set `REDIS_FILTERABLE_FIELDS`, e.g.
+>   `REDIS_FILTERABLE_FIELDS=source:tag,page:numeric,category:tag`.
+> - **New indexes** created by a current loader are filterable out of the box.
+> - **Existing indexes** created by an older loader do **not** have these fields
+>   declared, and a filtered query fails with
+>   `Unknown field at offset 1 near source`. Re-run the load with `drop_old=true`
+>   to rebuild the index with the correct schema. See **§13 Troubleshooting →
+>   Document loading errors** for an in-place remediation that does not require
+>   re-ingestion.
 
 ### Azure Cognitive Search
 
@@ -496,7 +522,7 @@ DOCS_DIR=./pdf_docs
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -828,7 +854,7 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -858,7 +884,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -886,7 +912,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -918,7 +944,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -947,7 +973,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -978,7 +1004,7 @@ Use the same patterns above but replace the image:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.7
     # ... rest of configuration is identical
 ```
 
@@ -987,7 +1013,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1039,7 +1065,8 @@ services:
 | `/docs` directory empty in container | `DOCS_DIR` not set or wrong path | Verify `DOCS_DIR` in `.env` points to a real directory with files |
 | Embedding errors | Wrong embedding model or API key | Verify `EMBEDDING_MODEL_NAME` and API credentials |
 | Vector DB connection refused | Wrong URI/host or DB not running | Check `VECTORDB_URI` / `ZILLIZ_CLOUD_URI` / `PGVECTOR_CONNECTION_STRING` and connectivity |
-| `ConnectionNotExistException` during `/load` with Milvus or Zilliz | Running an older image that predates the connection-alias fix | Upgrade the data-loader image to `2.3.4`, redeploy, and retry the load |
+| `ConnectionNotExistException` during `/load` with Milvus or Zilliz | Running an older image that predates the connection-alias fix | Upgrade the data-loader image to `2.3.7`, redeploy, and retry the load |
+| Redis RAG query with `metadata_filter` fails: `Unknown field at offset 1 near source` | The Redis index was created by an older loader that stored `source`/`page` on each document but never declared them as **indexed** fields | Re-run the load with `drop_old=true` to rebuild the index with the filterable schema. To fix an existing index **without** re-ingesting, add the fields in place and let RediSearch background-index the already-stored values (run against the Redis **master**; replicas reject writes): `FT.ALTER <index> SCHEMA ADD source TAG SEPARATOR "\|" page NUMERIC` |
 | pgvector "extension not found" | `vector` extension not installed | Run `CREATE EXTENSION IF NOT EXISTS vector;` on the target database |
 | Timeout during loading | Large documents or slow network | Check logs; consider splitting large PDFs |
 
@@ -1080,7 +1107,7 @@ docker compose pull && docker compose up -d
 - **Rotate credentials regularly** — regenerate and restart
 - **Run containers as non-root** — the Data Loader images already run as a non-root user (`spotuser`)
 - **Limit network exposure** — if the Data Loader is only used internally, don't expose port 8080 externally
-- **Keep images up to date** — always use the latest tagged version (`2.3.4`)
+- **Keep images up to date** — always use the latest tagged version (`2.3.7`)
 - **Use TLS in production** — place a reverse proxy in front of the container for HTTPS
 
 ---

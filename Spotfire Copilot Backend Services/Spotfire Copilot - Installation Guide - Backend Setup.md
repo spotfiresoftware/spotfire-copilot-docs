@@ -1,8 +1,8 @@
 # Spotfire Copilot™ Installation Guide — Backend Setup
 
-> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, and 2.3.5 &nbsp;|&nbsp; **Last updated:** 29 June 2026 &nbsp;|&nbsp; **Applies to:** Orchestrator Service
+> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, 2.3.5, and 2.3.7 &nbsp;|&nbsp; **Last updated:** 24 July 2026 &nbsp;|&nbsp; **Applies to:** Orchestrator Service
 >
-> This guide covers backend versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, and **2.3.5**. New configuration introduced in 2.3.1, 2.3.2, and 2.3.4 is called out inline and summarised in **[Appendix D](#appendix-d--release-notes) — Release notes** at the end of this guide. **2.3.5 is a security release for the Admin Console** — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**.
+> This guide covers backend versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, **2.3.5**, and **2.3.7**. New configuration introduced in 2.3.1, 2.3.2, and 2.3.4 is called out inline and summarised in **[Appendix D](#appendix-d--release-notes) — Release notes** at the end of this guide. **2.3.5 is a security release for the Admin Console** — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**. **2.3.7 fixes Redis RAG metadata filtering** — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.7**.
 
 ## Table of Contents
 
@@ -114,8 +114,8 @@
 
 | Component | Latest Version | Notes |
 |-----------|---------------|-------|
-| **Orchestrator (backend)** | **2.3.5** | Drop-in replacement for 2.3.0–2.3.4 (no breaking changes, no required migrations). **Security release — operators running the Admin Console are strongly recommended to upgrade to 2.3.5.** See **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**. Still **required for GPT-5.x or o-series (`o1` / `o3` / `o4`) Azure OpenAI deployments** — set `OPENAI_GPT5_COMPATIBLE=true` (introduced in 2.3.4) in addition to upgrading the image. Existing deployments on GPT-4o, Claude, Bedrock, Gemini, Vertex AI, Mistral, Ollama, Cohere, Hugging Face, or NVIDIA NIM continue to be supported. See **[§11](#11-environment-variable-reference) Environment Variable Reference → GPT-5+ / o-series deployment flag** and **[Appendix D](#appendix-d--release-notes) — Release notes**. |
-| [**Data loaders**](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md) | **2.3.4** | Existing deployments on 2.3.2 or later do not need to upgrade. |
+| **Orchestrator (backend)** | **2.3.7** | Drop-in replacement for 2.3.0–2.3.5 (no breaking changes, no required migrations). **2.3.7 fixes Redis RAG metadata filtering** (`Unknown field ... near source`) — relevant only to Redis knowledge-base deployments that scope queries to a specific document; see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.7**. Includes the **2.3.5 Admin Console security release** — operators running the Admin Console are strongly recommended to be on 2.3.5 or later. Still **required for GPT-5.x or o-series (`o1` / `o3` / `o4`) Azure OpenAI deployments** — set `OPENAI_GPT5_COMPATIBLE=true` (introduced in 2.3.4) in addition to upgrading the image. Existing deployments on GPT-4o, Claude, Bedrock, Gemini, Vertex AI, Mistral, Ollama, Cohere, Hugging Face, or NVIDIA NIM continue to be supported. See **[§11](#11-environment-variable-reference) Environment Variable Reference → GPT-5+ / o-series deployment flag** and **[Appendix D](#appendix-d--release-notes) — Release notes**. |
+| [**Data loaders**](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md) | **2.3.7** | Redis deployments should upgrade to 2.3.7 for metadata-filtered RAG. Other vector-store deployments on 2.3.2 or later do not need to upgrade. |
 | [**Spotfire client packages**](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md) | **2.3.4** | Compatible with the 2.3.0, 2.3.1, 2.3.2, and 2.3.4 backends. |
 | [**Agent Registry — Domain Agents Container**](../Spotfire%20Copilot%20Agent%20Registry%20-%20Domain%20Agents/Spotfire%20Copilot%20-%20Agent%20Registry%20Installation%20Guide.md) | **1.1.0** | *Optional.* Industry-vertical agents (e.g. Well Recompletions) plus the [Agent Registry Toolkit](../Spotfire%20Copilot%20Agent%20Registry%20Toolkit/Spotfire%20Copilot%20-%20Agent%20Registry%20Toolkit%20User%20Guide.md) for building your own. See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
 | [**Agent Registry — Platform Integrations Container**](https://community.spotfire.com/articles/spotfire/langgraph-deepagents-server-licensed-deployment-guide/) | **1.0.0** | *Optional.* Ecosystem integration agents (Databricks, Snowflake, OSDU, and more). Deployed via the LangGraph DeepAgents Server — [Licensed](https://community.spotfire.com/articles/spotfire/langgraph-deepagents-server-licensed-deployment-guide/) or [OSS](https://community.spotfire.com/articles/spotfire/langgraph-deepagents-server-oss-deployment-guide/). See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
@@ -2478,6 +2478,31 @@ max_wal_senders = 0                 # only during initial data load
 ---
 
 ## Appendix D — Release notes
+
+### What's new in 2.3.7
+
+Released 24 July 2026. **Backwards-compatible drop-in replacement for 2.3.0–2.3.5** — no breaking changes, no required migrations, and no new mandatory environment variables.
+
+> **Who needs this?** Operators who use **Redis** as the knowledge-base vector store and scope RAG queries to a specific document (metadata filtering, e.g. `{"source": "myfile.pdf"}`). Deployments on other vector stores (Milvus, Zilliz, Qdrant, Chroma, pgvector, MongoDB Atlas) are unaffected. There are no security fixes in 2.3.7.
+
+**Bug fix:**
+
+- **Redis RAG metadata filtering** — a metadata-filtered RAG query against Redis previously failed with **`Unknown field at offset 1 near source`**. The metadata (`source`, `page`) was stored on each vector but had never been declared as an **indexed** RediSearch field, so RediSearch rejected the filter. This release makes the orchestrator's Redis retriever build type-aware filters (tag for `source`, numeric for `page`) and **self-heal an existing index**: on the first filtered query it declares any missing filterable fields via `FT.ALTER`, then queries. The companion fix in the **2.3.7 data loaders** declares these fields at index-creation time, so new indexes are filterable immediately. See the **Data Loaders Installation Guide → What's new in 2.3.7** for the loader side.
+
+**Behaviour notes:**
+
+- The self-heal runs once per index and triggers a single background re-scan of already-stored values (no re-ingestion needed). It is idempotent and only adds fields that are missing.
+- The self-heal must reach the Redis **master** — read replicas reject the `FT.ALTER` write (logged, not fatal). For a clean rebuild instead, re-run the data load with `drop_old=true`.
+
+**Upgrade procedure:**
+
+For Docker Compose deployments, change `IMAGE_TAG` to `2.3.7` and restart:
+
+```bash
+IMAGE_TAG=2.3.7 docker compose up -d
+```
+
+For Kubernetes, AWS ECS, Azure Container Apps, GCP Cloud Run, and other manifest-driven deployments, update the orchestrator image tag from `:2.3.5` (or earlier) to `:2.3.7` and apply. No environment-variable or schema changes are needed.
 
 ### What's new in 2.3.5
 
