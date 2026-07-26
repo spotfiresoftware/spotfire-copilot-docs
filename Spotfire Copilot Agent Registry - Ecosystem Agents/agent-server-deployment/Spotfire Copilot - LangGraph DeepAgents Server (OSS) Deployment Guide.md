@@ -258,8 +258,19 @@ A2A_AUTH_MODE=bearer
 A2A_AUTH_PUBLIC_CARD=true
 A2A_BEARER_TOKENS=change-me-token-1,change-me-token-2
 
+# LLM: public OpenAI (default).
 OPENAI_API_KEY=replace-me
 DEEPAGENTS_MODEL=openai:gpt-5.1
+# For Azure OpenAI, comment out the two lines above and use these instead
+# (the value after the colon is the Azure DEPLOYMENT name, not the model name):
+# DEEPAGENTS_MODEL=azure_openai:my-gpt5-deployment
+# AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
+# AZURE_OPENAI_API_KEY=replace-me
+# OPENAI_API_VERSION=2024-10-21
+# DEEPAGENTS_MODEL_PROVIDER is optional and usually unnecessary — the azure_openai:
+# prefix already selects Azure. Only set it to "azure" to force Azure when
+# DEEPAGENTS_MODEL has NO provider prefix (a bare deployment name).
+# DEEPAGENTS_MODEL_PROVIDER=azure
 
 # Enable only the agents you need.
 AGENTS_ENABLED=osdu_agent
@@ -358,7 +369,8 @@ Quick-start minimum set:
   - `OPENAI_API_KEY` for `openai:*`
   - `ANTHROPIC_API_KEY` for `anthropic:*`
   - `GOOGLE_API_KEY` for `google:*`
-- Configure one A2A authentication mode via `A2A_AUTH_MODE` and set matching credentials (for example `A2A_BEARER_TOKENS` for `bearer`).
+  - Azure OpenAI: set `DEEPAGENTS_MODEL=azure_openai:<deployment-name>` (the value after the colon is the Azure **deployment** name, not the model name) plus `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION`.
+- Optional per-agent override: prefix any model variable with an agent's MCP prefix to change just that agent (same convention as `<PREFIX>_MCP_SERVER_URL`). For example, keep the fleet on OpenAI but move only `osdu_agent` to Azure by setting `OSDU_DEEPAGENTS_MODEL=azure_openai:<deployment>` (the `AZURE_*` vars are shared globally, or can be overridden as `OSDU_AZURE_OPENAI_*`). Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`, `SNOWFLAKE`. and set matching credentials (for example `A2A_BEARER_TOKENS` for `bearer`).
 - For each enabled agent integration, set `*_MCP_SERVER_URL`.
 - Set per-server `*_MCP_BEARER_TOKEN` values as required by your MCP backends, or set `MCP_BEARER_TOKEN` as a shared fallback.
 - Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored.
@@ -399,7 +411,11 @@ Commonly optional:
 | OPENAI_API_KEY | Conditional | Required when using `DEEPAGENTS_MODEL=openai:*`. | `<openai-key>` |
 | ANTHROPIC_API_KEY | Conditional | Required when using `DEEPAGENTS_MODEL=anthropic:*`. | `<anthropic-key>` |
 | GOOGLE_API_KEY | Conditional | Required when using `DEEPAGENTS_MODEL=google:*`. | `<google-key>` |
-| DEEPAGENTS_MODEL | Yes | Model spec as `<provider>:<model>`. | `openai:gpt-5.1` |
+| DEEPAGENTS_MODEL | Yes | Model spec as `<provider>:<model>`. Use `openai:<model>` for public OpenAI or `azure_openai:<deployment-name>` for Azure OpenAI (the value after the colon is the Azure deployment name). | `openai:gpt-5.1` |
+| DEEPAGENTS_MODEL_PROVIDER | No | Optional. Not needed when `DEEPAGENTS_MODEL` uses the `azure_openai:` prefix. Only set to `azure` to force the Azure path when `DEEPAGENTS_MODEL` has no provider prefix (a bare deployment name). | `azure` |
+| AZURE_OPENAI_ENDPOINT | Conditional | Azure OpenAI resource endpoint. Required when `DEEPAGENTS_MODEL=azure_openai:*`. | `https://<resource>.openai.azure.com` |
+| AZURE_OPENAI_API_KEY | Conditional | Azure OpenAI API key. Required when `DEEPAGENTS_MODEL=azure_openai:*` (unless using Azure AD). | `<azure-openai-key>` |
+| OPENAI_API_VERSION | Conditional | Azure OpenAI API version. Required when `DEEPAGENTS_MODEL=azure_openai:*`. `AZURE_OPENAI_API_VERSION` is also accepted. | `2024-10-21` |
 | MCP_BEARER_TOKEN | No | Global fallback bearer token for MCP servers when per-server token is not set. | `shared-mcp-token` |
 | MCP_CLIENT_ID | Conditional | Keycloak client_id for outbound MCP auth (`aud=mcp`). Required to enable the in-process token minter; must be set together with `MCP_CLIENT_SECRET` and `KEYCLOAK_TOKEN_URL`. | `mcp-clients` |
 | MCP_CLIENT_SECRET | Conditional | Keycloak client_secret paired with `MCP_CLIENT_ID`. | `<secret>` |
@@ -527,6 +543,15 @@ config:
   osduMcpServerUrl: "https://mcp-osdu.<your-host>/mcp"
   osduMcpServerTransport: "streamable-http"
 
+  # Per-agent model override (optional): run ONE agent on a different model or
+  # provider than deepagentsModel above. Example -- osdu_agent on Azure while the
+  # rest stay on OpenAI (uncomment to use):
+  # extraEnv:
+  #   OSDU_DEEPAGENTS_MODEL: "azure_openai:my-osdu-deployment"
+  #   OSDU_AZURE_OPENAI_ENDPOINT: "https://<resource>.openai.azure.com"
+  #   OSDU_OPENAI_API_VERSION: "2024-10-21"
+  # Prefixes: OSDU, DATABRICKS, GENIE, DV, SFLIB, SFLIC, TAVILY, MILVUS, DDR, SUPPORT, SNOWFLAKE.
+
 secret:
   create: false
   existingSecretName: "deepagents-oss-secrets"
@@ -540,6 +565,10 @@ Required keys in `deepagents-oss-secrets` for this example:
 - `A2A_BEARER_TOKENS`
 - `OSDU_MCP_BEARER_TOKEN`
 - `MCP_CLIENT_SECRET` (only when enabling the Keycloak outbound-token minter; pair with `MCP_CLIENT_ID` and `KEYCLOAK_TOKEN_URL` in `config.*`)
+
+> **Azure OpenAI.** To use Azure instead of public OpenAI, set `config.deepagentsModel: "azure_openai:<deployment-name>"` (the value after the colon is the Azure deployment name), `config.azureOpenaiEndpoint: "https://<resource>.openai.azure.com"`, and `config.openaiApiVersion: "2024-10-21"`. Provide `AZURE_OPENAI_API_KEY` in the Secret (via `secret.azureOpenaiApiKey`, or your `existingSecretName` Secret) instead of `OPENAI_API_KEY`. Optionally set `config.modelProvider: "azure"` to force the Azure path regardless of the model prefix.
+>
+> **Per-agent override (Helm).** To change the model for a single agent, add its `<PREFIX>_`-scoped variables via `config.extraEnv` (non-secret) and `secret.extraSecretEnv` (secret). For example, keep the fleet on OpenAI but move `osdu_agent` to Azure with `config.extraEnv: { OSDU_DEEPAGENTS_MODEL: "azure_openai:<deployment>", AZURE_OPENAI_ENDPOINT: "https://<resource>.openai.azure.com", OPENAI_API_VERSION: "2024-10-21" }` and `secret.extraSecretEnv: { AZURE_OPENAI_API_KEY: "<azure-key>" }`. Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`, `SNOWFLAKE`.
 
 #### 5.1.2 Install
 
