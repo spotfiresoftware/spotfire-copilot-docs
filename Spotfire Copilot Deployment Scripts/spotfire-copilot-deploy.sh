@@ -8,9 +8,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 START_DIR="$(pwd)"
 DEFAULT_IMAGE_TAG="${DEFAULT_IMAGE_TAG:-2.3.4}"
 DEFAULT_AGENT_TAG="${DEFAULT_AGENT_TAG:-}"
-DEFAULT_OUTPUT_ROOT="${START_DIR}/spotfire-copilot-${DEFAULT_IMAGE_TAG}"
-OUT_DIR="${OUT_DIR:-${DEFAULT_OUTPUT_ROOT}/backend}"
-OUT_DIR_EXPLICIT="no"
+# All installs live under a single parent folder, one subfolder per version:
+#   <root>/spotfire-copilot/<image-tag>/backend
+# The real backend directory is finalized once the image tag is known (interactive),
+# or taken from --dir / the OUT_DIR environment variable.
+COPILOT_ROOT_DIR="${COPILOT_ROOT_DIR:-${START_DIR}/spotfire-copilot}"
+if [[ -n "${OUT_DIR:-}" ]]; then
+  OUT_DIR_EXPLICIT="yes"
+else
+  OUT_DIR="${COPILOT_ROOT_DIR}/${DEFAULT_IMAGE_TAG}/backend"
+  OUT_DIR_EXPLICIT="no"
+fi
 FROM_DIR=""
 DEFAULT_CREDENTIALS_FILE=""
 CREDENTIALS_SCRIPT="${CREDENTIALS_SCRIPT:-}"
@@ -86,9 +94,9 @@ mask() {
 }
 
 prompt() {
-  local var_name="$1" label="$2" default_value="${3:-}" secret="${4:-false}" __prompt_input=""
+  local var_name="$1" label="$2" default_value="${3:-}" secret="${4:-false}" default_hint="${5:-}" __prompt_input=""
   if [[ "$secret" == "true" ]]; then
-    if [[ -n "$default_value" ]]; then read -r -s -p "${label} [press Enter to reuse existing]: " __prompt_input; echo; else read -r -s -p "${label}: " __prompt_input; echo; fi
+    if [[ -n "$default_value" ]]; then read -r -s -p "${label} [${default_hint:-press Enter to reuse existing}]: " __prompt_input; echo; else read -r -s -p "${label}: " __prompt_input; echo; fi
   else
     if [[ -n "$default_value" ]]; then read -r -p "${label} [${default_value}]: " __prompt_input; else read -r -p "${label}: " __prompt_input; fi
   fi
@@ -197,10 +205,18 @@ prompt_image_tag() {
   local var_name="$1" label="$2" default_value="${3:-}" repo="${4:-}" tag="" rc=0
   while true; do
     prompt tag "$label" "$default_value"
+    # Strip control characters first (stray CR/LF/tab from CRLF files or copy-paste,
+    # common on Windows) so an otherwise-valid tag such as "2.3.6" is not falsely
+    # rejected. Surrounding whitespace/quotes are removed next; genuine internal
+    # spaces survive so real typos are still flagged.
+    tag="$(printf '%s' "$tag" | tr -d '[:cntrl:]')"
     tag="$(strip_outer_quotes "$tag")"
     if [[ -z "$tag" ]]; then printf -v "$var_name" '%s' ""; return 0; fi
     if ! valid_tag_format "$tag"; then
       warn "Invalid image tag '$tag'. Allowed: letters, digits, '.', '_', '-' (max 128 chars). Example: 2.3.4 or latest"
+      # Interactive users can simply retry. In a non-interactive/piped run there is
+      # no one to correct the value, so fail fast instead of looping forever.
+      [[ -t 0 ]] || die "Non-interactive input: no valid image tag was provided. Pass a valid tag such as 2.3.6 or latest."
       continue
     fi
     if [[ -n "$repo" ]]; then
@@ -334,16 +350,16 @@ Usage:
 Interactive generation:
  ./spotfire-copilot-deploy.sh
  ./spotfire-copilot-deploy.sh --dir /opt/spotfire-copilot/backend
- # Default output directory is: ./spotfire-copilot-<image-tag>/backend
+ # Default output directory is: ./spotfire-copilot/<image-tag>/backend
 
 Info:
  ./spotfire-copilot-deploy.sh --info
  ./spotfire-copilot-deploy.sh --dir /opt/spotfire-copilot/backend --info
 
 Upgrade tags and create a new versioned folder:
- ./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.4
- ./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.4 --from-dir /root/spotfire-copilot-2.3.4/backend
- ./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.4 --agent-tag 1.0.0
+ ./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.6
+ ./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.6 --from-dir /root/spotfire-copilot/2.3.4/backend
+ ./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.6 --agent-tag 1.0.0
 
 Options:
  --help              Show this help.
@@ -351,7 +367,7 @@ Options:
  --upgrade           Update IMAGE_TAG, FASTAPI_APP_VERSION, and optionally AGENT_CONTAINER_TAG.
  --image-tag TAG     Orchestrator/admin/data-loader image tag for upgrade mode.
  --agent-tag TAG     Agent Registry image tag for upgrade mode.
- --dir DIR           Output directory. Default: ./spotfire-copilot-<image-tag>/backend.
+ --dir DIR           Output directory. Default: ./spotfire-copilot/<image-tag>/backend.
  --from-dir DIR      Source directory for upgrade mode. Defaults to last used directory.
  --install-prereqs   Install/check Linux prerequisites automatically when possible.
  --no-install-prereqs Do not install prerequisites; fail if Python/bcrypt are missing.
@@ -450,10 +466,19 @@ normalize_credentials_path() {
   printf '%s' "$p"
 }
 
+# The Compose "postgres_data" volume is given an explicit, version-scoped name of
+# "<project>_postgres_data_<IMAGE_TAG>" so each deployed version keeps its own volume.
+# Scope all detection/reset logic to THIS deployment's project+version volume so we
+# never match (or delete) a postgres_data volume that belongs to another project or
+# another version on the same host.
+compose_postgres_volume_name() {
+  printf '%s_postgres_data_%s' "${COMPOSE_PROJECT_NAME:-spotfire-copilot}" "${IMAGE_TAG:-${DEFAULT_IMAGE_TAG}}"
+}
+
 existing_backend_state_detected() {
  [[ -f "$OUT_DIR/.env.orchestrator" ]] && return 0
   if command -v docker >/dev/null 2>&1; then
-    docker volume ls -q 2>/dev/null | grep -Eq '(^|_)postgres_data$' && return 0
+    docker volume inspect "$(compose_postgres_volume_name)" >/dev/null 2>&1 && return 0
   fi
   return 1
 }
@@ -461,7 +486,7 @@ existing_backend_state_detected() {
 
 existing_compose_postgres_volume_detected() {
   command -v docker >/dev/null 2>&1 || return 1
-  docker volume ls -q 2>/dev/null | grep -Eq '(^|_)postgres_data$'
+  docker volume inspect "$(compose_postgres_volume_name)" >/dev/null 2>&1
 }
 
 write_reset_compose_postgres_helper() {
@@ -483,12 +508,15 @@ if [[ ! -f "$COMPOSE_FILE" ]]; then
 fi
 
 PROJECT_NAME=""
+IMAGE_TAG=""
 if [[ -f "$ENV_FILE" ]]; then
  PROJECT_NAME="$(awk -F= '/^COMPOSE_PROJECT_NAME=/{val=$0; sub(/^[^=]*=/,"",val)} END{print val}' "$ENV_FILE" | tr -d '\r')"
+ IMAGE_TAG="$(awk -F= '/^IMAGE_TAG=/{val=$0; sub(/^[^=]*=/,"",val)} END{print val}' "$ENV_FILE" | tr -d '\r')"
 fi
 
 PROJECT_NAME="${PROJECT_NAME:-spotfire-copilot}"
-POSTGRES_VOLUME="${PROJECT_NAME}_postgres_data"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
+POSTGRES_VOLUME="${PROJECT_NAME}_postgres_data_${IMAGE_TAG}"
 
 cat <<WARN
 This will stop the Copilot Docker Compose stack and delete ONLY the local PostgreSQL volume below:
@@ -511,7 +539,7 @@ if ! docker volume inspect "$POSTGRES_VOLUME" >/dev/null 2>&1; then
  echo "ERROR: Expected PostgreSQL volume was not found: $POSTGRES_VOLUME" >&2
  echo
  echo "Available postgres_data-like volumes:" >&2
- docker volume ls -q | grep -E '(^|_)postgres_data$' >&2 || true
+ docker volume ls -q | grep -E '_postgres_data(_|$)' >&2 || true
  echo
  echo "No volume was deleted." >&2
  exit 1
@@ -546,11 +574,42 @@ set_default_dir_for_info() {
   fi
 }
 
+versioned_backend_dir() {
+  # Standard backend path for a given image tag: <root>/spotfire-copilot/<tag>/backend
+  printf '%s/%s/backend' "$COPILOT_ROOT_DIR" "$1"
+}
+
 versioned_backend_dir_from_source() {
-  local src_dir="$1" tag="$2" parent grand
-  parent="$(dirname "$src_dir")"
-  grand="$(dirname "$parent")"
-  printf '%s/spotfire-copilot-%s/backend' "$grand" "$tag"
+  local src_dir="$1" tag="$2" ver_dir root
+  ver_dir="$(dirname "$src_dir")"   # <root>/spotfire-copilot/<oldtag>  (new layout)
+  root="$(dirname "$ver_dir")"      # <root>/spotfire-copilot           (new layout)
+  # If the source does not follow the new "<root>/spotfire-copilot/<tag>/backend"
+  # layout (e.g. an older "spotfire-copilot-<tag>/backend" install), fall back to the
+  # standard versioned root so upgrades migrate into the new structure.
+  if [[ "$(basename "$root")" != "spotfire-copilot" ]]; then
+    root="$COPILOT_ROOT_DIR"
+  fi
+  printf '%s/%s/backend' "$root" "$tag"
+}
+
+finalize_out_dir_for_tag() {
+  # Finalize the interactive backend directory once the image tag is known. Honors an
+  # explicit --dir/OUT_DIR; otherwise defaults to the versioned path and lets the user
+  # confirm or override it. Creates the directory and refreshes existing-file/credential
+  # detection so re-runs of the same tag reuse prior values.
+  local tag="$1" computed="" input=""
+  if [[ "$OUT_DIR_EXPLICIT" == "no" ]]; then
+    computed="$(versioned_backend_dir "$tag")"
+    read -r -p "Backend output directory [${computed}]: " input || true
+    input="$(printf '%s' "$input" | tr -d '[:cntrl:]')"
+    input="$(strip_outer_quotes "$input")"
+    [[ -n "$input" ]] && computed="$input"
+    OUT_DIR="$computed"
+  fi
+  mkdir -p "$OUT_DIR"; cd "$OUT_DIR"; OUT_DIR="$(pwd)"
+  DEFAULT_CREDENTIALS_FILE="$(detect_default_credentials_file)"
+  EXISTING_FILES=("$OUT_DIR/.env" "$OUT_DIR/.env.orchestrator" "$OUT_DIR/.env.dataloader" "$OUT_DIR/.env.agent-registry")
+  info "Backend output directory: $OUT_DIR"
 }
 
 copy_existing_config_to_new_dir() {
@@ -810,7 +869,7 @@ run_upgrade() {
 
   local source_dir="${FROM_DIR:-}"
   if [[ -z "$source_dir" ]]; then source_dir="$(last_out_dir || true)"; fi
- [[ -n "$source_dir" ]] || die "No previous install directory found. Use --from-dir /path/to/spotfire-copilot-2.3.2/backend."
+ [[ -n "$source_dir" ]] || die "No previous install directory found. Use --from-dir /path/to/spotfire-copilot/2.3.4/backend."
  [[ -d "$source_dir" ]] || die "Source directory not found: $source_dir"
 
   if [[ "$OUT_DIR_EXPLICIT" == "no" ]]; then
@@ -906,7 +965,7 @@ write_or_update_agent_registry_compose_service() {
     function emit() {
       print "  agent-registry:"
       print "    image: copilotoci.azurecr.io/spotfirecopilot/agent-container:${AGENT_CONTAINER_TAG}"
-      print "    container_name: spotfire-agent-registry"
+      print "    container_name: spotfire-agent-registry-${AGENT_CONTAINER_TAG}"
       print "    restart: unless-stopped"
       print "    ports:"
       print "      - \"8050:8050\""
@@ -918,8 +977,6 @@ write_or_update_agent_registry_compose_service() {
       print "    volumes:"
       print "      - /opt/spotfire-agent-registry/custom-workflows:/custom-workflows:ro"
       print "      - /opt/spotfire-agent-registry/logs:/conversation-logs"
-      print "    networks:"
-      print "      - orchestrator-network"
       print "    healthcheck:"
       print "      test: [\"CMD\", \"curl\", \"-f\", \"http://localhost:8050/healthz\"]"
       print "      interval: 30s"
@@ -2425,6 +2482,526 @@ EOM
   info "Use the generated checklist to configure cloud secrets/env vars in the selected platform."
 }
 
+# ---------- kubernetes (Helm) mode ----------
+
+# Map an LLM provider key to the orchestrator chart's model plugin entry point.
+k8s_model_plugin() {
+  case "$1" in
+    azure_openai) echo "plugins.models.azure_openai_enhanced:AzureOpenAIPlugin" ;;
+    openai)       echo "plugins.models.openai_enhanced:OpenAIPlugin" ;;
+    aws_bedrock)  echo "plugins.models.bedrock_enhanced:BedrockPlugin" ;;
+    vertex_ai)    echo "plugins.models.vertexai_enhanced:VertexAIPlugin" ;;
+    gemini)       echo "plugins.models.gemini_enhanced:GeminiPlugin" ;;
+    nvidia_nim)   echo "plugins.models.nvidia_nim_enhanced:NvidiaNimPlugin" ;;
+    ollama)       echo "plugins.models.ollama_enhanced:OllamaPlugin" ;;
+    *)            echo "" ;;
+  esac
+}
+
+# Map an embeddings provider key to the orchestrator chart's embeddings plugin entry point.
+k8s_embeddings_plugin() {
+  case "$1" in
+    azure_openai) echo "plugins.embeddings.az_openai:AzOpenAIEmbeddingsPlugin" ;;
+    openai)       echo "plugins.embeddings.openai:OpenAIEmbeddingsPlugin" ;;
+    aws_bedrock)  echo "plugins.embeddings.bedrock:BedrockEmbeddingsPlugin" ;;
+    vertex_ai)    echo "plugins.embeddings.vertexai:VertexAIEmbeddingsPlugin" ;;
+    nvidia_nim)   echo "plugins.embeddings.nvidia_nim:NvidiaNimEmbeddingsPlugin" ;;
+    ollama)       echo "plugins.embeddings.ollama:OllamaEmbeddingsPlugin" ;;
+    *)            echo "" ;;
+  esac
+}
+
+# Map a vector DB / retriever key to the orchestrator chart's retriever plugin entry point.
+k8s_retriever_plugin() {
+  case "$1" in
+    azure_ai_search)      echo "plugins.retrievers.az_cog_search:AzCognitiveSearchRetrieverPlugin" ;;
+    milvus)               echo "plugins.retrievers.milvus:MilvusRetrieverPlugin" ;;
+    zilliz)               echo "plugins.retrievers.zilliz:ZillizRetrieverPlugin" ;;
+    vertex_vector_search) echo "plugins.retrievers.vertexai_vector_search:VertexAIVectorSearchRetrieverPlugin" ;;
+    aws_bedrock_kb)       echo "plugins.retrievers.amazon_kbs:AmazonKBsRetrieverPlugin" ;;
+    *)                    echo "" ;;
+  esac
+}
+
+# Generate a Helm values bundle (values.yaml + secrets.values.yaml + helm-install.sh)
+# for the official orchestrator-stack OCI chart. No cluster access is needed to
+# generate the files; the operator runs helm-install.sh from a machine with helm
+# and kubectl configured against the target cluster.
+run_kubernetes_mode() {
+  local K8S_CHART_VERSION="0.3.1"
+  local k8s_dir="$OUT_DIR/k8s"
+
+  section "Kubernetes (Helm) mode"
+  info "This mode generates a Helm values bundle for the official Spotfire Copilot 'orchestrator-stack' chart."
+  info "It writes values.yaml, secrets.values.yaml, helm-install.sh, and copilot-generated-values.txt under: $k8s_dir"
+  info "The generated helm-install.sh deploys the orchestrator, optional Admin Console, and optional in-cluster PostgreSQL."
+
+  # Credentials first: run the official generate_credentials.py (mandated next to this
+  # installer, exactly like the Linux VM flow) and capture its output so real values are
+  # written into secrets.values.yaml instead of leaving blanks for manual pasting.
+  section "Credentials"
+  info "This mode runs the official generate_credentials.py and writes SECRET_KEY, HASHED_ADMIN_PASSWORD, OAUTH2_CLIENT_ID, and OAUTH2_CLIENT_SECRET_HASH into secrets.values.yaml."
+  ensure_linux_prereqs
+  mkdir -p "$k8s_dir"
+  generate_credentials_file "$k8s_dir/copilot-generated-values.txt"
+  local K8S_SECRET_KEY K8S_HASHED_ADMIN_PW K8S_OAUTH_ID K8S_OAUTH_HASH
+  K8S_SECRET_KEY="$(get_from_credentials_file SECRET_KEY "$CREDENTIALS_FILE")"
+  K8S_HASHED_ADMIN_PW="$(get_from_credentials_file HASHED_ADMIN_PASSWORD "$CREDENTIALS_FILE")"
+  K8S_OAUTH_ID="$(get_from_credentials_file OAUTH2_CLIENT_ID "$CREDENTIALS_FILE")"
+  K8S_OAUTH_HASH="$(get_from_credentials_file OAUTH2_CLIENT_SECRET_HASH "$CREDENTIALS_FILE")"
+
+  prompt K8S_NAMESPACE "Kubernetes namespace to deploy into" "copilot"
+  prompt_image_tag IMAGE_TAG "Copilot orchestrator image tag" "${DEFAULT_IMAGE_TAG}" "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator"
+  [[ -n "$IMAGE_TAG" ]] || IMAGE_TAG="${DEFAULT_IMAGE_TAG}"
+  prompt K8S_PULL_SECRET "Name of the Kubernetes image pull Secret for the ACR registry" "orchestrator-acr-pull"
+
+  yes_no_num K8S_BUNDLED_DB "Deploy a PostgreSQL container inside the cluster (bundled)? Choose No to use an external/managed PostgreSQL." "no"
+  local pg_password="" db_url="" sync_db_url="" K8S_PG_STORAGE_CLASS="" K8S_PG_SIZE="100Gi"
+  if [[ "$K8S_BUNDLED_DB" == "yes" ]]; then
+    pg_password="$(random_hex_32)"
+    db_url="postgresql+asyncpg://orchestrator:${pg_password}@orchestrator-postgresql:5432/orchestrator"
+    sync_db_url="postgresql://orchestrator:${pg_password}@orchestrator-postgresql:5432/orchestrator"
+    prompt K8S_PG_STORAGE_CLASS "StorageClass for the bundled PostgreSQL volume (leave blank for the cluster default)" ""
+    prompt K8S_PG_SIZE "Persistent volume size for the bundled PostgreSQL" "100Gi"
+    info "A random PostgreSQL password was generated and written into secrets.values.yaml and the database URLs."
+  else
+    info "You chose external PostgreSQL. databaseUrl and syncDatabaseUrl will be left blank in secrets.values.yaml for you to fill in."
+  fi
+
+  yes_no_num ENABLE_ADMIN_CONSOLE "Deploy the Admin Console alongside the orchestrator?" "yes"
+
+  choose_num LLM_PROVIDER "Which LLM provider will the orchestrator use?" "1" \
+    "azure_openai|Azure OpenAI" \
+    "openai|OpenAI" \
+    "aws_bedrock|AWS Bedrock" \
+    "vertex_ai|Google Vertex AI" \
+    "gemini|Google Gemini API" \
+    "nvidia_nim|NVIDIA NIM" \
+    "ollama|Ollama / self-hosted"
+  local model_plugin
+  model_plugin="$(k8s_model_plugin "$LLM_PROVIDER")"
+
+  yes_no_num ENABLE_RAG "Enable RAG / vector-store retrieval?" "no"
+  local embeddings_plugin="" retriever_plugin=""
+  if [[ "$ENABLE_RAG" == "yes" ]]; then
+    choose_num EMBEDDING_PROVIDER "Which embeddings provider?" "1" \
+      "azure_openai|Azure OpenAI embeddings" \
+      "openai|OpenAI embeddings" \
+      "aws_bedrock|AWS Bedrock embeddings" \
+      "vertex_ai|Google Vertex AI embeddings" \
+      "nvidia_nim|NVIDIA NIM embeddings" \
+      "ollama|Ollama embeddings"
+    embeddings_plugin="$(k8s_embeddings_plugin "$EMBEDDING_PROVIDER")"
+    choose_num VECTOR_DB_PROVIDER "Which retriever / vector store?" "1" \
+      "azure_ai_search|Azure AI Search / Azure Cognitive Search" \
+      "milvus|Milvus" \
+      "zilliz|Zilliz Cloud" \
+      "vertex_vector_search|Vertex AI Vector Search" \
+      "aws_bedrock_kb|AWS Bedrock Knowledge Bases"
+    retriever_plugin="$(k8s_retriever_plugin "$VECTOR_DB_PROVIDER")"
+  else
+    EMBEDDING_PROVIDER="none"
+    VECTOR_DB_PROVIDER="none"
+  fi
+
+  choose_num K8S_INGRESS_CLASS "Which ingress controller class should the Ingress resources use?" "1" \
+    "nginx|NGINX Ingress Controller" \
+    "alb|AWS ALB (aws-load-balancer-controller)" \
+    "none|No Ingress (use port-forward or your own routing)"
+  local K8S_ORCH_HOST="" K8S_CONSOLE_HOST="" K8S_TLS="no" K8S_ORCH_TLS_SECRET="" K8S_CONSOLE_TLS_SECRET=""
+  if [[ "$K8S_INGRESS_CLASS" != "none" ]]; then
+    prompt K8S_ORCH_HOST "Hostname for the orchestrator Ingress" "orchestrator.example.com"
+    if [[ "$ENABLE_ADMIN_CONSOLE" == "yes" ]]; then
+      prompt K8S_CONSOLE_HOST "Hostname for the Admin Console Ingress" "orchestrator-console.example.com"
+    fi
+    yes_no_num K8S_TLS "Enable TLS on the Ingress host(s)? Requires TLS Secret(s) to already exist in namespace ${K8S_NAMESPACE}." "no"
+    if [[ "$K8S_TLS" == "yes" ]]; then
+      prompt K8S_ORCH_TLS_SECRET "TLS Secret name for the orchestrator host" "orchestrator-tls"
+      if [[ "$ENABLE_ADMIN_CONSOLE" == "yes" ]]; then
+        prompt K8S_CONSOLE_TLS_SECRET "TLS Secret name for the Admin Console host" "orchestrator-console-tls"
+      fi
+    fi
+  fi
+
+  prompt_positive_int K8S_REPLICAS "Orchestrator replica count" "2"
+  yes_no_num K8S_HPA "Enable Horizontal Pod Autoscaling (HPA) for the orchestrator?" "no"
+  local hpa_max="10"
+  if [[ "$K8S_HPA" == "yes" ]]; then
+    prompt_positive_int K8S_HPA_MAX "Maximum orchestrator replicas for HPA" "10"
+    hpa_max="$K8S_HPA_MAX"
+  fi
+
+  choose_num K8S_RESOURCE_PRESET "Resource requests/limits preset for the orchestrator and console pods?" "2" \
+    "small|Small  - requests 250m CPU / 512Mi, limits 1 CPU / 1Gi" \
+    "medium|Medium - requests 500m CPU / 512Mi, limits 2 CPU / 2Gi (chart default)" \
+    "large|Large  - requests 1 CPU / 1Gi, limits 4 CPU / 4Gi"
+  local res_cpu_req res_mem_req res_cpu_lim res_mem_lim
+  case "$K8S_RESOURCE_PRESET" in
+    small) res_cpu_req="250m";  res_mem_req="512Mi"; res_cpu_lim="1000m"; res_mem_lim="1Gi" ;;
+    large) res_cpu_req="1000m"; res_mem_req="1Gi";   res_cpu_lim="4000m"; res_mem_lim="4Gi" ;;
+    *)     res_cpu_req="500m";  res_mem_req="512Mi"; res_cpu_lim="2000m"; res_mem_lim="2Gi" ;;
+  esac
+  local resources_block
+  resources_block=$(cat <<EOM
+  resources:
+    requests:
+      cpu: "${res_cpu_req}"
+      memory: "${res_mem_req}"
+    limits:
+      cpu: "${res_cpu_lim}"
+      memory: "${res_mem_lim}"
+EOM
+)
+
+  # ----- assemble values.yaml blocks -----
+  local orch_config
+  orch_config=$(cat <<EOM
+  config:
+    logLevel: "INFO"
+    storageType: "postgres"
+    modelPluginEntryPoint: "${model_plugin}"
+    secondaryModelPluginEntryPoint: "${model_plugin}"
+EOM
+)
+  if [[ "$ENABLE_RAG" == "yes" ]]; then
+    orch_config="${orch_config}
+    embeddingsPluginEntryPoint: \"${embeddings_plugin}\"
+    retrieverPluginEntryPoint: \"${retriever_plugin}\""
+  fi
+
+  local autoscaling_block
+  if [[ "$K8S_HPA" == "yes" ]]; then
+    autoscaling_block=$(cat <<EOM
+  autoscaling:
+    enabled: true
+    minReplicas: ${K8S_REPLICAS}
+    maxReplicas: ${hpa_max}
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 75
+EOM
+)
+  else
+    autoscaling_block=$(cat <<'EOM'
+  autoscaling:
+    enabled: false
+EOM
+)
+  fi
+
+  local orch_tls_yaml="    tls: []"
+  local console_tls_yaml="    tls: []"
+  if [[ "$K8S_TLS" == "yes" ]]; then
+    orch_tls_yaml=$(cat <<EOM
+    tls:
+      - hosts:
+          - "${K8S_ORCH_HOST}"
+        secretName: "${K8S_ORCH_TLS_SECRET}"
+EOM
+)
+    console_tls_yaml=$(cat <<EOM
+    tls:
+      - hosts:
+          - "${K8S_CONSOLE_HOST}"
+        secretName: "${K8S_CONSOLE_TLS_SECRET}"
+EOM
+)
+  fi
+
+  local orch_ingress_block
+  if [[ "$K8S_INGRESS_CLASS" == "none" ]]; then
+    orch_ingress_block=$(cat <<'EOM'
+  ingress:
+    enabled: false
+EOM
+)
+  else
+    orch_ingress_block=$(cat <<EOM
+  ingress:
+    enabled: true
+    className: "${K8S_INGRESS_CLASS}"
+    annotations: {}
+    hosts:
+      - host: "${K8S_ORCH_HOST}"
+        paths:
+          - path: /
+            pathType: Prefix
+${orch_tls_yaml}
+EOM
+)
+  fi
+
+  local console_block
+  if [[ "$ENABLE_ADMIN_CONSOLE" == "yes" ]]; then
+    local console_ingress
+    if [[ "$K8S_INGRESS_CLASS" == "none" ]]; then
+      console_ingress=$(cat <<'EOM'
+  ingress:
+    enabled: false
+EOM
+)
+    else
+      console_ingress=$(cat <<EOM
+  ingress:
+    enabled: true
+    className: "${K8S_INGRESS_CLASS}"
+    annotations: {}
+    hosts:
+      - host: "${K8S_CONSOLE_HOST}"
+        paths:
+          - path: /
+            pathType: Prefix
+${console_tls_yaml}
+EOM
+)
+    fi
+    console_block=$(cat <<EOM
+orchestratorConsole:
+  enabled: true
+  replicaCount: 2
+  imagePullSecrets:
+    - name: "${K8S_PULL_SECRET}"
+${resources_block}
+  config:
+    logLevel: "INFO"
+    orchestratorInternalUrl: "http://orchestrator:80"
+  secret:
+    create: false
+    existingSecretName: "orchestrator"
+${console_ingress}
+EOM
+)
+  else
+    console_block=$(cat <<'EOM'
+orchestratorConsole:
+  enabled: false
+EOM
+)
+  fi
+
+  local pg_block
+  if [[ "$K8S_BUNDLED_DB" == "yes" ]]; then
+    local sc_line='storageClass: ""'
+    [[ -n "$K8S_PG_STORAGE_CLASS" ]] && sc_line="storageClass: \"${K8S_PG_STORAGE_CLASS}\""
+    pg_block=$(cat <<EOM
+postgresql:
+  enabled: true
+  postgres:
+    database: orchestrator
+    username: orchestrator
+  persistence:
+    enabled: true
+    size: ${K8S_PG_SIZE}
+    ${sc_line}
+EOM
+)
+  else
+    pg_block=$(cat <<'EOM'
+postgresql:
+  enabled: false
+EOM
+)
+  fi
+
+  local values_content
+  values_content=$(cat <<EOM
+# ============================================================
+# Spotfire Copilot - Kubernetes (Helm) values
+# Chart: orchestrator-stack ${K8S_CHART_VERSION}
+# Release name: orchestrator   Namespace: ${K8S_NAMESPACE}
+# Generated by spotfire-copilot-deploy.sh
+#
+# Non-secret configuration only. Secrets live in secrets.values.yaml, which
+# helm-install.sh passes AFTER this file so it overrides secret fields.
+# ============================================================
+
+# Single source of truth for the orchestrator + console image (both share it).
+global:
+  orchestratorImage:
+    repository: "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator"
+    tag: "${IMAGE_TAG}"
+
+orchestrator:
+  replicaCount: ${K8S_REPLICAS}
+  imagePullSecrets:
+    - name: "${K8S_PULL_SECRET}"
+${resources_block}
+${orch_config}
+${autoscaling_block}
+${orch_ingress_block}
+
+${console_block}
+
+${pg_block}
+EOM
+)
+
+  # ----- assemble secrets.values.yaml blocks -----
+  local secret_db_lines
+  if [[ "$K8S_BUNDLED_DB" == "yes" ]]; then
+    secret_db_lines=$(cat <<EOM
+    # Bundled in-cluster PostgreSQL (postgresql.enabled=true). Password auto-generated.
+    databaseUrl: "${db_url}"
+    syncDatabaseUrl: "${sync_db_url}"
+EOM
+)
+  else
+    secret_db_lines=$(cat <<'EOM'
+    # External / managed PostgreSQL - FILL THESE IN before installing.
+    # Async (asyncpg):  postgresql+asyncpg://USER:PASSWORD@HOST:5432/DBNAME
+    # Sync  (psycopg2): postgresql://USER:PASSWORD@HOST:5432/DBNAME
+    databaseUrl: ""
+    syncDatabaseUrl: ""
+EOM
+)
+  fi
+
+  local provider_secret_lines
+  case "$LLM_PROVIDER" in
+    openai)
+      provider_secret_lines='    openaiApiKey: ""' ;;
+    azure_openai)
+      provider_secret_lines=$(cat <<'EOM'
+    azureOpenaiApiKey: ""
+    azureApiBase: ""
+    azureApiVersion: ""
+EOM
+) ;;
+    gemini)
+      provider_secret_lines='    googleApiKey: ""' ;;
+    aws_bedrock)
+      provider_secret_lines=$(cat <<'EOM'
+    # Omit these if the pods use IRSA / instance roles instead of static keys.
+    awsAccessKeyId: ""
+    awsSecretAccessKey: ""
+    awsRegionName: ""
+EOM
+) ;;
+    vertex_ai)
+      provider_secret_lines='    # Vertex AI uses a GCP service-account JSON via the chart gcpCredentials.* block, not an API key.' ;;
+    nvidia_nim|ollama)
+      provider_secret_lines='    # No first-party API key required by default; use extraSecretEnv for custom endpoints/keys.' ;;
+    *)
+      provider_secret_lines='    # Add provider credentials here or via extraSecretEnv.' ;;
+  esac
+
+  local rag_secret_lines=""
+  if [[ "$ENABLE_RAG" == "yes" && "$VECTOR_DB_PROVIDER" == "azure_ai_search" ]]; then
+    rag_secret_lines='    azureCognitiveSearchApiKey: ""'
+  fi
+
+  local pg_secret_block=""
+  if [[ "$K8S_BUNDLED_DB" == "yes" ]]; then
+    pg_secret_block=$(cat <<EOM
+
+postgresql:
+  postgres:
+    password: "${pg_password}"
+EOM
+)
+  fi
+
+  local secrets_content
+  secrets_content=$(cat <<EOM
+# ============================================================
+# Spotfire Copilot - Kubernetes (Helm) SECRET values
+# Chart: orchestrator-stack ${K8S_CHART_VERSION}
+#
+# SENSITIVE - do NOT commit to version control.
+# helm-install.sh passes this file with -f AFTER values.yaml.
+# The Admin Console reuses this Secret via existingSecretName: orchestrator.
+# ============================================================
+
+orchestrator:
+  secret:
+    create: true
+    # Auto-filled by generate_credentials.py (also saved to copilot-generated-values.txt).
+    secretKey: '${K8S_SECRET_KEY}'
+    hashedAdminPassword: '${K8S_HASHED_ADMIN_PW}'
+    oauth2ClientId: '${K8S_OAUTH_ID}'
+    oauth2ClientSecretHash: '${K8S_OAUTH_HASH}'
+${secret_db_lines}
+    # Provider credentials (${LLM_PROVIDER}):
+${provider_secret_lines}
+${rag_secret_lines}
+${pg_secret_block}
+EOM
+)
+
+  # ----- helm-install.sh wrapper -----
+  local install_script
+  install_script=$(cat <<EOM
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# ============================================================
+# Spotfire Copilot - orchestrator-stack Helm installer
+# Generated by spotfire-copilot-deploy.sh
+# ============================================================
+
+NAMESPACE="${K8S_NAMESPACE}"
+RELEASE="orchestrator"
+CHART="oci://copilotoci.azurecr.io/spotfirecopilot/orchestrator-stack"
+CHART_VERSION="${K8S_CHART_VERSION}"
+REGISTRY="copilotoci.azurecr.io"
+PULL_SECRET="${K8S_PULL_SECRET}"
+
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+VALUES="\$SCRIPT_DIR/values.yaml"
+SECRETS="\$SCRIPT_DIR/secrets.values.yaml"
+
+command -v helm >/dev/null 2>&1 || { echo "ERROR: helm not found on PATH."; exit 1; }
+command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl not found on PATH."; exit 1; }
+
+echo "==> Logging in to \$REGISTRY (Helm OCI registry)"
+if command -v az >/dev/null 2>&1; then
+  az acr login --name "\${REGISTRY%%.*}" || {
+    echo "az acr login failed; falling back to 'helm registry login'."
+    helm registry login "\$REGISTRY"
+  }
+else
+  echo "Azure CLI not found; using 'helm registry login' (you will be prompted for registry credentials)."
+  helm registry login "\$REGISTRY"
+fi
+
+echo "==> Ensuring namespace \$NAMESPACE exists"
+kubectl create namespace "\$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+if ! kubectl -n "\$NAMESPACE" get secret "\$PULL_SECRET" >/dev/null 2>&1; then
+  echo "NOTE: image pull secret '\$PULL_SECRET' not found in namespace \$NAMESPACE."
+  echo "The pods reference it to pull from \$REGISTRY. Create it with your registry credentials, e.g.:"
+  echo "  kubectl -n \$NAMESPACE create secret docker-registry \$PULL_SECRET --docker-server=\$REGISTRY --docker-username=<user> --docker-password=<password>"
+fi
+
+echo "==> helm upgrade --install \$RELEASE (chart \$CHART_VERSION) into namespace \$NAMESPACE"
+helm upgrade --install "\$RELEASE" "\$CHART" --version "\$CHART_VERSION" --namespace "\$NAMESPACE" --create-namespace -f "\$VALUES" -f "\$SECRETS"
+
+echo "==> Done. Check the rollout with:"
+echo "   kubectl -n \$NAMESPACE get pods"
+EOM
+)
+
+  mkdir -p "$k8s_dir"
+  write_file "$k8s_dir/values.yaml" "$values_content"
+  write_file "$k8s_dir/secrets.values.yaml" "$secrets_content"
+  write_file "$k8s_dir/helm-install.sh" "$install_script"
+  chmod 700 "$k8s_dir/helm-install.sh"
+
+  ok "Kubernetes Helm bundle generated under: $k8s_dir"
+  echo "  values.yaml                    - non-secret Helm values"
+  echo "  secrets.values.yaml            - SECRET values, credentials pre-filled (do not commit)"
+  echo "  copilot-generated-values.txt   - raw generate_credentials.py output (do not commit)"
+  echo "  helm-install.sh                - installs orchestrator-stack ${K8S_CHART_VERSION} into namespace ${K8S_NAMESPACE}"
+  echo
+  info "Next steps:"
+  info "1. Credentials were generated and written into secrets.values.yaml (also saved to ${k8s_dir}/copilot-generated-values.txt). Store the plaintext admin password / OAuth client secret shown above in a secure vault."
+  if [[ "$K8S_BUNDLED_DB" != "yes" ]]; then
+    info "2. Fill in databaseUrl and syncDatabaseUrl (external PostgreSQL) in secrets.values.yaml."
+  fi
+  info "3. Ensure the '${K8S_PULL_SECRET}' image pull secret exists in namespace ${K8S_NAMESPACE} (helm-install.sh prints the command if it is missing)."
+  info "4. From a machine with helm + kubectl access to the cluster, run: ${k8s_dir}/helm-install.sh"
+  warn "secrets.values.yaml contains sensitive data. Keep it out of version control."
+}
+
 # ---------- main ----------
 parse_args "$@"
 if [[ "$FORCE_COLOR" == "no" ]]; then C_RESET=""; C_BOLD=""; C_INFO=""; C_WARN=""; C_ERR=""; C_OK=""; C_STEP=""; C_DIM=""; fi
@@ -2433,14 +3010,23 @@ require_cmd grep; require_cmd sed; require_cmd openssl
 if [[ "$MODE" == "info" ]]; then set_default_dir_for_info; fi
 if [[ "$MODE" == "upgrade" ]]; then run_upgrade; exit 0; fi
 if [[ "$MODE" == "agent_registry_only" ]]; then run_agent_registry_only; exit 0; fi
-mkdir -p "$OUT_DIR"; cd "$OUT_DIR"; OUT_DIR="$(pwd)"
+# With an explicit --dir/OUT_DIR the target is known now. For interactive generation the
+# backend directory is finalized later from the image tag (finalize_out_dir_for_tag), so
+# it is not created here.
+if [[ "$OUT_DIR_EXPLICIT" == "yes" || "$MODE" == "info" ]]; then
+  mkdir -p "$OUT_DIR"; cd "$OUT_DIR"; OUT_DIR="$(pwd)"
+fi
 DEFAULT_CREDENTIALS_FILE="$(detect_default_credentials_file)"
 EXISTING_FILES=("$OUT_DIR/.env" "$OUT_DIR/.env.orchestrator" "$OUT_DIR/.env.dataloader" "$OUT_DIR/.env.agent-registry")
 if [[ "$MODE" == "info" ]]; then show_info; exit 0; fi
 
 echo "${C_STEP}================================================================${C_RESET}"
 echo "${C_STEP}Spotfire Copilot 2.3.x Environment File Generator - ${C_RESET}"
-echo "${C_STEP}Output directory: $OUT_DIR${C_RESET}"
+if [[ "$OUT_DIR_EXPLICIT" == "yes" ]]; then
+  echo "${C_STEP}Output directory: $OUT_DIR${C_RESET}"
+else
+  echo "${C_STEP}Output directory: set from the image tag you enter below${C_RESET}"
+fi
 echo "${C_STEP}================================================================${C_RESET}"
 
 section "Deployment target"
@@ -2453,7 +3039,12 @@ choose_num DEPLOYMENT_TARGET "Where are you deploying Spotfire Copilot?" "1" \
   "other_cloud|Other cloud / customer-managed container platform"
 
 if [[ "$DEPLOYMENT_TARGET" != "linux_vm" ]]; then
-  run_cloud_master_env_mode
+  if [[ "$OUT_DIR_EXPLICIT" == "no" ]]; then mkdir -p "$OUT_DIR"; cd "$OUT_DIR"; OUT_DIR="$(pwd)"; fi
+  if [[ "$DEPLOYMENT_TARGET" == "kubernetes" ]]; then
+    run_kubernetes_mode
+  else
+    run_cloud_master_env_mode
+  fi
   remember_out_dir
   exit 0
 fi
@@ -2465,6 +3056,7 @@ IMAGE_TAG_DEFAULT="$(get_existing IMAGE_TAG "${EXISTING_FILES[@]}" || true)"; IM
 prompt_image_tag IMAGE_TAG "Copilot backend/data-loader image tag" "$IMAGE_TAG_DEFAULT" "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator"
 FASTAPI_APP_VERSION="$IMAGE_TAG"
 info "FASTAPI_APP_VERSION will be set automatically to ${FASTAPI_APP_VERSION}."
+finalize_out_dir_for_tag "$IMAGE_TAG"
 COMPOSE_PROJECT_DEFAULT="$(get_existing COMPOSE_PROJECT_NAME "${EXISTING_FILES[@]}" || true)"; COMPOSE_PROJECT_DEFAULT="${COMPOSE_PROJECT_DEFAULT:-spotfire-copilot}"
 LOG_LEVEL_DEFAULT="$(get_existing LOG_LEVEL "${EXISTING_FILES[@]}" || true)"; LOG_LEVEL_DEFAULT="${LOG_LEVEL_DEFAULT:-INFO}"
 ACCESS_DAYS_DEFAULT="$(get_existing ACCESS_TOKEN_EXPIRE_DAYS "${EXISTING_FILES[@]}" || true)"; ACCESS_DAYS_DEFAULT="${ACCESS_DAYS_DEFAULT:-30}"
@@ -2602,13 +3194,21 @@ else
     else
       POSTGRES_RESET_LOCAL_VOLUME_SELECTED="yes"
       DEFAULT_COMPOSE_PG_PASS="Copilot_Postgres_$(openssl rand -hex 8)"
-      prompt POSTGRES_PASSWORD "New Compose PostgreSQL password for reinitialized local volume" "$DEFAULT_COMPOSE_PG_PASS" true
+      info "A strong PostgreSQL password was auto-generated for the reinitialized volume."
+      prompt POSTGRES_PASSWORD "New Compose PostgreSQL password for reinitialized local volume" "$DEFAULT_COMPOSE_PG_PASS" true "press Enter to accept the generated password"
       write_reset_compose_postgres_helper
       warn "You selected a fresh lab/test reset. The installer will offer to run the targeted reset ($OUT_DIR/reset-local-postgres-volume.sh) after the files are generated. If you skip it, run that helper before starting/restarting the stack."
     fi
   else
-    DEFAULT_COMPOSE_PG_PASS="${DEFAULT_COMPOSE_PG_PASS:-Copilot_Postgres_$(openssl rand -hex 8)}"
-    prompt POSTGRES_PASSWORD "Compose PostgreSQL password" "$DEFAULT_COMPOSE_PG_PASS" true
+    if [[ -n "$DEFAULT_COMPOSE_PG_PASS" ]]; then
+      # A saved POSTGRES_PASSWORD was found in an existing env file (re-run without a volume).
+      prompt POSTGRES_PASSWORD "Compose PostgreSQL password" "$DEFAULT_COMPOSE_PG_PASS" true
+    else
+      # Fresh install: nothing was saved, so generate a strong password as the default.
+      DEFAULT_COMPOSE_PG_PASS="Copilot_Postgres_$(openssl rand -hex 8)"
+      info "A strong PostgreSQL password was auto-generated for this fresh install."
+      prompt POSTGRES_PASSWORD "Compose PostgreSQL password" "$DEFAULT_COMPOSE_PG_PASS" true "press Enter to accept the generated password"
+    fi
   fi
   build_database_urls
 fi
@@ -2970,7 +3570,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
     compose_lines+=(
       '  orchestrator-postgres:'
       '    image: public.ecr.aws/docker/library/postgres:15-alpine'
-      '    container_name: orchestrator-postgres'
+      '    container_name: orchestrator-postgres-${IMAGE_TAG}'
       '    restart: unless-stopped'
       '    ports:'
       '      - "127.0.0.1:5432:5432"'
@@ -2979,8 +3579,6 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       '      - .env.orchestrator'
       '    volumes:'
       '      - postgres_data:/var/lib/postgresql/data'
-      '    networks:'
-      '      - orchestrator-network'
       '    healthcheck:'
       '      # $${...} keeps Compose from interpolating at config time; the container gets these from .env.orchestrator.'
       '      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]'
@@ -2993,7 +3591,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
   compose_lines+=(
     '  orchestrator:'
     '    image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:${IMAGE_TAG}'
-    '    container_name: orchestrator'
+    '    container_name: orchestrator-${IMAGE_TAG}'
     '    restart: unless-stopped'
  )
   if [[ "$POSTGRES_MODE" == "compose" ]]; then
@@ -3011,8 +3609,6 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
     '      - .env.orchestrator'
     '    extra_hosts:'
     '      - "host.docker.internal:host-gateway"'
-    '    networks:'
-    '      - orchestrator-network'
     '    healthcheck:'
     '      test: ["CMD", "curl", "-f", "http://localhost:8080/"]'
     '      interval: 30s'
@@ -3026,7 +3622,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       ''
       '  admin-console-service:'
       '    image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:${IMAGE_TAG}'
-      '    container_name: orchestrator-admin-console'
+      '    container_name: orchestrator-admin-console-${IMAGE_TAG}'
       '    restart: unless-stopped'
       '    command: ["python", "/app/admin_console/admin_main.py"]'
       '    depends_on:'
@@ -3041,8 +3637,6 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       '      ORCHESTRATOR_INTERNAL_URL: http://orchestrator:8080'
       '    extra_hosts:'
       '      - "host.docker.internal:host-gateway"'
-      '    networks:'
-      '      - orchestrator-network'
       '    healthcheck:'
       '      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]'
       '      interval: 30s'
@@ -3057,7 +3651,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       ''
       '  data-loader:'
       '    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:${IMAGE_TAG}'
-      '    container_name: data-loader'
+      '    container_name: data-loader-${IMAGE_TAG}'
       '    restart: unless-stopped'
       '    ports:'
       '      - "8090:8080"'
@@ -3068,8 +3662,6 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       '      - "host.docker.internal:host-gateway"'
       '    volumes:'
       '      - /root/spotfire-copilot/pdf_docs_folder:/docs'
-      '    networks:'
-      '      - orchestrator-network'
  )
   fi
 
@@ -3078,7 +3670,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       ''
       '  agent-registry:'
       '    image: copilotoci.azurecr.io/spotfirecopilot/agent-container:${AGENT_CONTAINER_TAG}'
-      '    container_name: spotfire-agent-registry'
+      '    container_name: spotfire-agent-registry-${AGENT_CONTAINER_TAG}'
       '    restart: unless-stopped'
       '    ports:'
       '      - "8050:8050"'
@@ -3090,8 +3682,6 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       '    volumes:'
       '      - /opt/spotfire-agent-registry/custom-workflows:/custom-workflows:ro'
       '      - /opt/spotfire-agent-registry/logs:/conversation-logs'
-      '    networks:'
-      '      - orchestrator-network'
       '    healthcheck:'
       '      test: ["CMD", "curl", "-f", "http://localhost:8050/healthz"]'
       '      interval: 30s'
@@ -3106,10 +3696,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
     'volumes:'
     '  postgres_data:'
     '    driver: local'
-    ''
-    'networks:'
-    '  orchestrator-network:'
-    '    driver: bridge'
+    '    name: ${COMPOSE_PROJECT_NAME:-spotfire-copilot}_postgres_data_${IMAGE_TAG}'
  )
 
   COMPOSE_CONTENT="$(printf '%s\n' "${compose_lines[@]}")"

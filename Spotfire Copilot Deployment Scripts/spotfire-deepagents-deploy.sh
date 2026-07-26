@@ -9,12 +9,32 @@ OUT_DIR="${OUT_DIR:-${START_DIR}/deepagents-oss-deploy}"
 DEFAULT_IMAGE_TAG="${DEFAULT_IMAGE_TAG:-}"
 IMAGE_TAG_ARG=""
 HOST_PORT_ARG=""
+HOST_BIND_ARG=""
 PUBLIC_BASE_URL_ARG=""
 PERSISTENCE_ARG=""
+DEPLOY_TARGET_ARG=""
+CHART_VERSION_ARG=""
+K8S_NAMESPACE_ARG=""
 MODE="generate"
 ROTATE_A2A_CREDENTIAL="no"
 
 ALL_AGENTS="osdu_agent,databricks_agent,databricks_genie_agent,snowflake_agent,dv_agent,sf_lib_md_agent,sf_lic_agent,tavily_agent,milvus_agent,ddr_agent"
+
+# Agent catalog rows: agent_id|ENV_PREFIX|cohost_port|display  (empty port = external MCP).
+# The co-host port is the default localhost port that agent's MCP server publishes
+# when co-located with this server (see the mcp-servers deployment guides).
+AGENT_CATALOG=(
+  "osdu_agent|OSDU|8063|OSDU"
+  "databricks_agent|DATABRICKS|8061|Databricks"
+  "dv_agent|DV|8065|Data Virtualization (DV)"
+  "sf_lib_md_agent|SFLIB|8062|Spotfire Library Metadata"
+  "sf_lic_agent|SFLIC|8064|Spotfire License Management"
+  "tavily_agent|TAVILY|8058|Tavily Web Search"
+  "ddr_agent|DDR|8060|Daily Drilling Reports (DDR)"
+  "databricks_genie_agent|GENIE||Databricks Genie (external MCP)"
+  "snowflake_agent|SNOWFLAKE||Snowflake (external MCP)"
+  "milvus_agent|MILVUS||Milvus (external MCP)"
+)
 
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   C_RESET=$'\033[0m'; C_STEP=$'\033[1;35m'; C_INFO=$'\033[1;36m'; C_WARN=$'\033[1;33m'; C_ERR=$'\033[1;31m'; C_OK=$'\033[1;32m'
@@ -160,6 +180,10 @@ valid_port() {
  [[ "${1:-}" =~ ^[0-9]+$ ]] && (( 1 <= 10#$1 && 10#$1 <= 65535 ))
 }
 
+valid_bind_address() {
+ [[ "${1:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
 prompt_port() {
   local var_name="$1" label="$2" default_value="${3:-8000}" value=""
   while true; do
@@ -190,25 +214,33 @@ usage() {
 DeepAgents OSS base configuration generator
 
 Usage:
- ./generate-deepagents-oss-env-v9.sh
- ./generate-deepagents-oss-env-v9.sh --image-tag TAG
- ./generate-deepagents-oss-env-v9.sh --upgrade --image-tag TAG
+ ./spotfire-deepagents-deploy.sh
+ ./spotfire-deepagents-deploy.sh --image-tag TAG
+ ./spotfire-deepagents-deploy.sh --kubernetes
+ ./spotfire-deepagents-deploy.sh --upgrade --image-tag TAG
 
 Options:
  --help, -h                Show this help.
  --dir DIR                 Output/deployment directory.
  --image-tag TAG           Approved DeepAgents OSS image tag.
- --host-port PORT          Host port mapped to container port 8000.
+ --host-port PORT          Host port mapped to container port 8000 (Compose mode).
+ --host-bind ADDRESS       Host interface to publish the port on. Default 127.0.0.1.
  --public-base-url URL     PUBLIC_BASE_URL. Defaults to http://localhost:<host-port>.
  --local                   Use local Compose PostgreSQL and Redis.
  --external                Use external PostgreSQL and Redis.
+ --compose                 Generate a Docker Compose deployment (default).
+ --kubernetes, --k8s       Generate a Kubernetes Helm values bundle instead.
+ --chart-version VER       Approved Helm chart version (Kubernetes mode).
+ --namespace NS            Kubernetes namespace (Kubernetes mode). Default deepagents-oss.
  --rotate-a2a-token        Generate a new bearer token/API key instead of reusing one.
- --upgrade                 Update IMAGE_TAG in an existing deployment directory.
+ --upgrade                 Update IMAGE_TAG in an existing Compose deployment directory.
 
 Notes:
  * The server always listens on container port 8000.
- * This version intentionally disables every built-in agent.
- * MCP server setup and agent enablement will be added as separate future flows.
+ * Compose mode publishes on 127.0.0.1 by default; use --host-bind to change it.
+ * Agents are disabled unless you enable them in the "Agents and MCP wiring" step.
+ * Deploy each agent's MCP server first, then enable the agent so DeepAgents can reach it.
+ * Kubernetes mode writes values.yaml, create-secret.sh, and helm-install.sh under <dir>/k8s.
  * The script never runs 'docker compose down -v'.
 HELP
 }
@@ -220,9 +252,14 @@ parse_args() {
       --dir) OUT_DIR="${2:-}"; [[ -n "$OUT_DIR" ]] || die "--dir requires a directory"; shift 2 ;;
       --image-tag) IMAGE_TAG_ARG="${2:-}"; [[ -n "$IMAGE_TAG_ARG" ]] || die "--image-tag requires a tag"; shift 2 ;;
       --host-port) HOST_PORT_ARG="${2:-}"; [[ -n "$HOST_PORT_ARG" ]] || die "--host-port requires a port"; shift 2 ;;
+      --host-bind) HOST_BIND_ARG="${2:-}"; [[ -n "$HOST_BIND_ARG" ]] || die "--host-bind requires an address"; shift 2 ;;
       --public-base-url) PUBLIC_BASE_URL_ARG="${2:-}"; [[ -n "$PUBLIC_BASE_URL_ARG" ]] || die "--public-base-url requires a URL"; shift 2 ;;
       --local) PERSISTENCE_ARG="local"; shift ;;
       --external) PERSISTENCE_ARG="external"; shift ;;
+      --compose) DEPLOY_TARGET_ARG="compose"; shift ;;
+      --kubernetes|--k8s) DEPLOY_TARGET_ARG="kubernetes"; shift ;;
+      --chart-version) CHART_VERSION_ARG="${2:-}"; [[ -n "$CHART_VERSION_ARG" ]] || die "--chart-version requires a value"; shift 2 ;;
+      --namespace) K8S_NAMESPACE_ARG="${2:-}"; [[ -n "$K8S_NAMESPACE_ARG" ]] || die "--namespace requires a value"; shift 2 ;;
       --rotate-a2a-token) ROTATE_A2A_CREDENTIAL="yes"; shift ;;
       --upgrade) MODE="upgrade"; shift ;;
       *) die "Unknown option: $1. Use --help." ;;
@@ -239,11 +276,17 @@ normalize_out_dir() {
 validate_compose() {
   require_cmd docker
   docker compose version >/dev/null 2>&1 || die "Docker Compose V2 is required."
-  local rendered="/tmp/deepagents-oss-compose-rendered.yml"
+  local rendered
+  rendered="$(mktemp "${TMPDIR:-/tmp}/deepagents-oss-compose-rendered.XXXXXX")" || die "Unable to create a temporary file for Compose validation."
+  chmod 600 "$rendered" 2>/dev/null || true
+  # 'docker compose config' interpolates values from .env (including the local
+  # PostgreSQL password), so the rendered output is sensitive. Always remove it.
   if ! (cd "$OUT_DIR" && docker compose config > "$rendered"); then
+    rm -f "$rendered"
     die "docker compose config failed. Review the Compose error above."
   fi
-  ok "Docker Compose config validated: $rendered"
+  rm -f "$rendered"
+  ok "Docker Compose config validated."
 }
 
 run_upgrade() {
@@ -269,6 +312,338 @@ run_upgrade() {
   echo "  docker compose up -d"
 }
 
+# ------------------------------------------------------------------------------
+# Agent catalog lookups and MCP wiring (shared by Compose and Kubernetes modes)
+# ------------------------------------------------------------------------------
+agent_prefix()  { local r i p q d; for r in "${AGENT_CATALOG[@]}"; do IFS='|' read -r i p q d <<< "$r"; [[ "$i" == "$1" ]] && { printf '%s' "$p"; return 0; }; done; return 1; }
+agent_port()    { local r i p q d; for r in "${AGENT_CATALOG[@]}"; do IFS='|' read -r i p q d <<< "$r"; [[ "$i" == "$1" ]] && { printf '%s' "$q"; return 0; }; done; return 1; }
+agent_display() { local r i p q d; for r in "${AGENT_CATALOG[@]}"; do IFS='|' read -r i p q d <<< "$r"; [[ "$i" == "$1" ]] && { printf '%s' "$d"; return 0; }; done; return 1; }
+
+# Prefix every line of $2 with the indent string $1 (blank lines stay blank).
+prefix_lines() {
+  local indent="$1" text="$2" line
+  while IFS= read -r line; do
+    if [[ -z "$line" ]]; then printf '\n'; else printf '%s%s\n' "$indent" "$line"; fi
+  done <<< "$text"
+}
+
+# Interactive agent selection plus per-agent MCP wiring.
+# Arg: target = compose|kubernetes
+# Sets globals: AGENTS_ENABLED AGENTS_DISABLED MCP_ENV_BLOCK MCP_K8S_CONFIG_RAW MCP_SECRET_KV
+configure_agents_and_mcp() {
+  local target="$1"
+  AGENTS_ENABLED=""; AGENTS_DISABLED="$ALL_AGENTS"
+  MCP_ENV_BLOCK=""; MCP_K8S_CONFIG_RAW=""; MCP_SECRET_KV=""
+
+  section "Agents and MCP wiring"
+  info "Deploy each agent's MCP server first (see the mcp-servers guides), then enable the agent here so DeepAgents can reach it."
+  info "Leave the selection blank to generate a base server with every agent disabled."
+
+  local i=1 row id pfx port disp
+  echo
+  echo "Available agents:"
+  for row in "${AGENT_CATALOG[@]}"; do
+    IFS='|' read -r id pfx port disp <<< "$row"
+    if [[ -n "$port" ]]; then
+      echo "  ${i}) ${disp}  [${id} | ${pfx} | co-host port ${port}]"
+    else
+      echo "  ${i}) ${disp}  [${id} | ${pfx} | external MCP]"
+    fi
+    i=$((i + 1))
+  done
+
+  local choice
+  read -r -p "Agents to enable (comma-separated numbers, 'all', or blank for none): " choice
+  choice="$(trim "$choice")"
+
+  local -a enabled=()
+  if [[ "$choice" == "all" ]]; then
+    for row in "${AGENT_CATALOG[@]}"; do enabled+=("${row%%|*}"); done
+  elif [[ -n "$choice" ]]; then
+    local oldifs="$IFS" p n
+    IFS=','; local -a picks=($choice); IFS="$oldifs"
+    for p in "${picks[@]}"; do
+      p="$(trim "$p")"
+      if [[ ! "$p" =~ ^[0-9]+$ ]]; then warn "Ignoring invalid selection: $p"; continue; fi
+      n="$p"
+      if (( n >= 1 && n <= ${#AGENT_CATALOG[@]} )); then
+        enabled+=("${AGENT_CATALOG[$((n - 1))]%%|*}")
+      else
+        warn "Ignoring out-of-range selection: $p"
+      fi
+    done
+  fi
+
+  if [[ ${#enabled[@]} -eq 0 ]]; then
+    warn "No agents enabled. Generating a base server with every agent disabled."
+    return 0
+  fi
+
+  # De-duplicate while preserving order.
+  local -a uniq=(); local a u seen
+  for a in "${enabled[@]}"; do
+    seen="no"
+    for u in "${uniq[@]:-}"; do [[ "$u" == "$a" ]] && { seen="yes"; break; }; done
+    [[ "$seen" == "no" ]] && uniq+=("$a")
+  done
+  enabled=("${uniq[@]}")
+
+  AGENTS_ENABLED="$(IFS=,; printf '%s' "${enabled[*]}")"
+  local -a disabled=(); local all_id oldifs2="$IFS"
+  IFS=','; local -a all_arr=($ALL_AGENTS); IFS="$oldifs2"
+  for all_id in "${all_arr[@]}"; do
+    seen="no"
+    for a in "${enabled[@]}"; do [[ "$a" == "$all_id" ]] && { seen="yes"; break; }; done
+    [[ "$seen" == "no" ]] && disabled+=("$all_id")
+  done
+  AGENTS_DISABLED="$(IFS=,; printf '%s' "${disabled[*]}")"
+
+  local id2 pfx2 port2 disp2 url transport token lc url_default
+  for id2 in "${enabled[@]}"; do
+    pfx2="$(agent_prefix "$id2")"; port2="$(agent_port "$id2")"; disp2="$(agent_display "$id2")"
+    echo
+    info "MCP wiring for ${disp2} (${id2})"
+    if [[ "$target" == "compose" && -n "$port2" ]]; then
+      url_default="http://host.docker.internal:${port2}/mcp"
+    else
+      url_default=""
+    fi
+    if [[ -n "$url_default" ]]; then
+      prompt url "${pfx2}_MCP_SERVER_URL" "$url_default"
+    else
+      prompt_required url "${pfx2}_MCP_SERVER_URL (for example https://mcp-host/mcp)" ""
+    fi
+    url="$(strip_outer_quotes "$url")"
+    prompt transport "${pfx2}_MCP_SERVER_TRANSPORT" "streamable-http"
+    transport="$(strip_outer_quotes "$transport")"
+    prompt token "${pfx2}_MCP_BEARER_TOKEN (blank if the MCP server has no inbound auth)" "" true
+    token="$(strip_outer_quotes "$token")"
+
+    MCP_ENV_BLOCK+="${pfx2}_MCP_SERVER_URL=${url}"$'\n'
+    MCP_ENV_BLOCK+="${pfx2}_MCP_SERVER_TRANSPORT=${transport}"$'\n'
+    [[ -n "$token" ]] && MCP_ENV_BLOCK+="${pfx2}_MCP_BEARER_TOKEN=${token}"$'\n'
+
+    lc="$(printf '%s' "$pfx2" | tr '[:upper:]' '[:lower:]')"
+    MCP_K8S_CONFIG_RAW+="${lc}McpServerUrl: \"${url}\""$'\n'
+    MCP_K8S_CONFIG_RAW+="${lc}McpServerTransport: \"${transport}\""$'\n'
+    [[ -n "$token" ]] && MCP_SECRET_KV+="${pfx2}_MCP_BEARER_TOKEN=${token}"$'\n'
+  done
+  return 0
+}
+
+# ------------------------------------------------------------------------------
+# Kubernetes (Helm) mode: generate a values bundle. No live cluster calls here.
+# ------------------------------------------------------------------------------
+run_kubernetes_mode() {
+  local k8s_dir="$OUT_DIR/k8s"
+  mkdir -p "$k8s_dir"
+
+  section "Kubernetes (Helm) mode"
+  info "Generates a Helm values bundle for the DeepAgents OSS chart under: $k8s_dir"
+  info "No cluster access is required now. Later, run create-secret.sh then helm-install.sh from a machine with kubectl and helm."
+
+  local IMAGE_TAG
+  while true; do
+    prompt IMAGE_TAG "Approved DeepAgents OSS image tag" "${IMAGE_TAG_ARG:-$DEFAULT_IMAGE_TAG}"
+    IMAGE_TAG="$(strip_outer_quotes "$IMAGE_TAG")"
+    valid_image_tag "$IMAGE_TAG" && break
+    warn "Enter an approved OCI image tag using letters, digits, '.', '_' or '-'."
+  done
+  local CHART_VERSION; prompt_required CHART_VERSION "Approved Helm chart version (--version)" "${CHART_VERSION_ARG:-}"
+  local K8S_NAMESPACE; prompt K8S_NAMESPACE "Kubernetes namespace" "${K8S_NAMESPACE_ARG:-deepagents-oss}"
+  local K8S_SECRET_NAME; prompt K8S_SECRET_NAME "Name of the Kubernetes Secret for DeepAgents secrets" "deepagents-oss-secrets"
+  local K8S_PULL_SECRET; prompt K8S_PULL_SECRET "Image pull Secret name (blank if nodes already authenticate to the registry)" ""
+
+  local K8S_PERSISTENCE
+  choose_num K8S_PERSISTENCE "How should DeepAgents get PostgreSQL and Redis?" "1" \
+    "external|External/managed PostgreSQL + Redis (app-only chart, production)" \
+    "bundled|Bundled in-cluster PostgreSQL + Redis (stack chart, POC/dev)"
+  local CHART_REF K8S_POSTGRES_URL="" K8S_REDIS_URL="" K8S_PG_PASSWORD=""
+  if [[ "$K8S_PERSISTENCE" == "bundled" ]]; then
+    CHART_REF="oci://copilotoci.azurecr.io/spotfirecopilot/copilot-deepagents-server-oss-stack"
+    K8S_PG_PASSWORD="$(random_token)"
+    info "Generated a random in-cluster PostgreSQL password for the bundled stack."
+  else
+    CHART_REF="oci://copilotoci.azurecr.io/spotfirecopilot/copilot-deepagents-server-oss"
+    prompt_required K8S_POSTGRES_URL "External POSTGRES_URL" "" true
+    prompt_required K8S_REDIS_URL "External REDIS_URL" "" true
+    validate_runtime_url POSTGRES_URL "$K8S_POSTGRES_URL"
+    validate_runtime_url REDIS_URL "$K8S_REDIS_URL"
+  fi
+
+  local PUBLIC_BASE_URL; prompt_required PUBLIC_BASE_URL "PUBLIC_BASE_URL (external URL clients use)" "https://deepagents.example.com"
+
+  section "DeepAgents model"
+  local LLM_PROVIDER DEEPAGENTS_MODEL PROVIDER_KEY_NAME MODEL_DEFAULT PROVIDER_KEY_VALUE
+  choose_num LLM_PROVIDER "Which model provider will DeepAgents OSS use?" "1" \
+    "openai|OpenAI" "anthropic|Anthropic" "google|Google Gemini API"
+  case "$LLM_PROVIDER" in
+    openai)    PROVIDER_KEY_NAME="OPENAI_API_KEY";    MODEL_DEFAULT="openai:gpt-4o" ;;
+    anthropic) PROVIDER_KEY_NAME="ANTHROPIC_API_KEY"; MODEL_DEFAULT="anthropic:claude-3-5-sonnet-latest" ;;
+    google)    PROVIDER_KEY_NAME="GOOGLE_API_KEY";    MODEL_DEFAULT="google:gemini-2.0-flash" ;;
+  esac
+  prompt_required PROVIDER_KEY_VALUE "$PROVIDER_KEY_NAME" "" true
+  prompt_required DEEPAGENTS_MODEL "DEEPAGENTS_MODEL" "$MODEL_DEFAULT"
+  case "$DEEPAGENTS_MODEL" in
+    "$LLM_PROVIDER":*) ;;
+    *) die "DEEPAGENTS_MODEL must start with '${LLM_PROVIDER}:' for the ${LLM_PROVIDER} provider." ;;
+  esac
+
+  section "A2A authentication"
+  local A2A_AUTH_MODE A2A_SECRET_KEY="" A2A_SECRET_VALUE="" GEN
+  choose_num A2A_AUTH_MODE "How should clients authenticate to DeepAgents?" "1" \
+    "bearer|Bearer token (recommended)" \
+    "none|None (isolated lab only)"
+  if [[ "$A2A_AUTH_MODE" == "bearer" ]]; then
+    yes_no_num GEN "Generate a new A2A bearer token automatically?" "yes"
+    if [[ "$GEN" == "yes" ]]; then A2A_SECRET_VALUE="$(random_token)"; ok "Generated a new A2A bearer token."; else prompt_required A2A_SECRET_VALUE "A2A_BEARER_TOKENS" "" true; fi
+    A2A_SECRET_KEY="A2A_BEARER_TOKENS"
+  else
+    warn "A2A authentication is disabled. Use this only in an isolated lab."
+  fi
+
+  configure_agents_and_mcp kubernetes
+
+  # Assemble the config: children as raw 'key: "value"' lines (indent added later).
+  local cfg=""
+  cfg+="deepagentsModel: \"${DEEPAGENTS_MODEL}\""$'\n'
+  cfg+="publicBaseUrl: \"${PUBLIC_BASE_URL}\""$'\n'
+  cfg+="a2aAuthMode: \"${A2A_AUTH_MODE}\""$'\n'
+  cfg+="a2aAuthPublicCard: \"false\""$'\n'
+  cfg+="agentsEnabled: \"${AGENTS_ENABLED}\""$'\n'
+  if [[ "$K8S_PERSISTENCE" == "external" ]]; then
+    cfg+="postgresUrl: \"${K8S_POSTGRES_URL}\""$'\n'
+    cfg+="redisUrl: \"${K8S_REDIS_URL}\""$'\n'
+  fi
+  [[ -n "$MCP_K8S_CONFIG_RAW" ]] && cfg+="$MCP_K8S_CONFIG_RAW"
+  cfg="${cfg%$'\n'}"
+
+  local pull_line=""
+  [[ -n "$K8S_PULL_SECRET" ]] && pull_line="  - name: \"${K8S_PULL_SECRET}\""
+
+  local values_file="$k8s_dir/values.yaml"
+  if [[ "$K8S_PERSISTENCE" == "bundled" ]]; then
+    {
+      echo "# DeepAgents OSS full-stack Helm values (app + in-cluster PostgreSQL + Redis)."
+      echo "# Chart: ${CHART_REF}"
+      echo "# Per-agent MCP config keys follow the OSS deployment guide's documented convention."
+      echo "copilot-deepagents-server-oss:"
+      echo "  image:"
+      echo "    registry: copilotoci.azurecr.io"
+      echo "    repository: spotfirecopilot/copilot-deepagents-server-oss"
+      echo "    tag: \"${IMAGE_TAG}\""
+      if [[ -n "$pull_line" ]]; then
+        echo "  imagePullSecrets:"
+        echo "  ${pull_line}"
+      fi
+      echo "  config:"
+      prefix_lines "    " "$cfg"
+      echo "  secret:"
+      echo "    create: false"
+      echo "    existingSecretName: \"${K8S_SECRET_NAME}\""
+      echo ""
+      echo "postgresql:"
+      echo "  enabled: true"
+      echo "  postgres:"
+      echo "    password: \"${K8S_PG_PASSWORD}\""
+      echo ""
+      echo "redis:"
+      echo "  enabled: true"
+    } > "$values_file"
+  else
+    {
+      echo "# DeepAgents OSS app-only Helm values (bring-your-own PostgreSQL + Redis)."
+      echo "# Chart: ${CHART_REF}"
+      echo "# Per-agent MCP config keys follow the OSS deployment guide's documented convention."
+      echo "image:"
+      echo "  registry: copilotoci.azurecr.io"
+      echo "  repository: spotfirecopilot/copilot-deepagents-server-oss"
+      echo "  tag: \"${IMAGE_TAG}\""
+      if [[ -n "$pull_line" ]]; then
+        echo "imagePullSecrets:"
+        echo "$pull_line"
+      fi
+      echo "config:"
+      prefix_lines "  " "$cfg"
+      echo "secret:"
+      echo "  create: false"
+      echo "  existingSecretName: \"${K8S_SECRET_NAME}\""
+    } > "$values_file"
+  fi
+  chmod 600 "$values_file"
+  ok "Wrote $values_file"
+
+  local secret_file="$k8s_dir/create-secret.sh"
+  {
+    echo "#!/usr/bin/env bash"
+    echo "set -Eeuo pipefail"
+    echo "# Creates or updates the Kubernetes Secret referenced by values.yaml (secret.existingSecretName)."
+    echo "# Requires kubectl configured against the target cluster."
+    echo "NAMESPACE=\"${K8S_NAMESPACE}\""
+    echo "SECRET_NAME=\"${K8S_SECRET_NAME}\""
+    echo "kubectl create namespace \"\$NAMESPACE\" --dry-run=client -o yaml | kubectl apply -f -"
+    echo "kubectl -n \"\$NAMESPACE\" create secret generic \"\$SECRET_NAME\" \\"
+    printf '  --from-literal=%s='\''%s'\'' \\\n' "$PROVIDER_KEY_NAME" "$PROVIDER_KEY_VALUE"
+    [[ -n "$A2A_SECRET_KEY" ]] && printf '  --from-literal=%s='\''%s'\'' \\\n' "$A2A_SECRET_KEY" "$A2A_SECRET_VALUE"
+    while IFS='=' read -r sk sv; do
+      [[ -z "$sk" ]] && continue
+      printf '  --from-literal=%s='\''%s'\'' \\\n' "$sk" "$sv"
+    done <<< "$MCP_SECRET_KV"
+    echo "  --dry-run=client -o yaml | kubectl apply -f -"
+  } > "$secret_file"
+  chmod 700 "$secret_file"
+  ok "Wrote $secret_file"
+
+  local install_file="$k8s_dir/helm-install.sh"
+  {
+    echo "#!/usr/bin/env bash"
+    echo "set -Eeuo pipefail"
+    echo "# Installs or upgrades the DeepAgents OSS release. Run create-secret.sh first."
+    echo "NAMESPACE=\"${K8S_NAMESPACE}\""
+    echo "helm registry login copilotoci.azurecr.io"
+    echo "helm upgrade --install deepagents-oss \\"
+    echo "  ${CHART_REF} \\"
+    echo "  --version \"${CHART_VERSION}\" \\"
+    echo "  --namespace \"\$NAMESPACE\" \\"
+    echo "  --create-namespace \\"
+    echo "  -f \"\$(dirname \"\$0\")/values.yaml\""
+  } > "$install_file"
+  chmod 700 "$install_file"
+  ok "Wrote $install_file"
+
+  local summary_file="$k8s_dir/deepagents-k8s-summary.txt"
+  {
+    echo "DeepAgents OSS Kubernetes (Helm) bundle"
+    echo "Generated: $(date)"
+    echo
+    echo "Namespace:      ${K8S_NAMESPACE}"
+    echo "Chart:          ${CHART_REF}"
+    echo "Chart version:  ${CHART_VERSION}"
+    echo "Image tag:      ${IMAGE_TAG}"
+    echo "Persistence:    ${K8S_PERSISTENCE}"
+    echo "Model:          ${DEEPAGENTS_MODEL}"
+    echo "A2A auth:       ${A2A_AUTH_MODE}"
+    echo "Agents enabled: ${AGENTS_ENABLED:-<none>}"
+    echo "Secret name:    ${K8S_SECRET_NAME}"
+    echo
+    echo "Files:"
+    echo "  ${values_file}"
+    echo "  ${secret_file}"
+    echo "  ${install_file}"
+  } > "$summary_file"
+  chmod 600 "$summary_file"
+  ok "Wrote $summary_file"
+
+  section "Completed"
+  ok "DeepAgents OSS Kubernetes bundle is ready in $k8s_dir"
+  echo
+  echo "Next:"
+  echo "  1) Review $values_file (per-agent MCP config keys follow the OSS deployment guide)."
+  echo "  2) bash \"$secret_file\"      # create the Kubernetes Secret"
+  echo "  3) bash \"$install_file\"     # helm upgrade --install"
+  echo "  4) kubectl -n ${K8S_NAMESPACE} get pods"
+}
+
 parse_args "$@"
 [[ "$MODE" == "help" ]] && { usage; exit 0; }
 [[ "$MODE" == "upgrade" ]] && { run_upgrade; exit 0; }
@@ -277,13 +652,26 @@ normalize_out_dir
 mkdir -p "$OUT_DIR"
 EXISTING_ENV="$OUT_DIR/.env"
 
-section "DeepAgents OSS base deployment"
-info "This version generates the base DeepAgents server configuration only. MCP servers and agent enablement are intentionally deferred."
+section "DeepAgents OSS deployment"
+info "Generates DeepAgents server configuration for Docker Compose or Kubernetes, including optional agent enablement and MCP wiring."
 prompt OUT_DIR_INPUT "Output directory" "$OUT_DIR"
 OUT_DIR="$OUT_DIR_INPUT"
 normalize_out_dir
 mkdir -p "$OUT_DIR"
 EXISTING_ENV="$OUT_DIR/.env"
+
+section "Deployment target"
+if [[ -n "$DEPLOY_TARGET_ARG" ]]; then
+  DEPLOY_TARGET="$DEPLOY_TARGET_ARG"
+else
+  choose_num DEPLOY_TARGET "How do you want to deploy the DeepAgents server?" "1" \
+    "compose|Docker Compose on a single host" \
+    "kubernetes|Kubernetes via a generated Helm values bundle"
+fi
+if [[ "$DEPLOY_TARGET" == "kubernetes" ]]; then
+  run_kubernetes_mode
+  exit 0
+fi
 
 # ------------------------------------------------------------------------------
 # Image and server settings
@@ -318,6 +706,23 @@ if [[ -z "$EXISTING_HOST_PORT" ]]; then
 fi
 HOST_PORT_DEFAULT="${HOST_PORT_ARG:-${EXISTING_HOST_PORT:-8000}}"
 prompt_port DEEPAGENTS_HOST_PORT "Host-published DeepAgents port" "$HOST_PORT_DEFAULT"
+
+# Publish the port on loopback by default so the server is not exposed to the
+# network unless the operator explicitly opts in.
+EXISTING_HOST_BIND="$(get_env_value "$EXISTING_ENV" DEEPAGENTS_HOST_BIND || true)"
+if [[ -n "$HOST_BIND_ARG" ]]; then
+  valid_bind_address "$HOST_BIND_ARG" || die "Invalid --host-bind address: $HOST_BIND_ARG"
+  DEEPAGENTS_HOST_BIND="$HOST_BIND_ARG"
+else
+  BIND_DEFAULT_NUM="1"
+ [[ "$EXISTING_HOST_BIND" == "0.0.0.0" ]] && BIND_DEFAULT_NUM="2"
+  choose_num DEEPAGENTS_HOST_BIND "Which host interface should publish the DeepAgents port?" "$BIND_DEFAULT_NUM" \
+    "127.0.0.1|Loopback only - safest; reach it through a reverse proxy or SSH tunnel" \
+    "0.0.0.0|All interfaces - exposes the port to the network"
+fi
+if [[ "$DEEPAGENTS_HOST_BIND" != "127.0.0.1" ]]; then
+  warn "The DeepAgents port will be published on ${DEEPAGENTS_HOST_BIND}, reachable beyond this host. Ensure A2A authentication and firewall rules are enforced."
+fi
 
 EXISTING_PUBLIC_BASE_URL="$(get_env_value "$EXISTING_ENV" PUBLIC_BASE_URL || true)"
 PUBLIC_BASE_URL_DEFAULT="${PUBLIC_BASE_URL_ARG:-${EXISTING_PUBLIC_BASE_URL:-http://localhost:${DEEPAGENTS_HOST_PORT}}}"
@@ -479,9 +884,12 @@ case "$A2A_AUTH_MODE" in
  ;;
   none)
     warn "A2A authentication is disabled. Use this only in an isolated local lab."
+    [[ "$DEEPAGENTS_HOST_BIND" != "127.0.0.1" ]] && warn "A2A auth is 'none' while the port is published on ${DEEPAGENTS_HOST_BIND}; anyone who can reach it has unauthenticated access."
  ;;
   *) die "Unsupported A2A authentication mode: $A2A_AUTH_MODE" ;;
 esac
+
+configure_agents_and_mcp compose
 
 # ------------------------------------------------------------------------------
 # Generate .env and Compose
@@ -495,16 +903,17 @@ fi
 ENV_CONTENT=$(cat <<ENV
 # ============================================================
 # DeepAgents OSS base server environment
-# Generated by generate-deepagents-oss-env-v9.sh
+# Generated by spotfire-deepagents-deploy.sh
 #
-# Agents are intentionally disabled in this base deployment.
-# Enable agents later only after their MCP servers are ready.
+# Agents are enabled only if selected during generation.
+# Enable additional agents later only after their MCP servers are ready.
 # ============================================================
 
 IMAGE_TAG=${IMAGE_TAG}
 HOST=${HOST}
 PORT=8000
 DEEPAGENTS_HOST_PORT=${DEEPAGENTS_HOST_PORT}
+DEEPAGENTS_HOST_BIND=${DEEPAGENTS_HOST_BIND}
 LOG_LEVEL=${LOG_LEVEL}
 PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
 
@@ -517,10 +926,11 @@ ${A2A_AUTH_BLOCK}
 ${MODEL_SECRET_BLOCK}
 DEEPAGENTS_MODEL=${DEEPAGENTS_MODEL}
 
-# Base deployment: no agents or MCP integrations are enabled yet.
-AGENTS_ENABLED=
-AGENTS_DISABLED=${ALL_AGENTS}
+# Agent allow-list and per-agent MCP wiring (configured interactively).
+AGENTS_ENABLED=${AGENTS_ENABLED}
+AGENTS_DISABLED=${AGENTS_DISABLED}
 # AGENTS_CONFIG_FILE=/etc/deepagents/agents.yaml
+${MCP_ENV_BLOCK}
 
 # Optional common tuning
 A2A_THREAD_LOCK_TTL_SECONDS=60
@@ -536,54 +946,54 @@ if [[ "$PERSISTENCE_MODE" == "local" ]]; then
 name: deepagents-oss
 
 volumes:
- deepagents-oss-postgres-data:
+  deepagents-oss-postgres-data:
 
 services:
- deepagents-oss-redis:
- image: redis:7-alpine
- restart: unless-stopped
- healthcheck:
- test: ["CMD", "redis-cli", "ping"]
- interval: 5s
- timeout: 2s
- retries: 5
+  deepagents-oss-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
 
- deepagents-oss-postgres:
- image: postgres:16
- restart: unless-stopped
- environment:
- POSTGRES_DB: deepagents_checkpoints
- POSTGRES_USER: postgres
- POSTGRES_PASSWORD: ${DEEPAGENTS_POSTGRES_PASSWORD}
- volumes:
- - deepagents-oss-postgres-data:/var/lib/postgresql/data
- healthcheck:
- test: ["CMD-SHELL", "pg_isready -U postgres -d deepagents_checkpoints"]
- interval: 5s
- timeout: 2s
- retries: 10
- start_period: 10s
+  deepagents-oss-postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: deepagents_checkpoints
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DEEPAGENTS_POSTGRES_PASSWORD}
+    volumes:
+      - deepagents-oss-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d deepagents_checkpoints"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
 
- deepagents-oss:
- image: copilotoci.azurecr.io/spotfirecopilot/copilot-deepagents-server-oss:${IMAGE_TAG}
- restart: unless-stopped
- depends_on:
- deepagents-oss-redis:
- condition: service_healthy
- deepagents-oss-postgres:
- condition: service_healthy
- ports:
- - "${DEEPAGENTS_HOST_PORT:-8000}:8000"
- env_file:
- - .env
- extra_hosts:
- - "host.docker.internal:host-gateway"
- healthcheck:
- test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
- interval: 10s
- timeout: 3s
- retries: 5
- start_period: 15s
+  deepagents-oss:
+    image: copilotoci.azurecr.io/spotfirecopilot/copilot-deepagents-server-oss:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      deepagents-oss-redis:
+        condition: service_healthy
+      deepagents-oss-postgres:
+        condition: service_healthy
+    ports:
+      - "${DEEPAGENTS_HOST_BIND:-127.0.0.1}:${DEEPAGENTS_HOST_PORT:-8000}:8000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
 YAML
 )
 else
@@ -591,21 +1001,21 @@ else
 name: deepagents-oss
 
 services:
- deepagents-oss:
- image: copilotoci.azurecr.io/spotfirecopilot/copilot-deepagents-server-oss:${IMAGE_TAG}
- restart: unless-stopped
- ports:
- - "${DEEPAGENTS_HOST_PORT:-8000}:8000"
- env_file:
- - .env
- extra_hosts:
- - "host.docker.internal:host-gateway"
- healthcheck:
- test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
- interval: 10s
- timeout: 3s
- retries: 5
- start_period: 15s
+  deepagents-oss:
+    image: copilotoci.azurecr.io/spotfirecopilot/copilot-deepagents-server-oss:${IMAGE_TAG}
+    restart: unless-stopped
+    ports:
+      - "${DEEPAGENTS_HOST_BIND:-127.0.0.1}:${DEEPAGENTS_HOST_PORT:-8000}:8000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
 YAML
 )
 fi
@@ -618,14 +1028,16 @@ Generated: $(date)
 Deployment directory: ${OUT_DIR}
 Image tag: ${IMAGE_TAG}
 Host URL: http://localhost:${DEEPAGENTS_HOST_PORT}
+Published interface: ${DEEPAGENTS_HOST_BIND}
 Public base URL: ${PUBLIC_BASE_URL}
 Persistence: ${PERSISTENCE_MODE}
 Model: ${DEEPAGENTS_MODEL}
 A2A authentication: ${A2A_AUTH_MODE}
 
 Agents:
- All built-in agents are currently disabled.
- Future agent enablement must add the matching MCP URL and credentials.
+ Enabled:  ${AGENTS_ENABLED:-<none>}
+ Disabled: ${AGENTS_DISABLED}
+ Per-agent MCP endpoints are configured in .env (<PREFIX>_MCP_SERVER_URL/TRANSPORT/BEARER_TOKEN).
 
 Files:
  ${OUT_DIR}/.env
@@ -646,7 +1058,11 @@ fi
 
 section "Completed"
 ok "DeepAgents OSS base deployment files are ready in $OUT_DIR"
-warn "All runtime agents are disabled until MCP configuration is added."
+if [[ -z "$AGENTS_ENABLED" ]]; then
+  warn "No agents are enabled. Re-run and select agents once their MCP servers are ready."
+else
+  info "Enabled agents: ${AGENTS_ENABLED}. Confirm each agent's MCP server is running and reachable."
+fi
 
 echo
 echo "Next:"
