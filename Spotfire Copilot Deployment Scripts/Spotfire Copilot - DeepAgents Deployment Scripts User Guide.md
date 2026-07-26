@@ -9,7 +9,7 @@ Two equivalent scripts are provided so you can run the generator from either pla
 | Script | Platform | Interpreter |
 | --- | --- | --- |
 | [`spotfire-deepagents-deploy.sh`](spotfire-deepagents-deploy.sh) | Linux / macOS | Bash 4+ |
-| [`deepagents-deploy.ps1`](deepagents-deploy.ps1) | Windows | PowerShell 5.1+ |
+| [`spotfire-deepagents-deploy.ps1`](spotfire-deepagents-deploy.ps1) | Windows | PowerShell 5.1+ |
 
 Both scripts are functionally identical: same prompts, same defaults, same
 generated files. Choose the one that matches your operating system.
@@ -85,7 +85,7 @@ The scripts never run `docker compose down -v` and never delete data volumes.
 - Docker Engine + Docker Compose V2 — required for Compose validation and to run
   the deployment. Optional at generation time (validation is skipped if absent).
 
-**Windows (`deepagents-deploy.ps1`)**
+**Windows (`spotfire-deepagents-deploy.ps1`)**
 
 - Windows PowerShell 5.1 or newer.
 - Docker Desktop (Compose V2) — optional at generation time, required to run the
@@ -115,7 +115,7 @@ chmod +x spotfire-deepagents-deploy.sh
 **Windows (PowerShell)**
 
 ```powershell
-.\deepagents-deploy.ps1
+.\spotfire-deepagents-deploy.ps1
 ```
 
 Answer the prompts, review the files written to the output directory
@@ -133,10 +133,10 @@ Non-interactive examples that pre-seed some choices:
 
 ```powershell
 # Compose, external Postgres/Redis
-.\deepagents-deploy.ps1 -Compose -External -ImageTag 1.0.0
+.\spotfire-deepagents-deploy.ps1 -Compose -External -ImageTag 1.0.0
 
 # Kubernetes values bundle
-.\deepagents-deploy.ps1 -Kubernetes -Dir C:\opt\deepagents-oss -Namespace deepagents
+.\spotfire-deepagents-deploy.ps1 -Kubernetes -Dir C:\opt\deepagents-oss -Namespace deepagents
 ```
 
 ---
@@ -334,7 +334,7 @@ directory to already contain `.env` and `docker-compose.yml`.
 ```
 
 ```powershell
-.\deepagents-deploy.ps1 -Upgrade -ImageTag 1.0.1 -Dir .\deepagents-oss-deploy
+.\spotfire-deepagents-deploy.ps1 -Upgrade -ImageTag 1.0.1 -Dir .\deepagents-oss-deploy
 ```
 
 Then apply it:
@@ -386,7 +386,7 @@ force a new A2A credential (remember to update every registered client afterward
 | `Invalid image tag` | Use an approved OCI tag: letters, digits, `.`, `_`, `-` only. |
 | `DEEPAGENTS_MODEL must start with '<provider>:'` | The model string must match the selected provider, e.g. `openai:gpt-5.1`. |
 | An enabled agent can't be reached | Confirm the agent's MCP server is deployed, reachable at the configured URL, and that any required bearer token matches. |
-| PowerShell "running scripts is disabled" | Launch with `powershell -ExecutionPolicy Bypass -File .\deepagents-deploy.ps1`, or set an appropriate execution policy. |
+| PowerShell "running scripts is disabled" | Launch with `powershell -ExecutionPolicy Bypass -File .\spotfire-deepagents-deploy.ps1`, or set an appropriate execution policy. |
 
 ---
 
