@@ -478,7 +478,7 @@ run_kubernetes_mode() {
   choose_num LLM_PROVIDER "Which model provider will DeepAgents OSS use?" "1" \
     "openai|OpenAI" "anthropic|Anthropic" "google|Google Gemini API"
   case "$LLM_PROVIDER" in
-    openai)    PROVIDER_KEY_NAME="OPENAI_API_KEY";    MODEL_DEFAULT="openai:gpt-4o" ;;
+    openai)    PROVIDER_KEY_NAME="OPENAI_API_KEY";    MODEL_DEFAULT="openai:gpt-5.1" ;;
     anthropic) PROVIDER_KEY_NAME="ANTHROPIC_API_KEY"; MODEL_DEFAULT="anthropic:claude-3-5-sonnet-latest" ;;
     google)    PROVIDER_KEY_NAME="GOOGLE_API_KEY";    MODEL_DEFAULT="google:gemini-2.0-flash" ;;
   esac

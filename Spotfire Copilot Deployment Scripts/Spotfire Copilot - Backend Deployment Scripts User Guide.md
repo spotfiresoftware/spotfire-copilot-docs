@@ -1,0 +1,411 @@
+# Spotfire Copilot - Backend Deployment Scripts User Guide
+
+Interactive helper scripts that generate the **Spotfire Copilot backend**
+deployment configuration: the Orchestrator core plus optional Admin Console,
+RAG / Knowledge Base, Data Loader, and Agent Registry components. The scripts
+produce environment files and (for single-host installs) a `docker-compose.yml`,
+and can optionally chain the DeepAgents OSS generator.
+
+Two equivalent scripts are provided so you can run the generator from either platform:
+
+| Script | Platform | Interpreter |
+| --- | --- | --- |
+| [`spotfire-copilot-deploy.sh`](spotfire-copilot-deploy.sh) | Linux / macOS | Bash 4+ |
+| [`spotfire-copilot-deploy.ps1`](spotfire-copilot-deploy.ps1) | Windows | PowerShell 5.1+ |
+
+Both scripts are functionally equivalent: same prompts, same defaults, same
+generated files. Choose the one that matches your operating system.
+
+> These scripts **generate** configuration. They do not pull images, start
+> containers, or install into a cluster. You review the generated files, then run
+> `docker compose` / `helm` yourself. For full background, see the
+> [Backend Setup Installation Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md).
+
+---
+
+## Table of Contents
+
+- [1. What the scripts do](#1-what-the-scripts-do)
+- [2. Prerequisites](#2-prerequisites)
+- [3. Quick start](#3-quick-start)
+- [4. Operating modes](#4-operating-modes)
+- [5. Command-line options](#5-command-line-options)
+- [6. Output directory layout](#6-output-directory-layout)
+- [7. Interactive walkthrough](#7-interactive-walkthrough)
+  - [7.1 Deployment target](#71-deployment-target)
+  - [7.2 Core setup](#72-core-setup)
+  - [7.3 Credentials](#73-credentials)
+  - [7.4 Backend database (PostgreSQL)](#74-backend-database-postgresql)
+  - [7.5 LLM provider](#75-llm-provider)
+  - [7.6 Optional Admin Console](#76-optional-admin-console)
+  - [7.7 Optional RAG / Knowledge Base and Data Loader](#77-optional-rag--knowledge-base-and-data-loader)
+  - [7.8 Optional Agent Registry](#78-optional-agent-registry)
+  - [7.9 Optional DeepAgents OSS](#79-optional-deepagents-oss)
+- [8. Generated files](#8-generated-files)
+- [9. Deploying the generated configuration](#9-deploying-the-generated-configuration)
+- [10. Upgrading](#10-upgrading)
+- [11. Adding Agent Registry to an existing install](#11-adding-agent-registry-to-an-existing-install)
+- [12. Security notes](#12-security-notes)
+- [13. Troubleshooting](#13-troubleshooting)
+
+---
+
+## 1. What the scripts do
+
+The generator interviews you about a Spotfire Copilot backend deployment and
+writes ready-to-use configuration. Depending on your answers it can:
+
+- Select the deployment target (single-host Docker Compose, a managed cloud
+  container platform, or Kubernetes/Helm).
+- Pin approved container image tags for the Orchestrator, Admin Console, Data
+  Loader, and Agent Registry.
+- Wire up **credentials** by running the official `generate_credentials.py`, or by
+  reusing an existing `copilot-generated-values.txt`.
+- Configure the **PostgreSQL** backend (existing/managed, or a Compose-managed
+  local database) including SSL mode.
+- Select the **LLM provider** and models.
+- Optionally enable **Admin Console**, **RAG / Knowledge Base** (embeddings +
+  vector DB), **Data Loader**, and **Agent Registry**.
+- Optionally chain the **DeepAgents OSS** generator for the agent server.
+- Generate a `docker-compose.yml` (single-host) and validate it with
+  `docker compose config`.
+
+The default backend image tag is `2.3.4` (override with `--image-tag` /
+`-ImageTag` or the `DEFAULT_IMAGE_TAG` environment variable).
+
+---
+
+## 2. Prerequisites
+
+**Common**
+
+- Approved Spotfire Copilot image tags (from Spotfire Support or your platform team).
+- Network access to the registry `copilotoci.azurecr.io`.
+- Credentials for the LLM provider you intend to use.
+- The official `generate_credentials.py` placed next to the script — **unless** you
+  already have a `copilot-generated-values.txt`. The script does not create
+  credentials itself; it runs the official generator.
+
+**Linux / macOS (`spotfire-copilot-deploy.sh`)**
+
+- Bash 4 or newer, `openssl`.
+- Python 3 with `bcrypt` (used by `generate_credentials.py`). The script can
+  install/check prerequisites with `--install-prereqs`.
+- Docker Engine + Docker Compose V2 for single-host deploys and Compose validation.
+
+**Windows (`spotfire-copilot-deploy.ps1`)**
+
+- Windows PowerShell 5.1 or newer.
+- Python 3 with `bcrypt` for credential generation.
+- Docker Desktop (Compose V2) to run single-host deployments.
+
+**Credential keys** expected in `copilot-generated-values.txt`:
+`SECRET_KEY`, `HASHED_ADMIN_PASSWORD`, `OAUTH2_CLIENT_ID`, `OAUTH2_CLIENT_SECRET_HASH`.
+
+---
+
+## 3. Quick start
+
+**Linux / macOS**
+
+```bash
+chmod +x spotfire-copilot-deploy.sh
+# Ensure generate_credentials.py is in the same folder (unless you already have credentials)
+./spotfire-copilot-deploy.sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+.\spotfire-copilot-deploy.ps1
+```
+
+Answer the prompts, review the files written under
+`./spotfire-copilot/<image-tag>/backend`, then deploy.
+
+Custom output directory:
+
+```bash
+./spotfire-copilot-deploy.sh --dir /opt/spotfire-copilot/backend
+```
+
+```powershell
+.\spotfire-copilot-deploy.ps1 -Dir C:\opt\spotfire-copilot\backend
+```
+
+---
+
+## 4. Operating modes
+
+| Mode | How to invoke | Purpose |
+| --- | --- | --- |
+| **Interactive** (default) | run with no mode flag | Full guided generation of a backend deployment. |
+| **Info** | `--info` / `-Info` | Print a summary of the currently generated environment. |
+| **Upgrade** | `--upgrade` / `-Upgrade` | Update `IMAGE_TAG`, `FASTAPI_APP_VERSION`, and optionally `AGENT_CONTAINER_TAG` into a new versioned folder. |
+| **Agent Registry only** | `--install-agent-registry` / `-InstallAgentRegistry` | Add/update only Agent Registry in an existing backend folder (needs `--dir`). |
+| **DeepAgents chaining** | `--install-deepagents` / `-InstallDeepagents` | After core generation, run the standalone DeepAgents OSS generator. |
+
+---
+
+## 5. Command-line options
+
+All options are optional; anything not supplied is asked for interactively. Bash
+uses `--long-flags`; PowerShell uses `-PascalCaseParameters`.
+
+| Bash flag | PowerShell parameter | Description |
+| --- | --- | --- |
+| `--help`, `-h` | `-Help` | Show help and exit. |
+| `--info` | `-Info` | Show current generated env summary. |
+| `--upgrade` | `-Upgrade` | Update image tags into a new versioned folder. |
+| `--image-tag TAG` | `-ImageTag TAG` | Orchestrator/Admin/Data-Loader image tag. |
+| `--agent-tag TAG` | `-AgentTag TAG` | Agent Registry image tag (upgrade mode). |
+| `--dir DIR` | `-Dir DIR` | Output directory. Default: `./spotfire-copilot/<image-tag>/backend`. |
+| `--from-dir DIR` | `-FromDir DIR` | Source directory for upgrade mode. Defaults to last used directory. |
+| `--install-prereqs` | `-InstallPrereqs` | Install/check Linux prerequisites when possible. |
+| `--no-install-prereqs` | `-NoInstallPrereqs` | Do not install prerequisites; fail if Python/bcrypt are missing. |
+| `--install-deepagents` | `-InstallDeepagents` | After core generation, run the standalone DeepAgents OSS generator. |
+| `--deepagents-script PATH` | `-DeepagentsScript PATH` | Path to the DeepAgents installer script. |
+| `--credentials-script PATH` | `-CredentialsScript PATH` | Path to `generate_credentials.py`. Default: next to this installer. |
+| `--install-agent-registry` | `-InstallAgentRegistry` | Add/update only Agent Registry in an existing backend folder (use with `--dir`). |
+| `--no-color` | `-NoColor` | Disable colored output. |
+
+**Environment overrides:** `OUT_DIR`, `COPILOT_ROOT_DIR`, `DEFAULT_IMAGE_TAG`,
+`DEFAULT_AGENT_TAG`, `CREDENTIALS_SCRIPT`, `PYTHON_BIN`, `NO_COLOR`.
+
+---
+
+## 6. Output directory layout
+
+Installs live under a single parent folder, one subfolder per version, so multiple
+versions can coexist:
+
+```
+<root>/spotfire-copilot/<image-tag>/backend/
+├── .env                          # top-level compose variables (image tags, project name)
+├── .env.orchestrator             # Orchestrator configuration + credentials + DB + LLM
+├── .env.dataloader               # Data Loader configuration (only if enabled)
+├── .env.agent-registry           # Agent Registry configuration (only if enabled)
+├── docker-compose.yml            # single-host stack (Linux VM target)
+├── copilot-generated-values.txt  # generated/copied credential file
+└── reset-local-postgres-volume.sh  # only if a local PostgreSQL reset was selected
+```
+
+The default `<root>` is `./spotfire-copilot` (override with `COPILOT_ROOT_DIR`), and
+the backend folder is finalized once the image tag is known. Existing files are
+backed up with timestamped `.bak` copies before being overwritten, and files are
+written with owner-only permissions where the platform allows.
+
+---
+
+## 7. Interactive walkthrough
+
+### 7.1 Deployment target
+
+Choose where you are deploying:
+
+1. **Linux VM / Docker Compose** — full generation plus a `docker-compose.yml`.
+2. **Azure Container Apps**
+3. **AWS ECS / Fargate**
+4. **GCP Cloud Run**
+5. **Kubernetes (AKS / EKS / GKE)** — generates a Helm-oriented environment bundle.
+6. **Other cloud / customer-managed container platform**
+
+Targets other than the Linux VM produce a portable "master env" / cloud shortlist
+(or a Kubernetes bundle) rather than a Compose file, then exit.
+
+### 7.2 Core setup
+
+- **Image tag** — validated OCI tag; `FASTAPI_APP_VERSION` is set to match.
+- **Compose project name** — lowercase letters, digits, `-`, `_`.
+- **LOG_LEVEL** — `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`.
+- **ACCESS_TOKEN_EXPIRE_DAYS** — positive integer (default 30).
+
+### 7.3 Credentials
+
+Credentials are required, but you can either reuse existing ones or have the
+official generator create them.
+
+- **Reuse** — provide the path to an existing `copilot-generated-values.txt`. The
+  script also searches the working directory, the script directory, then the backend
+  folder, and can fall back to values in existing `.env` files or manual entry.
+- **Generate** — the script runs `generate_credentials.py` (which must be next to the
+  installer) after ensuring Python/bcrypt are available.
+
+All four values (`SECRET_KEY`, `HASHED_ADMIN_PASSWORD`, `OAUTH2_CLIENT_ID`,
+`OAUTH2_CLIENT_SECRET_HASH`) must be present, or generation stops rather than writing
+a broken `.env`.
+
+### 7.4 Backend database (PostgreSQL)
+
+PostgreSQL is required (Orchestrator stores users, OAuth clients, conversations,
+threads, agents, and token data).
+
+- **Existing / managed** — provide host, port, database name, username, password, and
+  an SSL mode (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`).
+- **Compose-managed local** — the script uses the `orchestrator-postgres` service and
+  generates a strong password. If an existing local data volume is detected, you can
+  **reuse** it (enter the original password) or perform a **fresh lab/test reset**
+  (new password + a `reset-local-postgres-volume.sh` helper that deletes only the
+  local PostgreSQL volume, guarded by a `DELETE` confirmation).
+
+Database names and usernames must be valid PostgreSQL identifiers (start with a
+letter/underscore; letters, digits, underscores; max 63 chars).
+
+### 7.5 LLM provider
+
+Select one provider (independent from the vector DB):
+
+`Azure OpenAI`, `OpenAI`, `AWS Bedrock`, `Google Vertex AI`, `Google Gemini API`,
+`NVIDIA NIM`, or `Ollama / self-hosted test`.
+
+You are prompted for the provider's keys/endpoints and primary model, and the
+correct Orchestrator/Data-Loader model plugins are written automatically.
+
+### 7.6 Optional Admin Console
+
+A web UI for managing OAuth clients, users, diagnostics, conversations, RAG indexes,
+and agents. It reuses the same PostgreSQL database. If skipped, use the REST API
+instead. See the [Admin Console Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md).
+
+### 7.7 Optional RAG / Knowledge Base and Data Loader
+
+RAG powers Help, HowTo, Spotfire documentation answers, and custom document Q&A.
+When enabled you choose:
+
+- **Embeddings provider** — Azure OpenAI, OpenAI, AWS Bedrock, Vertex AI, NVIDIA NIM,
+  or Ollama. Orchestrator and Data Loader must use the same embedding model per index.
+- **Vector DB / Knowledge Base** — Azure AI Search, Milvus, Zilliz Cloud, Vertex AI
+  Vector Search, AWS Bedrock Knowledge Bases, or a custom plugin. (Cloud/Kubernetes
+  shortlists include additional options such as Qdrant, MongoDB Atlas, Redis, and
+  Databricks.)
+- **RAG defaults** — index name, `DEFAULT_RAG_TOPK`, `DEFAULT_RAG_SCORE_THRESHOLD`.
+
+If the selected vector DB is writable, you can also deploy the **Data Loader** to
+ingest Spotfire docs and custom PDFs. See the
+[Data Loaders Installation Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md).
+
+### 7.8 Optional Agent Registry
+
+Needed only when Copilot should call custom or bundled A2A agents. Agent Registry
+requires its **own** Orchestrator OAuth client created with the `agent_developer`
+scope profile — which only exists once the Orchestrator is running. In the main flow
+the script therefore only **accepts** already-created credentials
+(`ORCHESTRATOR_CLIENT_ID` / `ORCHESTRATOR_CLIENT_SECRET`); to create them live against
+a running Orchestrator, use the dedicated flow described in
+[section 11](#11-adding-agent-registry-to-an-existing-install).
+
+### 7.9 Optional DeepAgents OSS
+
+With `--install-deepagents` / `-InstallDeepagents`, the script runs the standalone
+DeepAgents OSS generator after core generation. See the
+[DeepAgents Deployment Scripts User Guide](Spotfire%20Copilot%20-%20DeepAgents%20Deployment%20Scripts%20User%20Guide.md).
+
+---
+
+## 8. Generated files
+
+At the end, the script lists the files it wrote and prints a summary of your
+selections (LLM provider, PostgreSQL mode, Admin Console, RAG, vector DB, embedding
+provider, Data Loader, Agent Registry). See
+[section 6](#6-output-directory-layout) for the full layout.
+
+---
+
+## 9. Deploying the generated configuration
+
+For a single-host (Linux VM) deployment:
+
+```bash
+cd <output-dir>            # e.g. ./spotfire-copilot/2.3.4/backend
+docker login copilotoci.azurecr.io
+docker compose config > /tmp/copilot-compose-rendered.yml   # optional sanity check
+docker compose up -d --no-build
+```
+
+For cloud or Kubernetes targets, use the generated master-env / Helm bundle with your
+platform's deployment process. Refer to the
+[Backend Setup Installation Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md)
+for platform specifics, and the
+[Frontend Setup Guide](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md)
+for the client extension.
+
+---
+
+## 10. Upgrading
+
+Upgrade mode copies an existing deployment into a new versioned folder and updates
+the image tags:
+
+```bash
+./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.6
+./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.6 --from-dir /root/spotfire-copilot/2.3.4/backend
+./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.6 --agent-tag 1.0.0
+```
+
+```powershell
+.\spotfire-copilot-deploy.ps1 -Upgrade -ImageTag 2.3.6
+.\spotfire-copilot-deploy.ps1 -Upgrade -ImageTag 2.3.6 -AgentTag 1.0.0
+```
+
+It updates `IMAGE_TAG`, `FASTAPI_APP_VERSION`, and (when `--agent-tag` is given)
+`AGENT_CONTAINER_TAG`. Then apply it with `docker compose up -d --no-build` from the
+new folder.
+
+---
+
+## 11. Adding Agent Registry to an existing install
+
+Because Agent Registry needs an Orchestrator OAuth client with the `agent_developer`
+scope profile, create it against a **running** Orchestrator using the dedicated flow:
+
+```bash
+./spotfire-copilot-deploy.sh --install-agent-registry --dir <backend-folder>
+```
+
+```powershell
+.\spotfire-copilot-deploy.ps1 -InstallAgentRegistry -Dir <backend-folder>
+```
+
+This adds/updates only the Agent Registry configuration (`.env.agent-registry` and the
+compose service) in the specified backend folder without touching the rest of the
+deployment.
+
+---
+
+## 12. Security notes
+
+- Generated `.env*` files, `copilot-generated-values.txt`, and backups contain
+  secrets. They are written with owner-only permissions where the platform allows;
+  keep them out of source control.
+- The script does not generate credentials itself — it relies on the official
+  `generate_credentials.py`. Do not fabricate `SECRET_KEY` or bcrypt hashes.
+- Use a distinct OAuth client with the `agent_developer` scope for Agent Registry;
+  do not reuse the frontend/client OAuth credentials.
+- For managed/cloud PostgreSQL, prefer `require` or stricter SSL modes.
+- The local PostgreSQL reset deletes only the local Compose volume and requires an
+  explicit `DELETE` confirmation. Use it only for disposable lab/test data.
+- Rotate credentials and provider keys per your organization's policy.
+
+---
+
+## 13. Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| `Missing required credential values` | Provide a complete `copilot-generated-values.txt`, or place `generate_credentials.py` next to the installer and answer "No" at the credentials question. |
+| `Required command not found: python` (or bcrypt errors) | Install Python 3 + `bcrypt`, or pass `--install-prereqs`. Set `PYTHON_BIN` to select a specific interpreter. |
+| `Invalid PostgreSQL name` | Database/username must start with a letter/underscore, then letters/digits/underscores (max 63). Avoid entering a menu number here. |
+| `Existing local PostgreSQL volume detected` | Reuse it with the original password, or choose the fresh reset option (which creates `reset-local-postgres-volume.sh`). |
+| `docker-compose.yml is missing orchestrator-postgres` | You chose `POSTGRES_MODE=compose` but the compose file lacks the service; let the script regenerate it. |
+| `Invalid image tag` | Use an approved OCI tag: letters, digits, `.`, `_`, `-` (max 128), starting with an alphanumeric or underscore. |
+| Agent Registry deferred / not configured | Its OAuth client didn't exist yet. Start the Orchestrator, then run `--install-agent-registry --dir <backend>`. |
+| PowerShell "running scripts is disabled" | Launch with `powershell -ExecutionPolicy Bypass -File .\spotfire-copilot-deploy.ps1`, or set an appropriate execution policy. |
+
+---
+
+**Related documentation:**
+[Backend Setup Installation Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md) ·
+[Admin Console Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md) ·
+[Data Loaders Installation Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md) ·
+[Frontend Setup Guide](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md) ·
+[DeepAgents Deployment Scripts User Guide](Spotfire%20Copilot%20-%20DeepAgents%20Deployment%20Scripts%20User%20Guide.md)
