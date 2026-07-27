@@ -279,6 +279,7 @@ Quick-start minimum set:
 - For each enabled agent integration, set its `*_MCP_SERVER_URL`.
 - Set per-server `*_MCP_BEARER_TOKEN` values as required by your MCP backends, or set `MCP_BEARER_TOKEN` as a shared fallback.
 - Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored.
+- For full, identity-aware access control, an **enterprise / advanced** option enables agent-mediated **per-user** authorization (`MCP_TOKEN_EXCHANGE=1` + `A2A_AUTH_MODE=oidc`; see the [Per-User Authorization and Token Exchange Guide](./Spotfire%20Copilot%20-%20Per-User%20Authorization%20and%20Token%20Exchange%20Guide.md)). The default static-token / app-identity configuration above is the standard starting point for most deployments and needs none of this.
 - Set `LANGSMITH_API_KEY` when `LANGSMITH_TRACING=true`.
 
 Commonly optional:
@@ -303,6 +304,8 @@ Commonly optional:
 | KEYCLOAK_TOKEN_URL | Conditional | Keycloak token endpoint used by the minter. | `https://keycloak.example.com/realms/master/protocol/openid-connect/token` |
 | MCP_TOKEN_REFRESH_BEFORE_EXP_SECONDS | No | Seconds before token expiry at which the minter proactively refreshes. | `60` |
 | MCP_TOKEN_MINT_TIMEOUT_SECONDS | No | HTTP timeout (seconds) for token-endpoint POST. | `10` |
+| MCP_TOKEN_EXCHANGE | No | Opt-in. `1`/`true` enables agent-mediated **per-user** MCP authorization via OAuth token exchange (requires `A2A_AUTH_MODE=oidc` + the three minter vars). Unset = app identity / static tokens (default). | `1` |
+| MCP_EXCHANGE_AUDIENCE | No | Target client id for the exchanged token; leave empty (the `aud=mcp` claim comes from the client's audience mapper). | *(empty)* |
 | OSDU_MCP_SERVER_URL | Conditional | OSDU MCP endpoint for `osdu_agent`. | `https://mcp-osdu.example.com/mcp` |
 | OSDU_MCP_BEARER_TOKEN | Conditional | Per-server bearer token for OSDU MCP; falls back to `MCP_BEARER_TOKEN` if unset. | `<osdu-token>` |
 | DATABRICKS_MCP_SERVER_URL | Conditional | Databricks MCP endpoint for `databricks_agent`. | `https://mcp-databricks.example.com/mcp` |
