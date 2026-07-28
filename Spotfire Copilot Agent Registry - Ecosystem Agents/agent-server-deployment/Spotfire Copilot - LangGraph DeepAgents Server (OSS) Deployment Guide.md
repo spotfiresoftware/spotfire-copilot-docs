@@ -287,6 +287,13 @@ AGENTS_ENABLED=osdu_agent
 # MCP_CLIENT_ID=mcp-clients
 # MCP_CLIENT_SECRET=replace-me
 # KEYCLOAK_TOKEN_URL=https://keycloak.example.com/realms/master/protocol/openid-connect/token
+#
+# Optional: agent-mediated PER-USER authorization via OAuth token exchange.
+# Requires A2A_AUTH_MODE=oidc plus the three vars above. Fully opt-in — leave
+# unset to keep the default behavior shown above. See the Per-User Authorization
+# and Token Exchange Guide.
+# MCP_TOKEN_EXCHANGE=1
+# MCP_EXCHANGE_AUDIENCE=
 ```
 
 ### 4.3 Create `docker-compose.yml`
@@ -422,6 +429,8 @@ Commonly optional:
 | KEYCLOAK_TOKEN_URL | Conditional | Keycloak token endpoint used by the minter. | `https://keycloak.example.com/realms/master/protocol/openid-connect/token` |
 | MCP_TOKEN_REFRESH_BEFORE_EXP_SECONDS | No | Seconds before token expiry at which the minter proactively refreshes. | `60` |
 | MCP_TOKEN_MINT_TIMEOUT_SECONDS | No | HTTP timeout (seconds) for token-endpoint POST. | `10` |
+| MCP_TOKEN_EXCHANGE | No | Opt-in. `1`/`true` enables agent-mediated **per-user** MCP authorization via OAuth token exchange (requires `A2A_AUTH_MODE=oidc` + the three minter vars). Unset = app identity / static tokens (default). | `1` |
+| MCP_EXCHANGE_AUDIENCE | No | Target client id for the exchanged token; leave empty (the `aud=mcp` claim comes from the client's audience mapper). | *(empty)* |
 | <PREFIX>_MCP_SERVER_URL | Conditional | MCP server URL for an enabled agent integration. Required to load that integration's tools. | `OSDU_MCP_SERVER_URL=https://mcp-osdu.example.com/mcp` |
 | <PREFIX>_MCP_BEARER_TOKEN | Conditional | Per-server bearer token; falls back to `MCP_BEARER_TOKEN` if unset. Ignored when the Keycloak minter is active (all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, `KEYCLOAK_TOKEN_URL` set). | `OSDU_MCP_BEARER_TOKEN=<token>` |
 | <PREFIX>_MCP_SERVER_TRANSPORT | No | MCP transport. | `streamable-http` |
@@ -437,6 +446,18 @@ Commonly optional:
 Supported MCP prefixes in the template:
 
 - `OSDU`, `DATABRICKS`, `GENIE`, `SNOWFLAKE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`
+
+> **The default is the standard starting point; per-user auth is an advanced
+> option.** The default `.env` above (`A2A_AUTH_MODE=bearer` inbound, per-server
+> `*_MCP_BEARER_TOKEN` outbound) is what most deployments use and requires no
+> further setup. Two optional layers are available for organizations that need
+> more: (1) a Keycloak-minted app-identity token
+> (`MCP_CLIENT_ID` / `MCP_CLIENT_SECRET` / `KEYCLOAK_TOKEN_URL`); and (2) the
+> **enterprise / advanced** per-user authentication & authorization feature
+> (`MCP_TOKEN_EXCHANGE=1` + `A2A_AUTH_MODE=oidc`) for identity-aware access control
+> across agents and tools (models and token-level controls are on the roadmap).
+> Works with your corporate SSO (Okta, Entra ID, PureAuth, …) — see the
+> [Per-User Authorization and Token Exchange Guide](./Spotfire%20Copilot%20-%20Per-User%20Authorization%20and%20Token%20Exchange%20Guide.md).
 
 ### 4.6 Per-Agent MCP Variables (Explicit Names)
 
