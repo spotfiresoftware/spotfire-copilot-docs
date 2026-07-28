@@ -977,12 +977,6 @@ write_or_update_agent_registry_compose_service() {
       print "    volumes:"
       print "      - /opt/spotfire-agent-registry/custom-workflows:/custom-workflows:ro"
       print "      - /opt/spotfire-agent-registry/logs:/conversation-logs"
-      print "    healthcheck:"
-      print "      test: [\"CMD\", \"curl\", \"-f\", \"http://localhost:8050/healthz\"]"
-      print "      interval: 30s"
-      print "      timeout: 10s"
-      print "      retries: 5"
-      print "      start_period: 30s"
     }
     { L[NR] = $0 }
     END {
@@ -1017,6 +1011,59 @@ write_or_update_agent_registry_compose_service() {
   else
     rm -f "$compose_tmp"
     die "docker-compose.yml does not contain a top-level services: section, or the agent-registry update failed."
+  fi
+}
+
+# Obtains an Orchestrator admin JWT by logging in at /auth/jwt/login and stores it in
+# the global ORCH_ADMIN_BEARER_TOKEN. It first tries the plaintext admin password from
+# the credentials file (operators may store it under ADMIN_PASSWORD_PLAINTEXT); if the
+# file is missing it asks for the path, and if no plaintext password is available it
+# prompts for it. Username defaults to the hard-coded admin email.
+get_orchestrator_admin_token() {
+  local base_url="$1"
+  require_cmd curl
+  require_cmd python3
+  ORCH_ADMIN_BEARER_TOKEN=""
+  local cred_file="${CREDENTIALS_FILE:-}"
+  if [[ -z "$cred_file" || ! -f "$cred_file" ]]; then cred_file="$OUT_DIR/copilot-generated-values.txt"; fi
+
+  local admin_user="" admin_pass=""
+  if [[ ! -f "$cred_file" ]]; then
+    warn "Credentials file not found at $cred_file."
+    local entered=""
+    prompt entered "Path to copilot-generated-values.txt (leave blank to enter the admin password manually)" ""
+    entered="$(strip_outer_quotes "$entered")"
+    if [[ -n "$entered" && -f "$entered" ]]; then cred_file="$entered"; elif [[ -n "$entered" ]]; then warn "File not found: $entered"; fi
+  fi
+  if [[ -f "$cred_file" ]]; then
+    admin_user="$(get_from_credentials_file ADMIN_USERNAME "$cred_file" || true)"
+    [[ -z "$admin_user" ]] && admin_user="$(get_from_credentials_file ADMIN_EMAIL "$cred_file" || true)"
+    admin_pass="$(get_from_credentials_file ADMIN_PASSWORD_PLAINTEXT "$cred_file" || true)"
+    [[ -z "$admin_pass" ]] && admin_pass="$(get_from_credentials_file ADMIN_PASSWORD "$cred_file" || true)"
+    [[ -n "$admin_pass" ]] && info "Using the admin password found in $cred_file to log in to the Orchestrator."
+  fi
+
+  [[ -z "$admin_user" ]] && admin_user="admin@orchestrator.local"
+  if [[ -z "$admin_pass" ]]; then
+    info "The plaintext admin password is not stored in the credentials file by default (only its bcrypt hash is). Enter it to let the installer log in for you."
+    prompt admin_user "Orchestrator admin username (email)" "$admin_user"
+    prompt admin_pass "Orchestrator admin password (plaintext saved from generate_credentials.py)" "" true
+  fi
+  if [[ -z "$admin_pass" ]]; then
+    die "No Orchestrator admin password was provided, so the admin token could not be obtained and the Agent Registry OAuth client could not be created. No Agent Registry configuration was applied."
+  fi
+
+  info "Logging in to the Orchestrator at ${base_url}/auth/jwt/login as ${admin_user} to obtain an admin token."
+  local login_response=""
+  if ! login_response="$(curl -fsS -X POST "${base_url}/auth/jwt/login" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    --data-urlencode "username=${admin_user}" \
+    --data-urlencode "password=${admin_pass}")"; then
+    die "Could not log in to the Orchestrator at ${base_url}/auth/jwt/login. Check that the Orchestrator is running and reachable at that URL and that the admin username/password are correct (username must be the email, e.g. admin@orchestrator.local). No Agent Registry configuration was applied."
+  fi
+  ORCH_ADMIN_BEARER_TOKEN="$(printf '%s' "$login_response" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token", ""))' 2>/dev/null || true)"
+  if [[ -z "$ORCH_ADMIN_BEARER_TOKEN" ]]; then
+    die "The Orchestrator login response did not include an access_token. No Agent Registry configuration was applied."
   fi
 }
 
@@ -1080,6 +1127,7 @@ configure_agent_registry_env_only() {
         die "Agent Registry needs an Orchestrator OAuth client with Scope Profile agent_developer. Create it in the Admin Console (or re-run and let the installer create it), then run this again. No Agent Registry configuration was applied."
       fi
       require_cmd curl
+      require_cmd python3
       # The client-creation call is made from THIS host, so default to the
       # host-published orchestrator port. The in-compose hostname
       # (http://orchestrator:8080) is not resolvable from the host.
@@ -1088,12 +1136,12 @@ configure_agent_registry_env_only() {
         ORCH_AGENT_CLIENT_CREATE_DEFAULT="http://localhost:8080"
       fi
       prompt ORCH_AGENT_CLIENT_CREATE_URL "Orchestrator URL reachable from this machine for client creation" "$ORCH_AGENT_CLIENT_CREATE_DEFAULT"
-      prompt ORCH_ADMIN_BEARER_TOKEN "Orchestrator admin bearer token" "" true
-      prompt ORCH_AGENT_CLIENT_NAME "OAuth client name" "Agent Registry"
       ORCH_AGENT_CLIENT_CREATE_URL="${ORCH_AGENT_CLIENT_CREATE_URL%/}"
-      if [[ -z "$ORCH_ADMIN_BEARER_TOKEN" ]]; then
-        die "Orchestrator admin bearer token was empty, so the Agent Registry OAuth client could not be created. No Agent Registry configuration was applied."
-      fi
+      # Obtain the admin token by logging in on the operator's behalf instead of asking
+      # them to paste one. Uses the plaintext admin password from the credentials file
+      # when available, otherwise prompts for it. Sets ORCH_ADMIN_BEARER_TOKEN.
+      get_orchestrator_admin_token "$ORCH_AGENT_CLIENT_CREATE_URL"
+      prompt ORCH_AGENT_CLIENT_NAME "OAuth client name" "Agent Registry"
       info "Creating Agent Registry OAuth client in Orchestrator using scope_profile=agent_developer."
       if ! ORCH_AGENT_CLIENT_RESPONSE="$(curl -fsS -X POST "${ORCH_AGENT_CLIENT_CREATE_URL}/register_client" \
         -H "Authorization: Bearer ${ORCH_ADMIN_BEARER_TOKEN}" \
@@ -2287,25 +2335,25 @@ run_cloud_master_env_mode() {
 
   if [[ "$ENABLE_ADMIN_CONSOLE" == "yes" ]]; then
     admin_section=$(cat <<'EOM'
-# ============================================================
-# 04_ADMIN_CONSOLE
-# Documented Admin Console variables.
-# Use the same SECRET_KEY, DATABASE_URL, SYNC_DATABASE_URL,
-# and HASHED_ADMIN_PASSWORD values as the Orchestrator.
-# ============================================================
+# ############################################################
+# CONTAINER: ADMIN CONSOLE
+# Copy every variable in this block into the Admin Console container.
+# The SECRET values below MUST be identical to the same variables in
+# the Orchestrator container - copy the exact same values into both.
+# ############################################################
 
 # CONFIG
 ORCHESTRATOR_INTERNAL_URL=
 
-# SECRET - same values as Orchestrator
-# SECRET_KEY=
-# DATABASE_URL=
-# SYNC_DATABASE_URL=
-# HASHED_ADMIN_PASSWORD=
+# SECRET - must match the Orchestrator container exactly
+SECRET_KEY=
+DATABASE_URL=
+SYNC_DATABASE_URL=
+HASHED_ADMIN_PASSWORD=
 EOM
 )
   else
-    admin_section="# 04_ADMIN_CONSOLE omitted because Admin Console was not selected."
+    admin_section="# CONTAINER: ADMIN CONSOLE omitted because Admin Console was not selected."
   fi
 
   if [[ "$ENABLE_RAG" == "yes" ]]; then
@@ -2328,25 +2376,26 @@ EOM
 
   if [[ "$ENABLE_DATA_LOADER" == "yes" ]]; then
     data_loader_section=$(cat <<'EOM'
-# ============================================================
-# 09_DATA_LOADER
-# Configure Data Loader with the same documented provider, embeddings,
-# and knowledge-base variables selected above, plus the documented
-# Data Loader guide variables for the specific loader image you deploy.
-# ============================================================
+# ############################################################
+# CONTAINER: DATA LOADER
+# Copy the documented Data Loader variables for the specific loader
+# image you deploy (see the Data Loader guide) into this container.
+# It reuses the SAME embeddings and vector-DB SECRET values as the
+# Orchestrator container - copy those identical values here too.
+# ############################################################
 EOM
 )
   else
-    data_loader_section="# 09_DATA_LOADER omitted because Data Loader was not selected."
+    data_loader_section="# CONTAINER: DATA LOADER omitted because Data Loader was not selected."
   fi
 
   if [[ "$ENABLE_AGENT_REGISTRY" == "yes" ]]; then
     agent_section=$(cat <<'EOM'
-# ============================================================
-# 10_AGENT_REGISTRY
-# Documented Agent Registry production variables.
+# ############################################################
+# CONTAINER: AGENT REGISTRY
+# Copy every variable in this block into the Agent Registry container.
 # Agent Registry has two credential sets: AUTH_* and ORCHESTRATOR_*.
-# ============================================================
+# ############################################################
 
 # CONFIG
 AUTH_CLIENT_ID=
@@ -2364,7 +2413,7 @@ ORCHESTRATOR_CLIENT_SECRET=
 EOM
 )
   else
-    agent_section="# 10_AGENT_REGISTRY omitted because Agent Registry was not selected."
+    agent_section="# CONTAINER: AGENT REGISTRY omitted because Agent Registry was not selected."
   fi
 
   local content
@@ -2387,11 +2436,17 @@ EOM
 # secret values in cloud mode.
 #
 # HOW TO USE
-# 1. Review each selected section.
+# This file is organized into per-container blocks marked "CONTAINER: <name>".
+# For each container you deploy, copy the variables from its block into that
+# container's environment / secret configuration only.
+# 1. Review each CONTAINER block for the components you are deploying.
 # 2. Put SECRET variables into ${secret_store}.
 # 3. Put CONFIG variables into normal environment-variable configuration.
 # 4. Keep STORE ONLY values in a password vault; do not inject them into containers.
-# 5. Deploy the selected containers using the cloud provider UI, CLI, or IaC tool.
+# 5. Where a value is duplicated across blocks (e.g. SECRET_KEY, DATABASE_URL,
+#    HASHED_ADMIN_PASSWORD in Orchestrator and Admin Console) use the IDENTICAL
+#    value in every block - they must match.
+# 6. Deploy the selected containers using the cloud provider UI, CLI, or IaC tool.
 #
 # CLOUD SECRET MAPPING
 # ${secret_hint}
@@ -2422,10 +2477,15 @@ EOM
 # Data Loader image family: copilotoci.azurecr.io/spotfirecopilot/data-loader-<type>:${IMAGE_TAG}
 # Registry credentials are configured as image-pull/platform settings, not app env vars.
 
-# ============================================================
+# ############################################################
+# CONTAINER: ORCHESTRATOR
+# Copy every variable from here through the end of the RAG tuning
+# section into the Orchestrator container's environment / secret config.
+# ############################################################
+
+# ------------------------------------------------------------
 # 02_ORCHESTRATOR_CORE
-# Include in Orchestrator container.
-# ============================================================
+# ------------------------------------------------------------
 
 # GENERATED + SECRET
 SECRET_KEY=
@@ -2443,11 +2503,12 @@ OAUTH2_CLIENT_ID=
 # CONFIG
 LOG_LEVEL=INFO
 
-# ============================================================
+# ------------------------------------------------------------
 # 03_DATABASE
 # Managed PostgreSQL is recommended for cloud deployments.
-# Include DATABASE_URL and SYNC_DATABASE_URL in Orchestrator and Admin Console.
-# ============================================================
+# The same DATABASE_URL / SYNC_DATABASE_URL values are also copied
+# into the Admin Console container block below.
+# ------------------------------------------------------------
 
 # SECRET
 DATABASE_URL=
@@ -2456,8 +2517,6 @@ SYNC_DATABASE_URL=
 # CONFIG
 DB_SSLMODE=require
 
-${admin_section}
-
 $(cloud_llm_block "$LLM_PROVIDER")
 
 $(if [[ "$ENABLE_RAG" == "yes" ]]; then cloud_embeddings_block "$EMBEDDING_PROVIDER"; else echo "# 06_EMBEDDINGS omitted because RAG was not selected."; fi)
@@ -2465,6 +2524,8 @@ $(if [[ "$ENABLE_RAG" == "yes" ]]; then cloud_embeddings_block "$EMBEDDING_PROVI
 $(if [[ "$ENABLE_RAG" == "yes" ]]; then cloud_vector_block "$VECTOR_DB_PROVIDER"; else echo "# 07_VECTOR_DB omitted because RAG was not selected."; fi)
 
 ${rag_defaults_section}
+
+${admin_section}
 
 ${data_loader_section}
 
