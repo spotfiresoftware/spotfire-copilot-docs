@@ -161,6 +161,7 @@ uses `--long-flags`; PowerShell uses `-PascalCaseParameters`.
 | `--agent-tag TAG` | `-AgentTag TAG` | Agent Registry image tag (upgrade mode). |
 | `--dir DIR` | `-Dir DIR` | Output directory. Default: `./spotfire-copilot/<image-tag>/backend`. |
 | `--from-dir DIR` | `-FromDir DIR` | Source directory for upgrade mode. Defaults to last used directory. |
+| `--yes`, `-y` | `-Yes` | Accept the auto-detected upgrade source without prompting (for non-interactive/CI runs). |
 | `--install-prereqs` | `-InstallPrereqs` | Install/check Linux prerequisites when possible. |
 | `--no-install-prereqs` | `-NoInstallPrereqs` | Do not install prerequisites; fail if Python/bcrypt are missing. |
 | `--install-deepagents` | `-InstallDeepagents` | After core generation, run the standalone DeepAgents OSS generator. |
@@ -194,6 +195,14 @@ The default `<root>` is `./spotfire-copilot` (override with `COPILOT_ROOT_DIR`),
 the backend folder is finalized once the image tag is known. Existing files are
 backed up with timestamped `.bak` copies before being overwritten, and files are
 written with owner-only permissions where the platform allows.
+
+Each image tag gets its own version folder, but the compose-managed PostgreSQL volume
+is **shared across versions** — it uses the stable, version-independent name
+`<project>_postgres_data` (the image tag is not part of the volume name). This is what
+lets the database survive an upgrade: the new version folder mounts the same volume as
+the previous one. A fresh reset (when selected) also writes a
+`postgres_data_backup_<timestamp>.tgz` snapshot into the backend folder before deleting
+the volume.
 
 ---
 
@@ -246,7 +255,8 @@ threads, agents, and token data).
   generates a strong password. If an existing local data volume is detected, you can
   **reuse** it (enter the original password) or perform a **fresh lab/test reset**
   (new password + a `reset-local-postgres-volume.sh` helper that deletes only the
-  local PostgreSQL volume, guarded by a `DELETE` confirmation).
+  local PostgreSQL volume, after taking a `postgres_data_backup_<timestamp>.tgz`
+  snapshot and guarded by a `DELETE` confirmation).
 
 Database names and usernames must be valid PostgreSQL identifiers (start with a
 letter/underscore; letters, digits, underscores; max 63 chars).
@@ -351,6 +361,36 @@ It updates `IMAGE_TAG`, `FASTAPI_APP_VERSION`, and (when `--agent-tag` is given)
 `AGENT_CONTAINER_TAG`. Then apply it with `docker compose up -d --no-build` from the
 new folder.
 
+### 10.1 Choosing the source
+
+- **Explicit** — pass `--from-dir` / `-FromDir` to name the source backend folder. This
+  is unambiguous and skips the confirmation prompt.
+- **Auto-detected** — without `--from-dir`, the script uses the last recorded install
+  directory, **prints the resolved source and target, and asks you to confirm** before
+  copying anything. In a non-interactive/CI run it will refuse to guess: pass
+  `--from-dir`, or add `--yes` / `-Yes` to accept the detected source.
+- **Same tag as the source** — if the target tag resolves to the same directory as the
+  source, the script skips the file copy and simply re-applies the tag values in place
+  (an idempotent no-op), instead of failing.
+
+### 10.2 Database continuity
+
+The compose-managed PostgreSQL volume uses a stable, version-independent name
+(`<project>_postgres_data`), so the upgraded stack **reuses the existing database
+automatically** — no data is lost across a tag bump. For an external/managed
+PostgreSQL, continuity is automatic because the upgrade copies the existing
+`.env.orchestrator` (host, database, credentials) forward unchanged.
+
+### 10.3 Backward-incompatible releases
+
+If a release is **not backward compatible** with the existing database schema, reusing
+the old data can cause startup/migration failures. In that case do a **fresh database**
+instead: run the `reset-local-postgres-volume.sh` helper (compose-managed), which takes
+a `postgres_data_backup_<timestamp>.tgz` snapshot before deleting the volume, or point
+the new version at a **new external database** while leaving the old one intact for
+rollback. Your previous version folder is untouched, so you can always bring the prior
+stack back up against its original data.
+
 ---
 
 ## 11. Adding Agent Registry to an existing install
@@ -382,8 +422,9 @@ deployment.
 - Use a distinct OAuth client with the `agent_developer` scope for Agent Registry;
   do not reuse the frontend/client OAuth credentials.
 - For managed/cloud PostgreSQL, prefer `require` or stricter SSL modes.
-- The local PostgreSQL reset deletes only the local Compose volume and requires an
-  explicit `DELETE` confirmation. Use it only for disposable lab/test data.
+- The local PostgreSQL reset deletes only the local Compose volume (after writing a
+  `postgres_data_backup_<timestamp>.tgz` snapshot) and requires an explicit `DELETE`
+  confirmation. Use it only for disposable lab/test data.
 - Rotate credentials and provider keys per your organization's policy.
 
 ---
@@ -396,6 +437,8 @@ deployment.
 | `Required command not found: python` (or bcrypt errors) | Install Python 3 + `bcrypt`, or pass `--install-prereqs`. Set `PYTHON_BIN` to select a specific interpreter. |
 | `Invalid PostgreSQL name` | Database/username must start with a letter/underscore, then letters/digits/underscores (max 63). Avoid entering a menu number here. |
 | `Existing local PostgreSQL volume detected` | Reuse it with the original password, or choose the fresh reset option (which creates `reset-local-postgres-volume.sh`). |
+| `Non-interactive run cannot auto-confirm the detected source` | An upgrade without `--from-dir` was run without a terminal. Pass `--from-dir <dir>` to name the source explicitly, or add `--yes` / `-Yes` to accept the auto-detected source. |
+| `cp: ... are the same file` on upgrade | Upgrading to the same tag as the source now skips the copy and re-applies tags in place. Ensure you are on the current script version. |
 | `docker-compose.yml is missing orchestrator-postgres` | You chose `POSTGRES_MODE=compose` but the compose file lacks the service; let the script regenerate it. |
 | `Invalid image tag` | Use an approved OCI tag: letters, digits, `.`, `_`, `-` (max 128), starting with an alphanumeric or underscore. |
 | Agent Registry deferred / not configured | Its OAuth client didn't exist yet. Start the Orchestrator, then run `--install-agent-registry --dir <backend>`. |

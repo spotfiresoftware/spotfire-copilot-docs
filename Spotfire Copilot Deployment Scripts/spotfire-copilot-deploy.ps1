@@ -24,6 +24,7 @@ param(
  [string]$AgentTag,
  [string]$Dir,
  [string]$FromDir,
+ [switch]$Yes,
  [switch]$InstallPrereqs,
  [switch]$NoInstallPrereqs,
  [Alias('WithDeepagents')]
@@ -57,6 +58,7 @@ if ($env:OUT_DIR) {
     $script:OUT_DIR_EXPLICIT = 'no'
 }
 $script:FROM_DIR = ''
+$script:ASSUME_YES = 'no'
 $script:DEFAULT_CREDENTIALS_FILE = ''
 $script:CREDENTIALS_SCRIPT = ''
 $script:MODE = 'interactive'
@@ -484,6 +486,7 @@ Options:
  -AgentTag TAG          Agent Registry image tag for upgrade mode.
  -Dir DIR               Output directory. Default: .\spotfire-copilot\<image-tag>\backend.
  -FromDir DIR           Source directory for upgrade mode. Defaults to last used directory.
+ -Yes                   Accept the auto-detected upgrade source without prompting (for non-interactive/CI runs).
  -InstallPrereqs        Install/check prerequisites automatically when possible.
  -NoInstallPrereqs      Do not install prerequisites; fail if Python/bcrypt are missing.
  -InstallDeepagents     After core generation, run standalone DeepAgents installer if found.
@@ -551,15 +554,14 @@ function Resolve-CredentialsPath { param([string]$P)
     return $P
 }
 
-# The Compose "postgres_data" volume is given an explicit, version-scoped name of
-# "<project>_postgres_data_<IMAGE_TAG>" so each deployed version keeps its own volume.
-# Scope all detection/reset logic to THIS deployment's project+version volume so we
-# never match (or delete) a postgres_data volume that belongs to another project or
-# another version on the same host.
+# The Compose "postgres_data" volume is given a stable, version-independent name of
+# "<project>_postgres_data" (the image tag is NOT part of the name) so the database
+# survives image-tag upgrades. Scope all detection/reset logic to THIS deployment's
+# project volume so we never match (or delete) a postgres_data volume that belongs to
+# another project on the same host.
 function Get-ComposePostgresVolumeName {
     $proj = if ([string]::IsNullOrEmpty($script:COMPOSE_PROJECT_NAME)) { 'spotfire-copilot' } else { $script:COMPOSE_PROJECT_NAME }
-    $tag  = if ([string]::IsNullOrEmpty($script:IMAGE_TAG)) { $script:DEFAULT_IMAGE_TAG } else { $script:IMAGE_TAG }
-    return "${proj}_postgres_data_${tag}"
+    return "${proj}_postgres_data"
 }
 
 function Test-ExistingBackendState {
@@ -607,7 +609,7 @@ if (Test-Path $EnvFile) {
 }
 if ([string]::IsNullOrEmpty($ProjectName)) { $ProjectName = 'spotfire-copilot' }
 if ([string]::IsNullOrEmpty($ImageTag)) { $ImageTag = 'latest' }
-$PostgresVolume = "${ProjectName}_postgres_data_${ImageTag}"
+$PostgresVolume = "${ProjectName}_postgres_data"
 
 Write-Host @"
 This will stop the Copilot Docker Compose stack and delete ONLY the local PostgreSQL volume below:
@@ -622,6 +624,7 @@ It will NOT run:
 
 Instead, it will run:
  docker compose down
+ (back up the volume to a local .tgz snapshot)
  docker volume rm "$PostgresVolume"
  docker compose up -d --force-recreate
 "@
@@ -641,6 +644,15 @@ $answer = Read-Host "Type DELETE to remove only $PostgresVolume"
 if ($answer -ne 'DELETE') { Write-Host 'Cancelled.'; exit 1 }
 
 docker compose --project-directory $ScriptDir -f $ComposeFile down
+$BackupFile = Join-Path $ScriptDir ("postgres_data_backup_{0}.tgz" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+Write-Host "Backing up volume $PostgresVolume to $BackupFile before deletion..."
+docker run --rm -v "${PostgresVolume}:/from" -v "${ScriptDir}:/backup" alpine tar czf "/backup/$(Split-Path -Leaf $BackupFile)" -C /from .
+if ($LASTEXITCODE -ne 0) {
+ Write-Host 'ERROR: Backup failed; aborting without deleting the volume.'
+ docker compose --project-directory $ScriptDir -f $ComposeFile up -d
+ exit 1
+}
+Write-Host "Backup complete: $BackupFile"
 docker volume rm $PostgresVolume
 docker compose --project-directory $ScriptDir -f $ComposeFile up -d --force-recreate
 '@
@@ -1030,8 +1042,9 @@ function Show-CurrentInfo {
 function Invoke-Upgrade {
     if ([string]::IsNullOrEmpty($script:UPGRADE_IMAGE_TAG)) { Invoke-Die '-Upgrade requires -ImageTag <tag>. Example: -Upgrade -ImageTag 2.3.4' }
     $sourceDir = $script:FROM_DIR
-    if ([string]::IsNullOrEmpty($sourceDir)) { $sourceDir = Get-LastOutDir }
-    if ([string]::IsNullOrEmpty($sourceDir)) { Invoke-Die 'No previous install directory found. Use -FromDir C:\path\to\spotfire-copilot-2.3.2\backend.' }
+    $sourceAuto = $false
+    if ([string]::IsNullOrEmpty($sourceDir)) { $sourceDir = Get-LastOutDir; $sourceAuto = $true }
+    if ([string]::IsNullOrEmpty($sourceDir)) { Invoke-Die 'No previous install directory found. Use -FromDir C:\path\to\spotfire-copilot\2.3.4\backend.' }
     if (-not (Test-Path $sourceDir -PathType Container)) { Invoke-Die "Source directory not found: $sourceDir" }
 
     if ($script:OUT_DIR_EXPLICIT -eq 'no') {
@@ -1040,7 +1053,29 @@ function Invoke-Upgrade {
     if (-not (Test-Path $script:OUT_DIR)) { New-Item -ItemType Directory -Path $script:OUT_DIR -Force | Out-Null }
     Write-Info "Upgrade source directory: $sourceDir"
     Write-Info "Upgrade target directory: $($script:OUT_DIR)"
-    Copy-ExistingConfigToNewDir $sourceDir $script:OUT_DIR
+
+    # When the source was auto-detected (no -FromDir), show it and require confirmation
+    # so we never silently upgrade from the wrong baseline.
+    if ($sourceAuto) {
+        if ($script:ASSUME_YES -eq 'yes') {
+            Write-Info 'Auto-detected source accepted via -Yes.'
+        } elseif (-not [System.Console]::IsInputRedirected) {
+            $__confirm = Read-Host "Upgrade using the auto-detected source above -> IMAGE_TAG=$($script:UPGRADE_IMAGE_TAG)? [y/N]"
+            if ($__confirm -notmatch '^(y|Y|yes|YES)$') { Invoke-Die 'Upgrade cancelled. Re-run with -FromDir <dir> to choose the source explicitly.' }
+        } else {
+            Invoke-Die "Non-interactive run cannot auto-confirm the detected source: $sourceDir. Pass -FromDir <dir>, or add -Yes to accept the detected source."
+        }
+ }
+
+    # Same-directory guard (e.g. upgrading to the same tag the source already uses):
+    # skip the self-copy and just re-apply the tag values in place.
+    $srcAbs = (Resolve-Path -LiteralPath $sourceDir).Path
+    $tgtAbs = (Resolve-Path -LiteralPath $script:OUT_DIR).Path
+    if ($srcAbs -ieq $tgtAbs) {
+        Write-Warn 'Source and target are the same directory (tag unchanged). Skipping copy; re-applying tag values in place.'
+    } else {
+        Copy-ExistingConfigToNewDir $sourceDir $script:OUT_DIR
+ }
 
     $base = Join-Path $script:OUT_DIR '.env'
     $compose = Join-Path $script:OUT_DIR 'docker-compose.yml'
@@ -3131,6 +3166,7 @@ if (-not [string]::IsNullOrEmpty($ImageTag)) { $script:UPGRADE_IMAGE_TAG = $Imag
 if (-not [string]::IsNullOrEmpty($AgentTag)) { $script:UPGRADE_AGENT_TAG = $AgentTag }
 if (-not [string]::IsNullOrEmpty($Dir))      { $script:OUT_DIR = $Dir; $script:OUT_DIR_EXPLICIT = 'yes' }
 if (-not [string]::IsNullOrEmpty($FromDir))  { $script:FROM_DIR = $FromDir }
+if ($Yes) { $script:ASSUME_YES = 'yes' }
 if ($InstallPrereqs)   { $script:INSTALL_PREREQS = 'yes' }
 if ($NoInstallPrereqs) { $script:INSTALL_PREREQS = 'no' }
 if ($InstallDeepagents) { $script:WITH_DEEPAGENTS = 'yes' }
@@ -3845,7 +3881,7 @@ if ($script:GENERATE_COMPOSE -eq 'yes') {
         'volumes:'
         '  postgres_data:'
         '    driver: local'
-        '    name: ${COMPOSE_PROJECT_NAME:-spotfire-copilot}_postgres_data_${IMAGE_TAG}'
+        '    name: ${COMPOSE_PROJECT_NAME:-spotfire-copilot}_postgres_data'
  ) | ForEach-Object { $composeLines.Add($_) }
 
     $composeContent = ($composeLines -join "`n") + "`n"
