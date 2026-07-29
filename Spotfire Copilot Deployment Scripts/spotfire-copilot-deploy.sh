@@ -20,6 +20,7 @@ else
   OUT_DIR_EXPLICIT="no"
 fi
 FROM_DIR=""
+ASSUME_YES="no"
 DEFAULT_CREDENTIALS_FILE=""
 CREDENTIALS_SCRIPT="${CREDENTIALS_SCRIPT:-}"
 MODE="interactive"
@@ -369,6 +370,7 @@ Options:
  --agent-tag TAG     Agent Registry image tag for upgrade mode.
  --dir DIR           Output directory. Default: ./spotfire-copilot/<image-tag>/backend.
  --from-dir DIR      Source directory for upgrade mode. Defaults to last used directory.
+ --yes, -y           Accept the auto-detected upgrade source without prompting (for non-interactive/CI runs).
  --install-prereqs   Install/check Linux prerequisites automatically when possible.
  --no-install-prereqs Do not install prerequisites; fail if Python/bcrypt are missing.
  --install-deepagents
@@ -403,6 +405,7 @@ parse_args() {
       --agent-tag) UPGRADE_AGENT_TAG="${2:-}"; shift 2 ;;
       --dir) OUT_DIR="${2:-}"; OUT_DIR_EXPLICIT="yes"; shift 2 ;;
       --from-dir) FROM_DIR="${2:-}"; shift 2 ;;
+      --yes|-y) ASSUME_YES="yes"; shift ;;
       --install-prereqs) INSTALL_PREREQS="yes"; shift ;;
       --no-install-prereqs) INSTALL_PREREQS="no"; shift ;;
       --install-deepagents|--with-deepagents) WITH_DEEPAGENTS="yes"; shift ;;
@@ -466,13 +469,13 @@ normalize_credentials_path() {
   printf '%s' "$p"
 }
 
-# The Compose "postgres_data" volume is given an explicit, version-scoped name of
-# "<project>_postgres_data_<IMAGE_TAG>" so each deployed version keeps its own volume.
-# Scope all detection/reset logic to THIS deployment's project+version volume so we
-# never match (or delete) a postgres_data volume that belongs to another project or
-# another version on the same host.
+# The Compose "postgres_data" volume is given a stable, version-independent name of
+# "<project>_postgres_data" (the image tag is NOT part of the name) so the database
+# survives image-tag upgrades. Scope all detection/reset logic to THIS deployment's
+# project volume so we never match (or delete) a postgres_data volume that belongs to
+# another project on the same host.
 compose_postgres_volume_name() {
-  printf '%s_postgres_data_%s' "${COMPOSE_PROJECT_NAME:-spotfire-copilot}" "${IMAGE_TAG:-${DEFAULT_IMAGE_TAG}}"
+  printf '%s_postgres_data' "${COMPOSE_PROJECT_NAME:-spotfire-copilot}"
 }
 
 existing_backend_state_detected() {
@@ -516,7 +519,7 @@ fi
 
 PROJECT_NAME="${PROJECT_NAME:-spotfire-copilot}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-POSTGRES_VOLUME="${PROJECT_NAME}_postgres_data_${IMAGE_TAG}"
+POSTGRES_VOLUME="${PROJECT_NAME}_postgres_data"
 
 cat <<WARN
 This will stop the Copilot Docker Compose stack and delete ONLY the local PostgreSQL volume below:
@@ -531,6 +534,7 @@ It will NOT run:
 
 Instead, it will run:
  docker compose down
+ (back up the volume to a local .tgz snapshot)
  docker volume rm "$POSTGRES_VOLUME"
  docker compose up -d --force-recreate
 WARN
@@ -552,6 +556,14 @@ if [[ "$answer" != "DELETE" ]]; then
 fi
 
 docker compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" down
+BACKUP_FILE="$SCRIPT_DIR/postgres_data_backup_$(date +%Y%m%d_%H%M%S).tgz"
+echo "Backing up volume $POSTGRES_VOLUME to $BACKUP_FILE before deletion..."
+if ! docker run --rm -v "$POSTGRES_VOLUME":/from -v "$SCRIPT_DIR":/backup alpine tar czf "/backup/$(basename "$BACKUP_FILE")" -C /from . ; then
+ echo "ERROR: Backup failed; aborting without deleting the volume." >&2
+ docker compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" up -d
+ exit 1
+fi
+echo "Backup complete: $BACKUP_FILE"
 docker volume rm "$POSTGRES_VOLUME"
 docker compose --project-directory "$SCRIPT_DIR" -f "$COMPOSE_FILE" up -d --force-recreate
 HELPER
@@ -867,8 +879,8 @@ show_info() {
 run_upgrade() {
  [[ -n "$UPGRADE_IMAGE_TAG" ]] || die "--upgrade requires --image-tag <tag>. Example: --upgrade --image-tag 2.3.4"
 
-  local source_dir="${FROM_DIR:-}"
-  if [[ -z "$source_dir" ]]; then source_dir="$(last_out_dir || true)"; fi
+  local source_dir="${FROM_DIR:-}" source_auto="no"
+  if [[ -z "$source_dir" ]]; then source_dir="$(last_out_dir || true)"; source_auto="yes"; fi
  [[ -n "$source_dir" ]] || die "No previous install directory found. Use --from-dir /path/to/spotfire-copilot/2.3.4/backend."
  [[ -d "$source_dir" ]] || die "Source directory not found: $source_dir"
 
@@ -879,7 +891,34 @@ run_upgrade() {
   mkdir -p "$OUT_DIR"
   info "Upgrade source directory: $source_dir"
   info "Upgrade target directory: $OUT_DIR"
-  copy_existing_config_to_new_dir "$source_dir" "$OUT_DIR"
+
+  # When the source was auto-detected (no --from-dir), show it and require confirmation
+  # so we never silently upgrade from the wrong baseline.
+  if [[ "$source_auto" == "yes" ]]; then
+    if [[ "$ASSUME_YES" == "yes" ]]; then
+      info "Auto-detected source accepted via --yes."
+    elif [[ -t 0 ]]; then
+      local __confirm=""
+      read -r -p "Upgrade using the auto-detected source above -> IMAGE_TAG=$UPGRADE_IMAGE_TAG? [y/N]: " __confirm || true
+      case "$__confirm" in
+        y|Y|yes|YES) : ;;
+        *) die "Upgrade cancelled. Re-run with --from-dir <dir> to choose the source explicitly." ;;
+      esac
+    else
+      die "Non-interactive run cannot auto-confirm the detected source: $source_dir. Pass --from-dir <dir>, or add --yes to accept the detected source."
+    fi
+  fi
+
+  # Same-directory guard (e.g. upgrading to the same tag the source already uses):
+  # skip the self-copy so 'cp' does not fail, and just re-apply the tag values in place.
+  local src_abs tgt_abs
+  src_abs="$( (cd "$source_dir" 2>/dev/null && pwd -P) || printf '%s' "$source_dir")"
+  tgt_abs="$( (cd "$OUT_DIR" 2>/dev/null && pwd -P) || printf '%s' "$OUT_DIR")"
+  if [[ "$src_abs" == "$tgt_abs" ]]; then
+    warn "Source and target are the same directory (tag unchanged). Skipping copy; re-applying tag values in place."
+  else
+    copy_existing_config_to_new_dir "$source_dir" "$OUT_DIR"
+  fi
 
   local base="$OUT_DIR/.env" compose="$OUT_DIR/docker-compose.yml"
  [[ -f "$base" ]] || die "Missing $base after copy. Run an initial generation first, or provide a valid --from-dir."
@@ -3757,7 +3796,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
     'volumes:'
     '  postgres_data:'
     '    driver: local'
-    '    name: ${COMPOSE_PROJECT_NAME:-spotfire-copilot}_postgres_data_${IMAGE_TAG}'
+    '    name: ${COMPOSE_PROJECT_NAME:-spotfire-copilot}_postgres_data'
  )
 
   COMPOSE_CONTENT="$(printf '%s\n' "${compose_lines[@]}")"
