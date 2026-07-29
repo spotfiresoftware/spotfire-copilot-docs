@@ -1,14 +1,15 @@
 # Snowflake Agent — User Guide
 
-data × snowflake × cortex-analyst × cortex-search × natural-language-q&a × semantic-view
+data × snowflake × cortex-analyst × well-surveys × natural-language-q&a × semantic-view
 
-The Snowflake Agent is a conversational wrapper around the **Snowflake** MCP server. It lets you ask natural-language questions about your Snowflake account inside the Spotfire Copilot Panel and surfaces grounded answers — the SQL Cortex Analyst ran, the result rows, ranked support-ticket search hits, or a `Send_Email` confirmation — without ever leaving the chat.
+The Snowflake Agent is a conversational wrapper around the **Snowflake** MCP server. It lets you ask natural-language questions about oil & gas well directional surveys in your Snowflake account inside the Spotfire Copilot Panel and surfaces grounded answers — the SQL Cortex Analyst ran and the result rows — without ever leaving the chat.
 
 ## Table of Contents
 
 - [Introduction](#introduction)
 - [What Is Snowflake Cortex](#what-is-snowflake-cortex)
 - [Prerequisites](#prerequisites)
+- [Provisioning the External Snowflake MCP Server](#provisioning-the-external-snowflake-mcp-server)
 - [Getting Started](#getting-started)
   - [Invoking the Agent](#invoking-the-agent)
   - [What You Provide](#what-you-provide)
@@ -16,24 +17,20 @@ The Snowflake Agent is a conversational wrapper around the **Snowflake** MCP ser
 - [What the Agent Can Do](#what-the-agent-can-do)
 - [How the Workflow Operates](#how-the-workflow-operates)
   - [Stage 1: Orientation](#stage-1-orientation)
-  - [Stage 2: Ask a Financial / Risk / Customer Question (Cortex Analyst)](#stage-2-ask-a-financial--risk--customer-question-cortex-analyst)
-  - [Stage 3: Search the Support-Ticket Corpus (Cortex Search)](#stage-3-search-the-support-ticket-corpus-cortex-search)
-  - [Stage 4: Explore Schema / Metadata (Read-Only SQL)](#stage-4-explore-schema--metadata-read-only-sql)
-  - [Stage 5: Send an Email](#stage-5-send-an-email)
-  - [Stage 6: Interpret Results](#stage-6-interpret-results)
-  - [Stage 7: Iteratively Refine an Ambiguous Question](#stage-7-iteratively-refine-an-ambiguous-question)
+  - [Stage 2: Ask a Well-Survey Question (Cortex Analyst)](#stage-2-ask-a-well-survey-question-cortex-analyst)
+  - [Stage 3: Explore Schema / Metadata (Read-Only SQL)](#stage-3-explore-schema--metadata-read-only-sql)
+  - [Stage 4: Interpret Results](#stage-4-interpret-results)
+  - [Stage 5: Iteratively Refine an Ambiguous Question](#stage-5-iteratively-refine-an-ambiguous-question)
 - [Typical End-to-End Session](#typical-end-to-end-session)
 
 ---
 
 ## Introduction
 
-The Snowflake Agent is a conversational data analyst available inside the Spotfire Copilot Panel. It does not generate SQL itself for analytical questions, navigate the Snowflake account by guessing, or fabricate result rows. Every answer the agent returns comes from **Snowflake** through the `snowflake` MCP server's four tools:
+The Snowflake Agent is a conversational data analyst available inside the Spotfire Copilot Panel. It does not generate SQL itself for analytical questions, navigate the Snowflake account by guessing, or fabricate result rows. Every answer the agent returns comes from **Snowflake** through the `snowflake` MCP server's two tools:
 
-- **Cortex Analyst** over a curated finance & risk semantic view, for structured / quantitative questions.
-- **Cortex Search** over an unstructured support-ticket corpus, for "what are users complaining about" / "find tickets mentioning X" questions.
+- **Cortex Analyst** over a curated directional-survey semantic view (`VOLVE_SURVEYS`), for structured / quantitative questions about oil & gas wellbore surveys.
 - **Read-only SQL** (`SELECT` / `SHOW` / `DESCRIBE` / `EXPLAIN`) for schema and metadata exploration not covered by the semantic view.
-- **`Send_Email`** stored procedure for outbound mail, executed only when you explicitly ask.
 
 The agent's job is to route each question to the right tool, run it with the minimum necessary input, and present the grounded answer cleanly. Because all underlying functionality is provided by Snowflake, the capabilities, accuracy, governance model, and limitations described here are the ones documented by Snowflake. The agent inherits them — it does not extend or replace them.
 
@@ -41,44 +38,100 @@ The agent works independently of the surrounding analysis or dashboard. It does 
 
 ## What Is Snowflake Cortex
 
-Snowflake Cortex is Snowflake's family of native AI features. Two of them back this agent:
+Snowflake Cortex is Snowflake's family of native AI features. One of them backs this agent:
 
 | Surface             | What It Is                                                                                                                                                          |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cortex Analyst**  | Snowflake's natural-language data Q&A surface backed by a **semantic view**. Translates a question into SQL against a curated set of tables and returns a grounded answer plus the SQL it ran. Synchronous, read-only. |
-| **Cortex Search**   | Keyword + vector search over an indexed corpus of unstructured text (here: support tickets). Returns ranked passages with relevance scores.                          |
 
 Key concepts the agent surfaces to you:
 
 | Term                | Meaning                                                                                                                                                              |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Semantic view**   | A curated layer that maps business concepts (customer, transaction, risk score, campaign response) onto the underlying Snowflake tables/columns. Cortex Analyst reasons against it; you do not query the view directly with SQL. |
-| **Search service**  | A Cortex Search index built over a column of unstructured text. The agent queries it with natural-language phrases and gets ranked passages back.                     |
+| **Semantic view**   | A curated layer that maps survey concepts (well identifier, measured depth, inclination, azimuth, dogleg severity) onto the underlying Snowflake tables/columns. Cortex Analyst reasons against it; you do not query the view directly with SQL. |
+| **Directional survey** | A set of measurement points describing a wellbore's geometric path through the subsurface — measured depth, inclination, azimuth, true vertical depth, and coordinates. The Volve dataset covers wells from the Volve field. |
 | **Warehouse / role / database.schema.table** | Snowflake's execution context. The MCP server is already configured with a warehouse and role; the agent does not switch them.                                  |
-| **Verified email**  | The email address Snowflake has confirmed for the calling user. `Send_Email` defaults the recipient to this address when none is supplied.                            |
-| **Read-only**       | The agent never issues writes. SQL is restricted to `SELECT` / `SHOW` / `DESCRIBE` / `EXPLAIN`, and `Send_Email` is the only side-effecting tool — only fired on explicit request. |
+| **Read-only**       | The agent never issues writes. SQL is restricted to `SELECT` / `SHOW` / `DESCRIBE` / `EXPLAIN`; there are no side-effecting tools. |
 
-For background on Cortex Analyst and Cortex Search, see the upstream documentation:
+For background on Cortex Analyst and semantic views, see the upstream documentation:
 - [Cortex Analyst overview](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst)
 - [Semantic views](https://docs.snowflake.com/en/user-guide/views-semantic/overview)
-- [Cortex Search overview](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-search/cortex-search-overview)
-- [Snowflake email notifications (`Send_Email`)](https://docs.snowflake.com/en/user-guide/email-stored-procedures)
 
 ## Prerequisites
 
 This agent is not deployed standalone. Before you can invoke it from the Spotfire Copilot Panel, two components must already be deployed and reachable in your environment:
 
 - **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
-- **`snowflake` MCP server** — the agent's only tools (`Finance_and_Risk_Assessment_Semantic_View`, `Support_Tickets_Cortex_Search`, `SQL_Execution_Tool`, `Send_Email`) call this MCP server at runtime. The MCP server is configured with the Snowflake account, warehouse, role, semantic view, search service, and email integration it is allowed to address.
+- **`snowflake` MCP server** — the agent's only tools (`VOLVE_SURVEYS`, `SQL_Execution_Tool`) call this MCP server at runtime. The MCP server is configured with the Snowflake account, warehouse, role, and semantic view it is allowed to address.
 
 In addition, on the Snowflake side you need:
 
-- A **semantic view** (default `DASH_MCP_DB.DATA.FINANCIAL_SERVICES_ANALYTICS`) curated by an analyst, registering the tables, dimensions, metrics, synonyms, and example queries that Cortex Analyst will reason over.
-- A **Cortex Search service** (default `DASH_MCP_DB.DATA.SUPPORT_TICKETS`) built over the support-ticket corpus.
-- The MCP server's identity must have `USAGE` on the warehouse, `USAGE` on the database/schema, `SELECT` on the underlying tables, `USAGE` on the semantic view and search service, and `USAGE` on the `Send_Email` stored procedure.
-- A notification integration that backs `Send_Email`, plus a verified email address for the caller when relying on the recipient default.
+- A **semantic view** (default `DASH_MCP_DB.DATA.VOLVE_SURVEYS`, over the base table `VOLVE_COMBINED_DIRECTIONAL_SURVEYS`) curated by an analyst, registering the tables, dimensions, metrics, synonyms, and example queries that Cortex Analyst will reason over.
+- The MCP server's identity must have `USAGE` on the warehouse, `USAGE` on the database/schema, `SELECT` on the underlying tables, and `USAGE` on the semantic view.
 
 If any component is missing or unreachable, the agent will not appear in the Copilot Panel, or it will fail with a tool-related error.
+
+## Provisioning the External Snowflake MCP Server
+
+Unlike the MCP servers that Spotfire publishes (OSDU, Databricks, Data Virtualization, and others), the `snowflake` MCP server is **external** — a [Snowflake-managed MCP server](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp) that you provision **inside your own Snowflake account**. There is no container or Helm chart to deploy from this documentation set; you create the server object in Snowflake and point the agent at its URL. Snowflake's own documentation is the source of truth for the full procedure, RBAC model, OAuth setup, network policies, and limitations — this section covers only what is specific to this agent.
+
+### What this agent expects
+
+The Snowflake Agent loads exactly **two tools** from the MCP server; provision the server so it exposes both, named as follows:
+
+| Tool name (as the agent sees it) | Snowflake tool type    | Backs                                                                 |
+| -------------------------------- | ---------------------- | --------------------------------------------------------------------- |
+| `VOLVE_SURVEYS`                  | `CORTEX_ANALYST_MESSAGE` | The directional-survey semantic view (default `DASH_MCP_DB.DATA.VOLVE_SURVEYS`). |
+| `SQL_Execution_Tool`             | `SYSTEM_EXECUTE_SQL`     | Read-only SQL (`SELECT` / `SHOW` / `DESCRIBE` / `EXPLAIN`) on the configured database. |
+
+### Create the MCP server
+
+Run this in your Snowflake account (adjust the database, schema, semantic view, and warehouse to your environment). See Snowflake's [Create an MCP Server object](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp#create-an-mcp-server-object) for the full reference.
+
+```yaml
+CREATE OR REPLACE MCP SERVER copilot_mcp_server
+  FROM SPECIFICATION $$
+    tools:
+      - name: "VOLVE_SURVEYS"
+        title: "Volve Directional Surveys"
+        type: "CORTEX_ANALYST_MESSAGE"
+        identifier: "DASH_MCP_DB.DATA.VOLVE_SURVEYS"
+        description: "Cortex Analyst over the Volve well directional-survey semantic view."
+      - name: "SQL_Execution_Tool"
+        title: "SQL Execution Tool"
+        type: "SYSTEM_EXECUTE_SQL"
+        description: "Executes read-only SQL against the connected Snowflake database."
+        config:
+          read_only: true
+          warehouse: "<your_warehouse>"
+  $$;
+```
+
+### Grant access
+
+The role the MCP server runs under needs, at minimum: `USAGE` on the MCP server, `SELECT` on the semantic view (required to invoke the Cortex Analyst tool), `SELECT` on the underlying tables, and `USAGE` on the warehouse and the database/schema. See Snowflake's [Access control](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp#access-control) table for the exact privilege list.
+
+### Get the server URL
+
+The MCP server URL follows this format:
+
+```
+https://<account_url>/api/v2/databases/<database>/schemas/<schema>/mcp-servers/<name>
+```
+
+For the example above that is `https://<account_url>/api/v2/databases/DASH_MCP_DB/schemas/DATA/mcp-servers/copilot_mcp_server`. Some clients require **hyphens instead of underscores** in the account portion of the host — see Snowflake's [MCP server security recommendations](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp#mcp-server-security-recommendations).
+
+### Point the agent at it
+
+Set these on the LangGraph agent server (see the deployment guides for where env values are supplied). Snowflake recommends **OAuth over hardcoded tokens**; use a Programmatic Access Token (PAT) with a least-privileged role only where a static bearer token is required.
+
+| Setting                          | Value                                                                 |
+| -------------------------------- | --------------------------------------------------------------------- |
+| `SNOWFLAKE_MCP_SERVER_URL`       | The MCP server URL above.                                             |
+| `SNOWFLAKE_MCP_SERVER_TRANSPORT` | `streamable-http`.                                                    |
+| `SNOWFLAKE_MCP_BEARER_TOKEN`     | OAuth access token or PAT for the MCP server's role (keep it in a secret store, not in committed files). |
+
+Once the server is reachable and the token is valid, the agent will discover `VOLVE_SURVEYS` and `SQL_Execution_Tool` at startup and appear in the Copilot Panel.
 
 ## Getting Started
 
@@ -96,25 +149,20 @@ The agent only needs **natural-language questions**. To get focused answers, men
 
 | Reference         | Examples                                                                  |
 | ----------------- | ------------------------------------------------------------------------- |
-| Metric / measure  | "revenue", "transaction amount", "risk score", "response rate", "decline rate" |
-| Time window       | "last quarter", "yesterday", "the last 30 days", "Q1 2026", "this year"    |
-| Dimension / split | "by region", "per customer segment", "by campaign", "by month"             |
-| Filter            | "high-risk customers only", "where status = 'declined'", "EMEA only"      |
-| Comparison        | "vs. the previous quarter", "year over year", "highest", "top 10"          |
-| Ticket topic      | "failed wire transfers", "mobile app login", "international transfer fees" |
+| Metric / measure  | "inclination", "azimuth", "measured depth (MD)", "true vertical depth (TVD)", "dogleg severity" |
+| Dimension / split | "per well", "by well identifier", "by data source"                        |
+| Filter            | "well F-11 only", "surveys below 2000 m MD"                               |
+| Comparison        | "deepest well", "highest inclination", "top 10 survey points"             |
 | Schema target     | A fully qualified `database.schema.table` for SQL inspection               |
-| Email intent      | "email me…", "send to alice@example.com with subject …"                    |
 
-If a reference is missing or ambiguous (for example, "recent transactions" without a time window), the agent will either ask a short clarifying question or send a best-effort question to the right tool and call out the assumption it made.
+If a reference is missing or ambiguous (for example, "the deepest survey" without a metric), the agent will either ask a short clarifying question or send a best-effort question to the right tool and call out the assumption it made.
 
 ### What Data Is Available
 
 The data you can ask about is determined entirely by what the MCP server is configured against:
 
-- **Structured finance & risk data** lives behind the **semantic view** (default `DASH_MCP_DB.DATA.FINANCIAL_SERVICES_ANALYTICS`): customers, transactions, marketing campaigns, support interactions, risk assessments. Cortex Analyst chooses the tables/columns and writes the SQL — you do not need to know the schema.
-- **Unstructured support-ticket text** lives behind the **Cortex Search service** (default `DASH_MCP_DB.DATA.SUPPORT_TICKETS`). Queries are natural-language phrases and matches are ranked by relevance.
+- **Structured directional-survey data** lives behind the **semantic view** (default `DASH_MCP_DB.DATA.VOLVE_SURVEYS`, base table `VOLVE_COMBINED_DIRECTIONAL_SURVEYS`): per-well survey points with measured depth, inclination, azimuth, TVD/TVDSS, dogleg severity, displacement, and coordinates. Cortex Analyst chooses the tables/columns and writes the SQL — you do not need to know the schema.
 - **Schema and metadata** for anything visible to the configured role is reachable via the read-only SQL tool (`SHOW`, `DESCRIBE`, bounded `SELECT`).
-- **Email delivery** is provided by Snowflake's `Send_Email` stored procedure, using whatever notification integration the account has configured.
 
 The agent does **not** ingest spreadsheet uploads, marked rows from a visualization, external CSVs, PDFs, or other unstructured documents through the Copilot Panel. Read permissions are governed by Snowflake's role/grant model per the identity used by the MCP server.
 
@@ -124,22 +172,19 @@ The agent exposes exactly what the Snowflake MCP server exposes. There are no ad
 
 | Capability                       | What It Does (via Snowflake)                                                                                                                                       | Example Request                                                                |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Natural-language data Q&A        | Send a question to Cortex Analyst over the finance & risk semantic view. Cortex picks the relevant tables/columns, generates SQL, runs it, and returns the answer. | "Top 10 customers by total transaction value over the last 12 months."          |
+| Natural-language data Q&A        | Send a question to Cortex Analyst over the Volve directional-survey semantic view. Cortex picks the relevant tables/columns, generates SQL, runs it, and returns the answer. | "Average inclination per well." / "Which well reaches the deepest TVD?"        |
 | SQL grounding                    | Show the SQL Cortex Analyst ran so you can review, audit, or copy it.                                                                                              | "Show me the SQL Cortex Analyst used."                                          |
-| Result tables                    | Return small result sets verbatim as a Markdown table; summarize larger sets with row counts.                                                                      | "Total transaction amount by quarter for the past 2 years."                     |
-| Support-ticket semantic search   | Query the Cortex Search service over the support-ticket corpus and return the top hits with relevance scores.                                                      | "Find tickets mentioning failed wire transfers."                                |
-| Read-only schema / metadata SQL  | Run `SELECT` / `SHOW` / `DESCRIBE` / `EXPLAIN` for objects not covered by the semantic view.                                                                       | "Describe `FACT_TRANSACTIONS`." / "Row counts per table in `DASH_MCP_DB.DATA`." |
-| Send an email                    | Call the `Send_Email` stored procedure. Markdown bodies are converted to HTML; recipient defaults to the caller's verified email; subject defaults to "Snowflake CoWork". | "Email the top-10 churn-risk list to alice@example.com with subject 'Q2 churn watchlist'." |
-| Clarification / refinement       | Ask a single clarifying question when the input is ambiguous, or send a best-effort rephrasing and call out the assumption.                                        | "Rephrase 'recent declines' as a concrete time window before asking Cortex."    |
+| Result tables                    | Return small result sets verbatim as a Markdown table; summarize larger sets with row counts.                                                                      | "Max measured depth (MD_M_RKB) by well."                                        |
+| Read-only schema / metadata SQL  | Run `SELECT` / `SHOW` / `DESCRIBE` / `EXPLAIN` for objects not covered by the semantic view.                                                                       | "Describe `VOLVE_COMBINED_DIRECTIONAL_SURVEYS`." / "Row counts per table in `DASH_MCP_DB.DATA`." |
+| Clarification / refinement       | Ask a single clarifying question when the input is ambiguous, or send a best-effort rephrasing and call out the assumption.                                        | "Do you mean measured depth or true vertical depth?"                            |
 
 What the agent **does not** do (because the MCP server does not expose it, or because the agent is intentionally restricted):
 
-- Author or modify a semantic view, a Cortex Search service, or their underlying tables.
-- Pick which semantic view, search service, warehouse, or role to use — those are decided by the MCP server configuration.
+- Author or modify a semantic view or its underlying tables.
+- Pick which semantic view, warehouse, or role to use — those are decided by the MCP server configuration.
 - Write, update, or delete data. SQL is strictly read-only and the following are refused even on explicit request: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `REPLACE`, `DROP`, `ALTER`, `TRUNCATE`, `GRANT`, `REVOKE`, `CALL`, `COPY`, `PUT`, `GET`, `USE`, `SET`, multi-statement scripts.
-- Send email proactively. `Send_Email` only fires when you explicitly ask.
 - Fabricate SQL. The only SQL surfaced is SQL Cortex Analyst returned in its `sql` field, or SQL the agent composed for `SQL_Execution_Tool` and actually executed.
-- Answer questions about PDFs, Word docs, or other unstructured content outside the configured Cortex Search service.
+- Answer questions about PDFs, Word docs, or other unstructured content — the agent has no search tool.
 - Generate visualizations directly inside chat. Result tables are rendered as Markdown.
 
 ## How the Workflow Operates
@@ -154,78 +199,54 @@ The agent guides you through a question-and-answer flow. There is no upload step
 - "What can you do?"
 - "help"
 
-**What you get back:** A short capability summary listing the kinds of questions each tool answers, with starter prompts for Cortex Analyst, Cortex Search, read-only SQL, and `Send_Email`.
+**What you get back:** A short capability summary listing the kinds of questions each tool answers, with starter prompts for Cortex Analyst and read-only SQL.
 
-### Stage 2: Ask a Financial / Risk / Customer Question (Cortex Analyst)
+### Stage 2: Ask a Well-Survey Question (Cortex Analyst)
 
-**When to use:** Your question is structured or quantitative — "how many", "top N", "trend over time", "broken down by", "rate of". These map to the finance & risk semantic view.
+**When to use:** Your question is structured or quantitative — "how many", "top N", "average by", "deepest / highest". These map to the Volve directional-survey semantic view.
 
 **Example prompts:**
-- "Top 10 customers by total transaction value over the last 12 months."
-- "Total transaction amount by quarter for the past 2 years."
-- "How many high-risk customers do we have, broken down by region?"
-- "Average risk score by customer segment."
-- "Which marketing campaigns had the highest response rate this year?"
-- "Decline rate trend by month over the past 6 months."
-- "Customers with more than 5 support tickets in the last 90 days."
+- "How many survey points does each well have?"
+- "Average inclination (INC_DEG) per well."
+- "Which well reaches the deepest true vertical depth (TVD_M_RKB)?"
+- "Max measured depth (MD_M_RKB) by well."
+- "Average dogleg severity and azimuth by data source."
+- "Which well has the highest average dogleg severity?"
 
 **What you get back:** A grounded answer in plain language, the SQL Cortex Analyst ran (in a fenced ```sql block), and a small result table when applicable. If Cortex Analyst returned a clarification block instead of an answer, the agent surfaces it verbatim and asks you to refine.
 
-### Stage 3: Search the Support-Ticket Corpus (Cortex Search)
+### Stage 3: Explore Schema / Metadata (Read-Only SQL)
 
-**When to use:** Your question is about unstructured ticket text — themes, complaints, similar tickets, mentions of a topic.
-
-**Example prompts:**
-- "Find tickets mentioning failed wire transfers."
-- "Top complaints about the mobile app in the last 30 days."
-- "Show tickets similar to 'login fails after password reset'."
-- "Any tickets about international transfer fees?"
-
-**What you get back:** The top 3–5 hits with relevance scores and enough of each passage that you can judge relevance.
-
-### Stage 4: Explore Schema / Metadata (Read-Only SQL)
-
-**When to use:** You need account, database, schema, or table metadata that the semantic view does not model — table lists, column definitions, row counts, the data range present in a fact table.
+**When to use:** You need account, database, schema, or table metadata that the semantic view does not model — table lists, column definitions, row counts, the value range present in a column.
 
 **Example prompts:**
 - "What tables live in `DASH_MCP_DB.DATA`?"
-- "Describe `FACT_TRANSACTIONS`."
-- "Min and max `transaction_date` in `FACT_TRANSACTIONS`."
+- "Describe `VOLVE_COMBINED_DIRECTIONAL_SURVEYS`."
+- "Min and max `TVD_M_RKB` in `VOLVE_COMBINED_DIRECTIONAL_SURVEYS`."
 - "Row counts per table in `DASH_MCP_DB.DATA`."
-- "Show the columns on `FINANCIAL_SERVICES_ANALYTICS`."
+- "Show the columns on `VOLVE_SURVEYS`."
 
 **What you get back:** The SQL the agent ran (always read-only) and the result table. Writes are refused with a short explanation pointing you at Snowsight or a privileged workflow.
 
-### Stage 5: Send an Email
-
-**When to use:** You explicitly want to email a result. The agent will never volunteer this.
-
-**Example prompts:**
-- "Email me a summary of the previous answer."
-- "Send the top-10 churn-risk list to alice@example.com with subject 'Q2 churn watchlist'."
-- "Email the support-ticket trends report to bob@example.com."
-
-**What you get back:** A one-line confirmation: who it went to, what the subject was, and the procedure's return / status. If you omit the recipient, the procedure uses your verified Snowflake email; if you omit the subject, it defaults to "Snowflake CoWork". Markdown bodies are converted to HTML before sending.
-
-### Stage 6: Interpret Results
+### Stage 4: Interpret Results
 
 **When to use:** You want help understanding what a tool returned.
 
 **Example prompts:**
 - "Explain the SQL Cortex Analyst just ran."
 - "Summarize that result in one sentence."
-- "What assumptions did Cortex make about the time window?"
+- "Which columns did Cortex use for depth?"
 
 **What you get back:** A plain-English explanation grounded in the previous tool response, without inventing details the tool did not provide.
 
-### Stage 7: Iteratively Refine an Ambiguous Question
+### Stage 5: Iteratively Refine an Ambiguous Question
 
-**When to use:** The first attempt didn't land — Cortex Analyst returned a clarification, a search returned nothing relevant, or a query came back empty.
+**When to use:** The first attempt didn't land — Cortex Analyst returned a clarification, or a query came back empty.
 
 **Example prompts:**
-- "Rephrase 'recent declines' as the last 30 days and ask Cortex again."
-- "First show me which quarters have data in `FACT_TRANSACTIONS`, then re-run the question against a populated window."
-- "Search for 'wire transfer failure' instead of 'failed transfer'."
+- "Ask for true vertical depth instead of measured depth."
+- "First show me the distinct data sources, then compare dogleg severity between them."
+- "Filter to just well F-11 and re-run."
 
 **What you get back:** A reformulated question or query, with the agent calling out the assumption it made.
 
@@ -234,114 +255,96 @@ The agent guides you through a question-and-answer flow. There is no upload step
 ```
 You:    What can you do?
 
-Agent:  I can answer questions about your Snowflake account using the
-         Snowflake MCP server: Cortex Analyst over a finance and risk
-         semantic view, Cortex Search over an unstructured support-ticket
-         corpus, read-only SQL for schema and metadata, and a Send_Email
-         stored procedure when you explicitly ask for one.
+Agent:  I can answer questions about Volve-field oil & gas well
+         directional surveys in Snowflake: Cortex Analyst over the
+         VOLVE_SURVEYS semantic view (depth, inclination, azimuth,
+         dogleg severity, coordinates) and read-only SQL for schema
+         and metadata.
          [...starter prompts...]
 
-You:    Top 10 customers by total transaction value over the last 12 months.
+You:    How many distinct well identifiers are in the survey data?
 
-Agent:  Top 10 customers by total transaction value, last 12 months:
+Agent:  There are 21 distinct well identifiers in the VOLVE survey data.
 
          ```sql
-         SELECT customer_name, SUM(transaction_amount) AS total_value
-         FROM DASH_MCP_DB.DATA.FINANCIAL_SERVICES_ANALYTICS
-         WHERE transaction_date BETWEEN '2025-06-08' AND '2026-06-08'
-         GROUP BY customer_name
-         ORDER BY total_value DESC
-         LIMIT 10;
+         SELECT COUNT(DISTINCT "Well Identifier") AS distinct_well_count
+         FROM DASH_MCP_DB.DATA.VOLVE_COMBINED_DIRECTIONAL_SURVEYS;
          ```
 
-         | customer_name | total_value |
-         | ------------- | ----------- |
-         | Acme Corp.    | 1,284,500   |
-         | ...           | ...         |
-
-You:    Anything in the support tickets about Acme Corp. recently?
-
-Agent:  Top hits from the support-ticket corpus:
-
-         1. (score 0.87) "Acme Corp. — wire transfer to vendor failed
-            twice this week..."
-         2. (score 0.82) "Acme — mobile app login fails after password
-            reset..."
-         3. ...
-
-You:    Min and max transaction_date in FACT_TRANSACTIONS.
+You:    Which well reaches the deepest true vertical depth?
 
 Agent:  ```sql
-         SELECT MIN(transaction_date) AS min_date,
-                MAX(transaction_date) AS max_date
-         FROM DASH_MCP_DB.DATA.FACT_TRANSACTIONS;
+         SELECT "Well Identifier" AS well, MAX(TVD_M_RKB) AS max_tvd
+         FROM DASH_MCP_DB.DATA.VOLVE_COMBINED_DIRECTIONAL_SURVEYS
+         GROUP BY 1
+         ORDER BY max_tvd DESC
+         LIMIT 5;
          ```
 
-         | min_date   | max_date   |
-         | ---------- | ---------- |
-         | 2023-01-01 | 2025-12-31 |
+         | well        | max_tvd |
+         | ----------- | ------- |
+         | 15/9-F-11 A | 3402.0  |
+         | ...         | ...     |
 
-You:    Email a summary of the top-10 customers to alice@example.com
-         with subject "Q2 customer watchlist".
+You:    Min and max TVD_M_RKB in VOLVE_COMBINED_DIRECTIONAL_SURVEYS.
 
-Agent:  Sent: recipient alice@example.com, subject "Q2 customer
-         watchlist". Procedure returned: ok (message id …).
+Agent:  ```sql
+         SELECT MIN(TVD_M_RKB) AS min_tvd,
+                MAX(TVD_M_RKB) AS max_tvd
+         FROM DASH_MCP_DB.DATA.VOLVE_COMBINED_DIRECTIONAL_SURVEYS;
+         ```
+
+         | min_tvd | max_tvd |
+         | ------- | ------- |
+         | 0.0     | 3402.0  |
 ```
 
 ## Key Benefits
 
 | Benefit                              | Description                                                                                                                                                   |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Natural-language data Q&A            | Ask business questions in plain English; Cortex Analyst generates the SQL, runs it, and returns a grounded result.                                            |
+| Natural-language data Q&A            | Ask survey questions in plain English; Cortex Analyst generates the SQL, runs it, and returns a grounded result.                                              |
 | Curated, governed semantic view      | Answers are scoped to a semantic view an analyst has curated with dimensions, metrics, synonyms, and example queries.                                          |
-| Semantic search over tickets         | Cortex Search lets you ask "what are users complaining about" instead of writing keyword SQL against a free-text column.                                       |
 | Snowflake governance                 | Object-level grants and role-based access are enforced by Snowflake automatically — users only see data the MCP server's role is authorized to access.        |
 | Read-only by design                  | SQL is restricted to `SELECT` / `SHOW` / `DESCRIBE` / `EXPLAIN`; writes are refused even on explicit request.                                                  |
-| Gated email                          | `Send_Email` only fires when you explicitly ask, with safe defaults (caller's verified email, "Snowflake CoWork" subject) and Markdown → HTML translation.    |
 | Grounded SQL surfaced in chat        | The SQL Cortex Analyst ran is shown in the response, so you can review, copy, or paste it elsewhere.                                                          |
-| Single conversational surface        | One agent covers structured analytics, unstructured search, schema inspection, and outbound email — you don't have to remember which tool to ask first.        |
+| Single conversational surface        | One agent covers structured survey analytics and schema inspection — you don't have to remember which tool to ask first.                                       |
 | Works independently of visualizations | No need to mark rows or attach tables — the agent acts on the question you type in the Spotfire Copilot Panel.                                                |
 
 ## Tips for Best Results
 
-- **Be specific about the time window.** "Last 30 days" or "Q1 2026" beats "recent" — Cortex Analyst will pick a reasonable default if you don't, but it may not be the one you wanted.
-- **If a quarter / year query comes back empty, ask what data exists first.** Run `Min and max transaction_date in FACT_TRANSACTIONS` (or the relevant fact table) and then re-run the question against a populated window. The agent will not invent rows to fill the gap.
-- **Use Cortex Analyst over raw SQL whenever possible.** The semantic view knows the business definitions (revenue, risk score, decline rate, response rate) and writes better SQL than ad-hoc prompts. Drop to `SQL_Execution_Tool` for schema / metadata only.
-- **Mention the metric, not the column.** Cortex Analyst maps "revenue", "transaction value", "risk score" to the right columns via the semantic view's synonyms. Use the language your business users use.
+- **This data is depth-indexed, not time-series.** There is no transaction/event date — ask about wellbore geometry (depth, inclination, azimuth, coordinates) rather than time windows.
+- **Use Cortex Analyst over raw SQL whenever possible.** The semantic view knows the survey definitions (measured depth, true vertical depth, dogleg severity, inclination) and writes better SQL than ad-hoc prompts. Drop to `SQL_Execution_Tool` for schema / metadata only.
+- **Mention the metric, not the column.** Cortex Analyst maps "measured depth", "true vertical depth", "dogleg" to the right columns via the semantic view's synonyms — you don't need to know that MD is `MD_M_RKB`.
 - **Trust the SQL block.** The SQL the agent shows is the SQL that actually ran — copy it into a worksheet or notebook for further work. Read-only by definition.
-- **Search with the user's phrasing.** Cortex Search is a semantic index, but exact-phrase variants ("wire transfer failure" vs. "failed transfer") can still surface different ranked passages.
-- **Empty results often mean permissions.** If Cortex Analyst or a SQL query returns nothing, check that the MCP server's role has `SELECT` on the underlying tables and `USAGE` on the semantic view / search service.
-- **Don't expect the agent to send email unprompted.** Summaries, follow-ups, and "did you mean…" prompts will never become emails. Ask for one explicitly when you want it.
-- **`Send_Email` defaults are deliberate.** Omitting the recipient routes the message to your verified email (useful for "email me a summary"); omitting the subject uses "Snowflake CoWork". The agent will tell you which defaults it used.
-- **Pick the right agent.** Use the **Snowflake Agent** for Snowflake-resident finance/risk analytics, support-ticket semantic search, and Snowflake schema/metadata. Use the **Databricks Genie Agent** for curated NL Q&A inside a Genie Space, or the **Databricks Agent** for Unity Catalog exploration, lineage, and ad-hoc Databricks SQL.
+- **Group by well or data source.** Most survey questions are naturally per-well ("average inclination per well") or per source ("dogleg severity by data source").
+- **Empty results often mean permissions.** If Cortex Analyst or a SQL query returns nothing, check that the MCP server's role has `SELECT` on the underlying tables and `USAGE` on the semantic view.
+- **Pick the right agent.** Use the **Snowflake Agent** for Snowflake-resident Volve well-survey analytics and Snowflake schema/metadata. Use the **Databricks Genie Agent** for curated NL Q&A inside a Genie Space, or the **Databricks Agent** for Unity Catalog exploration, lineage, and ad-hoc Databricks SQL.
 - **Ask for help anytime.** Typing `help` or `what can you do?` returns the capability summary.
 
 ## Limitations
 
 These limits come from Snowflake itself, from the MCP server's configuration, and from the agent's intentional safety rules.
 
-- **Scope is fixed by the semantic view and search service.** The agent cannot reason over tables that are not registered to the configured semantic view, or over corpora outside the configured Cortex Search service. To extend the scope, an analyst must update the view or stand up a new search service.
-- **One semantic view / one search service per deployment.** The MCP server points at a single semantic view and a single search service. Switching domains requires reconfiguring the MCP server.
+- **Scope is fixed by the semantic view.** The agent cannot reason over tables that are not registered to the configured semantic view. To extend the scope, an analyst must update the view.
+- **One semantic view per deployment.** The MCP server points at a single semantic view. Switching domains requires reconfiguring the MCP server.
 - **Read-only.** SQL writes and session-state changes are refused. The agent will suggest Snowsight or a privileged workflow instead.
 - **Cortex Analyst clarifications must be answered.** When Cortex Analyst returns a `suggestions` / clarification block instead of an answer, the agent surfaces it verbatim — it will not invent a "best guess" answer.
 - **No fabricated rows or SQL.** If a tool returned no rows, the agent says so. It will not synthesize values to make a result look complete.
-- **No unstructured documents outside the configured search service.** PDFs, Word docs, and other free-text files are out of scope unless they are part of the indexed corpus.
-- **Email is one-shot and gated.** `Send_Email` is the only side-effecting tool, only fires on explicit request, and is constrained by Snowflake's notification integration (recipient allow-lists, attachment rules, rate limits).
-- **Latency varies.** Cortex Analyst is synchronous but complex questions over large semantic views can take several seconds; Cortex Search latency depends on the index size; SQL latency depends on the warehouse.
+- **No unstructured search.** The agent has no Cortex Search tool; PDFs, Word docs, and other free-text files are out of scope.
+- **No email.** The agent has no outbound-mail tool.
+- **Latency varies.** Cortex Analyst is synchronous but complex questions over large semantic views can take several seconds; SQL latency depends on the warehouse.
 - **Concurrency and warehouse scaling are external.** Performance depends on the size and state of the warehouse the MCP server is configured against.
 
 ## Glossary
 
 | Term                         | Definition                                                                                                                                                          |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snowflake Cortex             | Snowflake's family of native AI features. This agent uses Cortex Analyst and Cortex Search.                                                                          |
+| Snowflake Cortex             | Snowflake's family of native AI features. This agent uses Cortex Analyst.                                                                                            |
 | Cortex Analyst               | Snowflake's natural-language data Q&A surface backed by a semantic view. Generates SQL, runs it on the configured warehouse, returns a grounded answer.              |
-| Cortex Search                | Keyword + vector search over an indexed corpus of unstructured text. Returns ranked passages with relevance scores.                                                  |
-| Semantic view                | A curated layer that maps business concepts (customer, transaction, risk score, campaign response) onto the underlying tables/columns. Cortex Analyst reasons against it. |
-| Search service               | A Cortex Search index built over a column of unstructured text (here: support tickets).                                                                              |
+| Semantic view                | A curated layer that maps survey concepts (well identifier, measured depth, inclination, azimuth, dogleg severity) onto the underlying tables/columns. Cortex Analyst reasons against it. |
+| Directional survey           | A set of measurement points describing a wellbore's geometric path through the subsurface — depth, inclination, azimuth, TVD, and coordinates.                        |
 | Warehouse                    | The compute endpoint Snowflake uses to run SQL. Configured per MCP server.                                                                                           |
 | Role                         | Snowflake's unit of authorization. Object-level grants are evaluated against the MCP server's role.                                                                  |
-| Verified email               | The email address Snowflake has confirmed for the calling user. `Send_Email` defaults the recipient to this address when none is supplied.                            |
-| `Send_Email`                 | Stored procedure that emails a recipient via Snowflake's notification integration. Side-effecting; only fired on explicit request.                                   |
 | Read-only SQL                | `SELECT` / `SHOW` / `DESCRIBE` / `EXPLAIN` only. All other DDL/DML and session-state changes are refused.                                                            |
-| MCP Server                   | The Model Context Protocol server (`snowflake`) that exposes the `Finance_and_Risk_Assessment_Semantic_View`, `Support_Tickets_Cortex_Search`, `SQL_Execution_Tool`, and `Send_Email` tools the agent calls at runtime. |
+| MCP Server                   | The Model Context Protocol server (`snowflake`) that exposes the `VOLVE_SURVEYS` and `SQL_Execution_Tool` tools the agent calls at runtime. |
