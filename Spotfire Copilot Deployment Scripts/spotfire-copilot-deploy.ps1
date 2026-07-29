@@ -17,23 +17,14 @@
 
 [CmdletBinding()]
 param(
- [switch]$Help,
- [switch]$Info,
- [switch]$Upgrade,
- [string]$ImageTag,
- [string]$AgentTag,
- [string]$Dir,
- [string]$FromDir,
- [switch]$Yes,
- [switch]$InstallPrereqs,
- [switch]$NoInstallPrereqs,
- [Alias('WithDeepagents')]
- [switch]$InstallDeepagents,
- [string]$DeepagentsScript,
- [string]$CredentialsScript,
- [Alias('InstallAgentResgirty')]
- [switch]$InstallAgentRegistry,
- [switch]$NoColor
+ # All arguments are captured verbatim and parsed by hand further below. This is
+ # deliberate: PowerShell's parameter binder mangles GNU-style "--long" flags (it
+ # fuzzy-matches "--upgrade"/"--from-dir" onto the wrong parameter and silently drops
+ # the value), which left customers who copied the documented bash command onto Windows
+ # dropped back into the interactive prompts. Capturing raw args lets us accept BOTH
+ # "-Upgrade -FromDir <dir>" and "--upgrade --from-dir <dir>" identically.
+ [Parameter(ValueFromRemainingArguments = $true)]
+ [string[]]$CliArgs
 )
 
 $ErrorActionPreference = 'Stop'
@@ -3157,22 +3148,53 @@ echo "   kubectl -n `$NAMESPACE get pods"
 # main
 # ============================================================================
 
-# ---- translate PowerShell parameters into script state (parse_args) ----
-if ($NoColor) { $script:UseColor = $false }
-if ($Help)    { $script:MODE = 'help' }
-if ($Info)    { $script:MODE = 'info' }
-if ($Upgrade) { $script:MODE = 'upgrade' }
-if (-not [string]::IsNullOrEmpty($ImageTag)) { $script:UPGRADE_IMAGE_TAG = $ImageTag }
-if (-not [string]::IsNullOrEmpty($AgentTag)) { $script:UPGRADE_AGENT_TAG = $AgentTag }
-if (-not [string]::IsNullOrEmpty($Dir))      { $script:OUT_DIR = $Dir; $script:OUT_DIR_EXPLICIT = 'yes' }
-if (-not [string]::IsNullOrEmpty($FromDir))  { $script:FROM_DIR = $FromDir }
-if ($Yes) { $script:ASSUME_YES = 'yes' }
-if ($InstallPrereqs)   { $script:INSTALL_PREREQS = 'yes' }
-if ($NoInstallPrereqs) { $script:INSTALL_PREREQS = 'no' }
-if ($InstallDeepagents) { $script:WITH_DEEPAGENTS = 'yes' }
-if (-not [string]::IsNullOrEmpty($DeepagentsScript)) { $script:DEEPAGENTS_SCRIPT = $DeepagentsScript }
-if (-not [string]::IsNullOrEmpty($CredentialsScript)) { $script:CREDENTIALS_SCRIPT = $CredentialsScript }
-if ($InstallAgentRegistry) { $script:MODE = 'agent_registry_only'; $script:INSTALL_AGENT_REGISTRY_ONLY = 'yes' }
+# ---- parse command-line arguments (accepts BOTH PowerShell -Style and GNU --style) ----
+# Arguments arrive verbatim in $CliArgs (see the param block note). Each flag is
+# normalized by stripping leading dashes and internal dashes and lower-casing, so
+# "-ImageTag", "--image-tag" and "--image-tag=X" all resolve to the same option.
+$script:__cli = @($CliArgs)
+$script:__cliIdx = 0
+function Get-CliArgValue {
+    param([string]$Flag, [AllowNull()][string]$Inline)
+    if (-not [string]::IsNullOrEmpty($Inline)) { return $Inline }
+    $script:__cliIdx++
+    if ($script:__cliIdx -ge $script:__cli.Count) { Invoke-Die "Option '$Flag' requires a value." }
+    return $script:__cli[$script:__cliIdx]
+}
+while ($script:__cliIdx -lt $script:__cli.Count) {
+    $__tok = $script:__cli[$script:__cliIdx]
+    if ([string]::IsNullOrEmpty($__tok)) { $script:__cliIdx++; continue }
+    # Split "--flag=value" (GNU) into flag + inline value. A leading "-" is required;
+    # the "[^=]" guard avoids splitting Windows drive paths passed as a value token.
+    $__inline = $null
+    if ($__tok -match '^(--?[A-Za-z0-9][A-Za-z0-9-]*)=(.*)$') { $__flagRaw = $matches[1]; $__inline = $matches[2] } else { $__flagRaw = $__tok }
+    if ($__flagRaw -notmatch '^-') { Invoke-Die "Unexpected argument: '$__tok'. See -Help for usage." }
+    $__norm = (($__flagRaw -replace '^-+', '') -replace '-', '').ToLower()
+    switch ($__norm) {
+        'help'                 { $script:MODE = 'help' }
+        'h'                    { $script:MODE = 'help' }
+        '?'                    { $script:MODE = 'help' }
+        'info'                 { $script:MODE = 'info' }
+        'upgrade'              { $script:MODE = 'upgrade' }
+        'imagetag'             { $script:UPGRADE_IMAGE_TAG = (Get-CliArgValue $__flagRaw $__inline) }
+        'agenttag'             { $script:UPGRADE_AGENT_TAG = (Get-CliArgValue $__flagRaw $__inline) }
+        'dir'                  { $script:OUT_DIR = (Get-CliArgValue $__flagRaw $__inline); $script:OUT_DIR_EXPLICIT = 'yes' }
+        'fromdir'              { $script:FROM_DIR = (Get-CliArgValue $__flagRaw $__inline) }
+        'yes'                  { $script:ASSUME_YES = 'yes' }
+        'y'                    { $script:ASSUME_YES = 'yes' }
+        'installprereqs'       { $script:INSTALL_PREREQS = 'yes' }
+        'noinstallprereqs'     { $script:INSTALL_PREREQS = 'no' }
+        'installdeepagents'    { $script:WITH_DEEPAGENTS = 'yes' }
+        'withdeepagents'       { $script:WITH_DEEPAGENTS = 'yes' }
+        'deepagentsscript'     { $script:DEEPAGENTS_SCRIPT = (Get-CliArgValue $__flagRaw $__inline) }
+        'credentialsscript'    { $script:CREDENTIALS_SCRIPT = (Get-CliArgValue $__flagRaw $__inline) }
+        'installagentregistry' { $script:MODE = 'agent_registry_only'; $script:INSTALL_AGENT_REGISTRY_ONLY = 'yes' }
+        'installagentresgirty' { $script:MODE = 'agent_registry_only'; $script:INSTALL_AGENT_REGISTRY_ONLY = 'yes' }
+        'nocolor'              { $script:UseColor = $false }
+        default                { Invoke-Die "Unknown option: '$__flagRaw'. See -Help for usage." }
+    }
+    $script:__cliIdx++
+}
 
 if ($script:MODE -eq 'help') { Show-Help; exit 0 }
 

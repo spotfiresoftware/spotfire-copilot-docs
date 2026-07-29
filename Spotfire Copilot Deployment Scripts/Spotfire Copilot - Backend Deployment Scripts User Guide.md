@@ -150,7 +150,9 @@ Custom output directory:
 ## 5. Command-line options
 
 All options are optional; anything not supplied is asked for interactively. Bash
-uses `--long-flags`; PowerShell uses `-PascalCaseParameters`.
+uses `--long-flags`; PowerShell uses `-PascalCaseParameters`. The PowerShell script
+**also accepts the bash `--long-flags`** (e.g. `--upgrade --from-dir <dir>`), so a
+command copied from the Linux docs works unchanged on Windows.
 
 | Bash flag | PowerShell parameter | Description |
 | --- | --- | --- |
