@@ -703,9 +703,9 @@ ensure_linux_prereqs() {
   info "Python 3.11+ and bcrypt are needed only to generate Spotfire Copilot credentials. Docker/Compose must already be available for deployment."
 
   if ! python_version_ok; then
-    if [[ "$INSTALL_PREREQS" == "no" ]]; then die "Python 3.11+ is missing or too old."; fi
+    if [[ "$INSTALL_PREREQS" == "no" ]]; then die "Python 3.11+ is missing or outdated."; fi
     if [[ "$INSTALL_PREREQS" == "prompt" ]]; then
-      yes_no_num INSTALL_PY_NOW "Python 3.11+ is missing or too old. Try to install Python/pip using the OS package manager?" "yes"
+      yes_no_num INSTALL_PY_NOW "Python 3.11+ is missing or outdated. Install Python/pip using the OS package manager?" "yes"
  [[ "$INSTALL_PY_NOW" == "yes" ]] || die "Python 3.11+ is required for automatic credential generation."
     fi
     install_python_packages_linux
@@ -1000,14 +1000,14 @@ write_or_update_agent_registry_compose_service() {
   # collapse, so this stays valid even if the script file's indentation is mangled
   # in transit. It also removes any previously-inserted (possibly flattened) block.
   local compose_tmp="${compose_file}.tmp.$$"
-  if awk '
+  if awk -v ap="${AGENT_PORT:-8050}" '
     function emit() {
       print "  agent-registry:"
       print "    image: copilotoci.azurecr.io/spotfirecopilot/agent-container:${AGENT_CONTAINER_TAG}"
       print "    container_name: spotfire-agent-registry-${AGENT_CONTAINER_TAG}"
       print "    restart: unless-stopped"
       print "    ports:"
-      print "      - \"8050:8050\""
+      print "      - \"" ap ":" ap "\""
       print "    env_file:"
       print "      - .env"
       print "      - .env.agent-registry"
@@ -1144,7 +1144,7 @@ configure_agent_registry_env_only() {
   # must never be offered for reuse (same rule as the main installation flow).
   if [[ -n "$EXISTING_ORCH_AGENT_CLIENT_ID" && -n "$EXISTING_ORCH_AGENT_CLIENT_SECRET" \
         && "$EXISTING_ORCH_AGENT_CLIENT_ID" != REPLACE_WITH_* && "$EXISTING_ORCH_AGENT_CLIENT_SECRET" != REPLACE_WITH_* ]]; then
-    yes_no_num USE_EXISTING_ORCH_AGENT_CLIENT "Existing Agent Registry orchestrator OAuth client found in .env.agent-registry. Reuse it?" "yes"
+    yes_no_num USE_EXISTING_ORCH_AGENT_CLIENT "Existing Agent Registry Orchestrator OAuth client found in .env.agent-registry. Reuse it?" "yes"
     if [[ "$USE_EXISTING_ORCH_AGENT_CLIENT" == "yes" ]]; then
       ORCHESTRATOR_CLIENT_ID="$EXISTING_ORCH_AGENT_CLIENT_ID"
       ORCHESTRATOR_CLIENT_SECRET="$EXISTING_ORCH_AGENT_CLIENT_SECRET"
@@ -1360,7 +1360,7 @@ EOM
       ;;
     openai)
       prompt OPENAI_API_KEY "OpenAI API key" "$(get_existing OPENAI_API_KEY "${EXISTING_FILES[@]}" || true)" true
-      prompt OPENAI_API_BASE "OPENAI_API_BASE optional, blank for default OpenAI" "$(get_existing OPENAI_API_BASE "${EXISTING_FILES[@]}" || true)"
+      prompt OPENAI_API_BASE "OPENAI_API_BASE (optional; leave blank for default OpenAI)" "$(get_existing OPENAI_API_BASE "${EXISTING_FILES[@]}" || true)"
       prompt PRIMARY_MODEL "Primary OpenAI model name" "$(get_existing MODEL_NAME "${EXISTING_FILES[@]}" || echo gpt-4o)"
       GPT5_FLAG_BLOCK=""
       configure_advanced_categories OPENAI "$PRIMARY_MODEL" 0.3 0.2 0.1 0.0 0.2
@@ -1701,6 +1701,7 @@ configure_vector_db() {
     "azure_ai_search|Azure AI Search / Azure Cognitive Search" \
     "milvus|Milvus self-hosted" \
     "zilliz|Zilliz Cloud" \
+    "redis|Redis (self-hosted)" \
     "vertex_vector_search|Vertex AI Vector Search" \
     "aws_bedrock_kb|AWS Bedrock Knowledge Bases" \
     "custom|Custom / advanced plugin entrypoints"
@@ -1783,11 +1784,28 @@ ZILLIZ_CLOUD_API_KEY=${ZILLIZ_CLOUD_API_KEY}
 EOM
 )
       ;;
+    redis)
+      prompt REDIS_URL "REDIS_URL (may embed credentials, e.g. redis://user:pass@host:6379)" "$(get_existing REDIS_URL "${EXISTING_FILES[@]}" || echo redis://your-redis-host:6379)" true
+      VECTOR_BLOCK_ORCH=$(cat <<EOM
+# REQUIRED FOR RAG: Retriever plugin used by Orchestrator for Redis.
+RETRIEVER_PLUGIN_ENTRY_POINT=plugins.retrievers.redis:RedisRetrieverPlugin
+# REQUIRED FOR RAG: Redis connection URL.
+REDIS_URL=${REDIS_URL}
+EOM
+)
+      VECTOR_BLOCK_DL=$(cat <<EOM
+# REQUIRED: Vector DB writer plugin used by Data Loader for Redis.
+VECTORDB_PLUGIN_ENTRY_POINT=plugins.vectordbs.redis:RedisRetrieverPlugin
+# REQUIRED: Redis connection URL.
+REDIS_URL=${REDIS_URL}
+EOM
+)
+      ;;
     vertex_vector_search)
       if [[ -z "${PROJECT_ID:-}" ]]; then prompt PROJECT_ID "GCP PROJECT_ID" "$(get_existing PROJECT_ID "${EXISTING_FILES[@]}" || echo your-gcp-project-id)"; fi
       if [[ -z "${LOCATION_ID:-}" ]]; then prompt LOCATION_ID "GCP LOCATION_ID" "$(get_existing LOCATION_ID "${EXISTING_FILES[@]}" || echo us-central1)"; fi
       prompt GCS_BUCKET_NAME "GCS bucket for Vertex AI Vector Search" "$(get_existing GCS_BUCKET_NAME "${EXISTING_FILES[@]}" || echo your-gcs-bucket-name)"
-      prompt PRIVATE_SC_IP "PRIVATE_SC_IP optional, blank if not using Private Service Connect" "$(get_existing PRIVATE_SC_IP "${EXISTING_FILES[@]}" || true)"
+      prompt PRIVATE_SC_IP "PRIVATE_SC_IP (optional; leave blank if not using Private Service Connect)" "$(get_existing PRIVATE_SC_IP "${EXISTING_FILES[@]}" || true)"
       VECTOR_BLOCK_ORCH=$(cat <<EOM
 # REQUIRED FOR RAG: Retriever plugin used by Orchestrator for Vertex AI Vector Search.
 RETRIEVER_PLUGIN_ENTRY_POINT=plugins.retrievers.vertexai_vector_search:VertexAIVectorSearchRetrieverPlugin
@@ -2305,7 +2323,28 @@ EOM
 
 run_cloud_master_env_mode() {
   section "Cloud  env shortlist mode"
-  info "This mode does not ask for secret values. It only shortlists the env variables the customer must configure in the cloud platform."
+  info "This mode shortlists the env variables the customer must configure in the cloud platform."
+
+  # ----- optional: generate the four core credentials and inline them -----
+  # By default the checklist is name-only. On request we run the official
+  # generate_credentials.py and fill SECRET_KEY, HASHED_ADMIN_PASSWORD,
+  # OAUTH2_CLIENT_SECRET_HASH and OAUTH2_CLIENT_ID directly into the template so the
+  # customer can copy-paste them into their cloud secret manager. Customers who use
+  # their own approved tool can decline, and the fields stay blank as before.
+  local CLOUD_GEN_CREDS="no" C_SECRET_KEY="" C_HASHED_ADMIN="" C_OAUTH_ID="" C_OAUTH_HASH="" GEN_CLOUD_CREDS=""
+  info "The four core credentials (SECRET_KEY, HASHED_ADMIN_PASSWORD, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET_HASH) can be generated now and written straight into the checklist for copy-paste."
+  info "Choose No if you prefer to produce them with your own approved tool - the fields will be left blank for you to fill in."
+  yes_no_num GEN_CLOUD_CREDS "Generate these credentials now and fill them into the template?" "no"
+  if [[ "$GEN_CLOUD_CREDS" == "yes" ]]; then
+    section "Credentials"
+    ensure_linux_prereqs
+    generate_credentials_file "$OUT_DIR/copilot-generated-values.txt"
+    C_SECRET_KEY="$(get_from_credentials_file SECRET_KEY "$CREDENTIALS_FILE")"
+    C_HASHED_ADMIN="$(get_from_credentials_file HASHED_ADMIN_PASSWORD "$CREDENTIALS_FILE")"
+    C_OAUTH_ID="$(get_from_credentials_file OAUTH2_CLIENT_ID "$CREDENTIALS_FILE")"
+    C_OAUTH_HASH="$(get_from_credentials_file OAUTH2_CLIENT_SECRET_HASH "$CREDENTIALS_FILE")"
+    CLOUD_GEN_CREDS="yes"
+  fi
 
   prompt_image_tag IMAGE_TAG "Copilot backend/data-loader image tag to show in the checklist" "${DEFAULT_IMAGE_TAG}" ""
   FASTAPI_APP_VERSION="$IMAGE_TAG"
@@ -2373,7 +2412,7 @@ run_cloud_master_env_mode() {
   secret_hint="$(cloud_secret_reference_hint "$DEPLOYMENT_TARGET")"
 
   if [[ "$ENABLE_ADMIN_CONSOLE" == "yes" ]]; then
-    admin_section=$(cat <<'EOM'
+    admin_section=$(cat <<EOM
 # ############################################################
 # CONTAINER: ADMIN CONSOLE
 # Copy every variable in this block into the Admin Console container.
@@ -2385,10 +2424,10 @@ run_cloud_master_env_mode() {
 ORCHESTRATOR_INTERNAL_URL=
 
 # SECRET - must match the Orchestrator container exactly
-SECRET_KEY=
+SECRET_KEY=${C_SECRET_KEY}
 DATABASE_URL=
 SYNC_DATABASE_URL=
-HASHED_ADMIN_PASSWORD=
+HASHED_ADMIN_PASSWORD=${C_HASHED_ADMIN}
 EOM
 )
   else
@@ -2456,12 +2495,29 @@ EOM
   fi
 
   local content
+  local secrets_present_note="#"
+  if [[ "$CLOUD_GEN_CREDS" == "yes" ]]; then
+    secrets_present_note=$(cat <<'EOM'
+#
+# ############################################################
+# !! THIS FILE CONTAINS REAL GENERATED SECRETS !!
+# SECRET_KEY, HASHED_ADMIN_PASSWORD and OAUTH2_CLIENT_SECRET_HASH below
+# have been filled in with freshly generated values for copy-paste.
+# - Please keep this template file safe and treat it as a secret.
+# - After copying the values into your cloud secret manager, delete this
+#   file or move it into a secure vault.
+# - Do NOT commit it to version control.
+# ############################################################
+#
+EOM
+)
+  fi
   content=$(cat <<EOM
 # ============================================================
 # Spotfire Copilot Cloud Template ENV Checklist
 # Target deployment: ${target_label}
 # Secret store: ${secret_store}
-#
+${secrets_present_note}
 # PURPOSE
 # This file is a customer-facing checklist for cloud deployments.
 # Please copy the variable names from this file into your cloud
@@ -2471,8 +2527,9 @@ EOM
 #
 # IMPORTANT
 # This is not a completed runtime env file and should not be blindly mounted
-# into production containers. This generator intentionally does not ask for
-# secret values in cloud mode.
+# into production containers. Any GENERATED secret values present below must be
+# moved into your cloud secret manager; supply all remaining secret values
+# yourself from your approved tool or secret store.
 #
 # HOW TO USE
 # This file is organized into per-container blocks marked "CONTAINER: <name>".
@@ -2527,12 +2584,12 @@ EOM
 # ------------------------------------------------------------
 
 # GENERATED + SECRET
-SECRET_KEY=
-HASHED_ADMIN_PASSWORD=
-OAUTH2_CLIENT_SECRET_HASH=
+SECRET_KEY=${C_SECRET_KEY}
+HASHED_ADMIN_PASSWORD=${C_HASHED_ADMIN}
+OAUTH2_CLIENT_SECRET_HASH=${C_OAUTH_HASH}
 
 # GENERATED + CONFIG
-OAUTH2_CLIENT_ID=
+OAUTH2_CLIENT_ID=${C_OAUTH_ID}
 
 # STORE ONLY - generated plaintext values shown once; keep in secure vault
 # Do not inject these into the container unless a documented setup flow requires it.
@@ -2574,6 +2631,11 @@ EOM
 )
 
   write_file "$cloud_file" "$content"
+
+  if [[ "$CLOUD_GEN_CREDS" == "yes" ]]; then
+    chmod 600 "$cloud_file" 2>/dev/null || true
+    warn "This template now contains REAL generated secrets (SECRET_KEY, HASHED_ADMIN_PASSWORD, OAUTH2_CLIENT_SECRET_HASH). Please keep this template file safe: copy the values into your cloud secret manager, then delete the file or move it into a secure vault. Do not commit it to version control."
+  fi
 
   ok "Cloud template env checklist generated."
   echo "cloud-env-template.env: $cloud_file"
@@ -3279,6 +3341,7 @@ if [[ "$POSTGRES_MODE" == "existing" ]]; then
   fi
 else
   POSTGRES_HOST="orchestrator-postgres"; POSTGRES_PORT="5432"; DB_SSLMODE="disable"
+  prompt POSTGRES_HOST_PORT "Bundled PostgreSQL host port (published on 127.0.0.1; container port stays 5432)" "5432"
   prompt_pg_identifier POSTGRES_DB "Compose PostgreSQL database name" "$(get_existing POSTGRES_DB "${EXISTING_FILES[@]}" || true)" "orchestrator"
   prompt_pg_identifier POSTGRES_USER "Compose PostgreSQL username" "$(get_existing POSTGRES_USER "${EXISTING_FILES[@]}" || true)" "orchestrator"
   DEFAULT_COMPOSE_PG_PASS="$(get_existing POSTGRES_PASSWORD "${EXISTING_FILES[@]}" || true)"
@@ -3315,10 +3378,18 @@ fi
 
 configure_llm_provider
 
+section "Orchestrator host port"
+info "The Orchestrator API is published on this host port. The container port stays 8080; change the host port only if 8080 is already in use on this host."
+prompt ORCH_HOST_PORT "Orchestrator host port" "8080"
+
 section "Optional Admin Console"
 info "Admin Console is optional and uses the same PostgreSQL database already configured for Orchestrator."
-yes_no_num ENABLE_ADMIN_CONSOLE "Deploy Admin Console?" "no"
-if [[ "$ENABLE_ADMIN_CONSOLE" == "no" ]]; then warn "Skipping Admin Console: manage OAuth clients, users, diagnostics, conversations, RAG indexes, and agents through REST API instead of the web UI."; fi
+yes_no_num ENABLE_ADMIN_CONSOLE "Deploy Admin Console?" "yes"
+if [[ "$ENABLE_ADMIN_CONSOLE" == "no" ]]; then
+  warn "Skipping Admin Console: manage OAuth clients, users, diagnostics, conversations, RAG indexes, and agents through REST API instead of the web UI."
+else
+  prompt ADMIN_HOST_PORT "Admin Console host port (container port stays 8081)" "8081"
+fi
 
 section "Optional RAG / Knowledge Base"
 info "RAG is required for Help, HowTo, Spotfire documentation answers, and custom document Q&A."
@@ -3355,7 +3426,11 @@ EOM
   if [[ "$VECTOR_WRITABLE" == "yes" ]]; then
     info "Data Loader ingests Spotfire docs and custom PDFs into a writable vector database."
     yes_no_num ENABLE_DATA_LOADER "Deploy Data Loader?" "yes"
- [[ "$ENABLE_DATA_LOADER" == "no" ]] && warn "Skipping Data Loader: populate the knowledge base through native tools or an existing ingestion process."
+    if [[ "$ENABLE_DATA_LOADER" == "no" ]]; then
+      warn "Skipping Data Loader: populate the knowledge base through native tools or an existing ingestion process."
+    else
+      prompt LOADER_HOST_PORT "Data Loader host port (container port stays 8080)" "8090"
+    fi
   else
     ENABLE_DATA_LOADER="no"
     warn "Skipping Data Loader: ${DATA_LOADER_NOTICE:-selected vector DB uses native/manual ingestion or no writer plugin was configured.}"
@@ -3385,7 +3460,7 @@ if [[ "$ENABLE_AGENT_REGISTRY" == "yes" ]]; then
   EXISTING_ORCH_AGENT_CLIENT_SECRET="$(get_existing ORCHESTRATOR_CLIENT_SECRET "$OUT_DIR/.env.agent-registry" || true)"
   if [[ -n "$EXISTING_ORCH_AGENT_CLIENT_ID" && -n "$EXISTING_ORCH_AGENT_CLIENT_SECRET" \
         && "$EXISTING_ORCH_AGENT_CLIENT_ID" != REPLACE_WITH_* && "$EXISTING_ORCH_AGENT_CLIENT_SECRET" != REPLACE_WITH_* ]]; then
-    yes_no_num USE_EXISTING_ORCH_AGENT_CLIENT "Existing Agent Registry orchestrator OAuth client found in .env.agent-registry. Reuse it?" "yes"
+    yes_no_num USE_EXISTING_ORCH_AGENT_CLIENT "Existing Agent Registry Orchestrator OAuth client found in .env.agent-registry. Reuse it?" "yes"
     if [[ "$USE_EXISTING_ORCH_AGENT_CLIENT" == "yes" ]]; then
       ORCHESTRATOR_CLIENT_ID="$EXISTING_ORCH_AGENT_CLIENT_ID"
       ORCHESTRATOR_CLIENT_SECRET="$EXISTING_ORCH_AGENT_CLIENT_SECRET"
@@ -3395,7 +3470,7 @@ if [[ "$ENABLE_AGENT_REGISTRY" == "yes" ]]; then
 
   if [[ "$ORCH_AGENT_CREDS_READY" != "yes" ]]; then
     warn "Agent Registry needs its own orchestrator OAuth client with the agent_developer scope profile. Do not reuse the frontend/client OAuth credentials unless that client was explicitly created with agent_developer scopes."
-    yes_no_num HAVE_ORCH_AGENT_CLIENT "Have you already created the orchestrator OAuth client for Agent Registry with Scope Profile agent_developer (you have its client ID and secret)?" "no"
+    yes_no_num HAVE_ORCH_AGENT_CLIENT "Have you already created the Orchestrator OAuth client for Agent Registry with Scope Profile agent_developer (you have its client ID and secret)?" "no"
     if [[ "$HAVE_ORCH_AGENT_CLIENT" == "yes" ]]; then
       while true; do
         prompt ORCHESTRATOR_CLIENT_ID "ORCHESTRATOR_CLIENT_ID from that agent_developer OAuth client" ""
@@ -3498,7 +3573,7 @@ else
 fi
 
 section "Output generation"
-yes_no_num GENERATE_COMPOSE "Generate docker-compose.yml too?" "yes"
+yes_no_num GENERATE_COMPOSE "Generate a docker-compose.yml file?" "yes"
 
 # If the user selected the Docker Compose PostgreSQL option, the compose file must
 # contain the orchestrator-postgres service. Otherwise .env.orchestrator will point
@@ -3576,7 +3651,7 @@ DB_SSLMODE=${DB_SSLMODE}
 # Application URLs
 # ------------------------------
 ORCHESTRATOR_INTERNAL_URL=http://orchestrator:8080
-CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:3000
+CORS_ALLOWED_ORIGINS=http://localhost:${ADMIN_HOST_PORT:-8081},http://localhost:3000
 
 # ------------------------------
 # LLM provider
@@ -3673,7 +3748,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       '    container_name: orchestrator-postgres-${IMAGE_TAG}'
       '    restart: unless-stopped'
       '    ports:'
-      '      - "127.0.0.1:5432:5432"'
+      "      - \"127.0.0.1:${POSTGRES_HOST_PORT}:5432\""
       '    env_file:'
       '      - .env'
       '      - .env.orchestrator'
@@ -3703,7 +3778,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
   fi
   compose_lines+=(
     '    ports:'
-    '      - "8080:8080"'
+    "      - \"${ORCH_HOST_PORT}:8080\""
     '    env_file:'
     '      - .env'
     '      - .env.orchestrator'
@@ -3729,7 +3804,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       '      orchestrator:'
       '        condition: service_healthy'
       '    ports:'
-      '      - "8081:8081"'
+      "      - \"${ADMIN_HOST_PORT}:8081\""
       '    env_file:'
       '      - .env'
       '      - .env.orchestrator'
@@ -3754,7 +3829,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       '    container_name: data-loader-${IMAGE_TAG}'
       '    restart: unless-stopped'
       '    ports:'
-      '      - "8090:8080"'
+      "      - \"${LOADER_HOST_PORT}:8080\""
       '    env_file:'
       '      - .env'
       '      - .env.dataloader'
@@ -3773,7 +3848,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       '    container_name: spotfire-agent-registry-${AGENT_CONTAINER_TAG}'
       '    restart: unless-stopped'
       '    ports:'
-      '      - "8050:8050"'
+      "      - \"${AGENT_PORT}:${AGENT_PORT}\""
       '    env_file:'
       '      - .env'
       '      - .env.agent-registry'
