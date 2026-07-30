@@ -1,6 +1,6 @@
 # MCP Servers
 
-Guides for the Model Context Protocol (MCP) servers published by Cloud Software Group. Each MCP server exposes a backend system (OSDU, Databricks, Data Virtualization, spotfire-library/License, Tavily, and others) as MCP tools over `streamable-http`, so that ecosystem agents — and any MCP-capable client — can call them.
+Guides for the Model Context Protocol (MCP) servers published by Spotfire. Each MCP server exposes a backend system (OSDU, Databricks, Data Virtualization, spotfire-library/License, Tavily, and others) as MCP tools over `streamable-http`, so that ecosystem agents — and any MCP-capable client — can call them.
 
 Each server has its own subfolder containing two guides:
 
@@ -23,7 +23,7 @@ The **Used by** column shows which agent each server backs. For the full pairing
 | Spotfire License | [User Guide](spotfire-license/Spotfire%20Copilot%20-%20Spotfire%20License%20MCP%20Server%20User%20Guide.md) · [Deployment Guide](spotfire-license/Spotfire%20Copilot%20-%20Spotfire%20License%20MCP%20Server%20Deployment%20Guide.md) | [Spotfire License Management Agent](../agents/Spotfire%20Copilot%20-%20Spotfire%20License%20Management%20Agent%20User%20Guide.md) | `SFLIC` |
 | Tavily | [User Guide](tavily/Spotfire%20Copilot%20-%20Tavily%20MCP%20Server%20User%20Guide.md) · [Deployment Guide](tavily/Spotfire%20Copilot%20-%20Tavily%20MCP%20Server%20Deployment%20Guide.md) | [Tavily Web Search Agent](../agents/Spotfire%20Copilot%20-%20Tavily%20Web%20Search%20Agent%20User%20Guide.md) | `TAVILY` |
 
-> The `databricks-genie` (`GENIE`), `snowflake` (`SNOWFLAKE`), and `milvus` (`MILVUS`) agents use **External** MCP servers — consumed by the agent but not documented in this section. Deploy them from their own product documentation.
+> The `databricks-genie` (`GENIE`), `snowflake` (`SNOWFLAKE`), and `milvus` (`MILVUS`) agents use **External** MCP servers — consumed by the agent but not documented in this section. Deploy them from their own product documentation. For the `snowflake` server, the [Snowflake Agent User Guide](../agents/Spotfire%20Copilot%20-%20Snowflake%20Agent%20User%20Guide.md#provisioning-the-external-snowflake-mcp-server) has an agent-specific provisioning section that links to Snowflake's managed-MCP-server docs.
 
 ## Common notes
 
