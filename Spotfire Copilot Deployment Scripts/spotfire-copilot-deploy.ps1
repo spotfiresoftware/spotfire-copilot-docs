@@ -812,9 +812,9 @@ function Ensure-Prereqs {
     Write-Info 'Python 3.11+ and bcrypt are needed only to generate Spotfire Copilot credentials. Docker/Compose must already be available for deployment.'
 
     if (-not (Test-PythonVersionOk)) {
-        if ($script:INSTALL_PREREQS -eq 'no') { Invoke-Die 'Python 3.11+ is missing or too old.' }
+        if ($script:INSTALL_PREREQS -eq 'no') { Invoke-Die 'Python 3.11+ is missing or outdated.' }
         if ($script:INSTALL_PREREQS -eq 'prompt') {
-            $ans = Read-YesNo 'Python 3.11+ is missing or too old. Try to install Python/pip using winget?' 'yes'
+            $ans = Read-YesNo 'Python 3.11+ is missing or outdated. Install Python/pip using winget?' 'yes'
             if ($ans -ne 'yes') { Invoke-Die 'Python 3.11+ is required for automatic credential generation.' }
  }
         Install-PythonPackagesWindows
@@ -1137,13 +1137,14 @@ function Invoke-DeepAgentsIfRequested {
 # collapse, so the emitted YAML stays valid even if this file's leading indentation
 # is mangled in transit. ${AGENT_CONTAINER_TAG} stays literal for Docker Compose.
 function Get-AgentRegistryServiceLines {
+    $ap = if ([string]::IsNullOrEmpty($script:AGENT_PORT)) { '8050' } else { $script:AGENT_PORT }
     return @(
         '  agent-registry:'
         '    image: copilotoci.azurecr.io/spotfirecopilot/agent-container:${AGENT_CONTAINER_TAG}'
         '    container_name: spotfire-agent-registry-${AGENT_CONTAINER_TAG}'
         '    restart: unless-stopped'
         '    ports:'
-        '      - "8050:8050"'
+        ('      - "{0}:{0}"' -f $ap)
         '    env_file:'
         '      - .env'
         '      - .env.agent-registry'
@@ -1248,7 +1249,7 @@ function Set-AgentRegistryEnvOnly {
     # must never be offered for reuse (same rule as the main installation flow).
     if (-not [string]::IsNullOrEmpty($exId) -and -not [string]::IsNullOrEmpty($exSecret) `
             -and $exId -notlike 'REPLACE_WITH_*' -and $exSecret -notlike 'REPLACE_WITH_*') {
-        $reuse = Read-YesNo 'Existing Agent Registry orchestrator OAuth client found in .env.agent-registry. Reuse it?' 'yes'
+        $reuse = Read-YesNo 'Existing Agent Registry Orchestrator OAuth client found in .env.agent-registry. Reuse it?' 'yes'
         if ($reuse -eq 'yes') {
             $script:ORCHESTRATOR_CLIENT_ID = $exId
             $script:ORCHESTRATOR_CLIENT_SECRET = $exSecret
@@ -1512,7 +1513,7 @@ MODEL_NAME=$($script:PRIMARY_MODEL)
         }
         'openai' {
             $script:OPENAI_API_KEY = Read-Prompt 'OpenAI API key' (Get-ExistingOr 'OPENAI_API_KEY' '') -Secret
-            $script:OPENAI_API_BASE = Read-Prompt 'OPENAI_API_BASE optional, blank for default OpenAI' (Get-ExistingOr 'OPENAI_API_BASE' '')
+            $script:OPENAI_API_BASE = Read-Prompt 'OPENAI_API_BASE (optional; leave blank for default OpenAI)' (Get-ExistingOr 'OPENAI_API_BASE' '')
             $script:PRIMARY_MODEL = Read-Prompt 'Primary OpenAI model name' (Get-ExistingOr 'MODEL_NAME' 'gpt-4o')
             $script:GPT5_FLAG_BLOCK = ''
             Set-AdvancedCategories 'OPENAI' $script:PRIMARY_MODEL
@@ -1839,6 +1840,7 @@ function Configure-VectorDb {
         'azure_ai_search|Azure AI Search / Azure Cognitive Search',
         'milvus|Milvus self-hosted',
         'zilliz|Zilliz Cloud',
+        'redis|Redis (self-hosted)',
         'vertex_vector_search|Vertex AI Vector Search',
         'aws_bedrock_kb|AWS Bedrock Knowledge Bases',
         'custom|Custom / advanced plugin entrypoints'
@@ -1915,11 +1917,26 @@ ZILLIZ_CLOUD_URI=$($script:ZILLIZ_CLOUD_URI)
 ZILLIZ_CLOUD_API_KEY=$($script:ZILLIZ_CLOUD_API_KEY)
 "@
         }
+        'redis' {
+            $script:REDIS_URL = Read-Prompt 'REDIS_URL (may embed credentials, e.g. redis://user:pass@host:6379)' (Get-ExistingOr 'REDIS_URL' 'redis://your-redis-host:6379') -Secret
+            $script:VECTOR_BLOCK_ORCH = @"
+# REQUIRED FOR RAG: Retriever plugin used by Orchestrator for Redis.
+RETRIEVER_PLUGIN_ENTRY_POINT=plugins.retrievers.redis:RedisRetrieverPlugin
+# REQUIRED FOR RAG: Redis connection URL.
+REDIS_URL=$($script:REDIS_URL)
+"@
+            $script:VECTOR_BLOCK_DL = @"
+# REQUIRED: Vector DB writer plugin used by Data Loader for Redis.
+VECTORDB_PLUGIN_ENTRY_POINT=plugins.vectordbs.redis:RedisRetrieverPlugin
+# REQUIRED: Redis connection URL.
+REDIS_URL=$($script:REDIS_URL)
+"@
+        }
         'vertex_vector_search' {
             if ([string]::IsNullOrEmpty($script:PROJECT_ID)) { $script:PROJECT_ID = Read-Prompt 'GCP PROJECT_ID' (Get-ExistingOr 'PROJECT_ID' 'your-gcp-project-id') }
             if ([string]::IsNullOrEmpty($script:LOCATION_ID)) { $script:LOCATION_ID = Read-Prompt 'GCP LOCATION_ID' (Get-ExistingOr 'LOCATION_ID' 'us-central1') }
             $script:GCS_BUCKET_NAME = Read-Prompt 'GCS bucket for Vertex AI Vector Search' (Get-ExistingOr 'GCS_BUCKET_NAME' 'your-gcs-bucket-name')
-            $script:PRIVATE_SC_IP = Read-Prompt 'PRIVATE_SC_IP optional, blank if not using Private Service Connect' (Get-ExistingOr 'PRIVATE_SC_IP' '')
+            $script:PRIVATE_SC_IP = Read-Prompt 'PRIVATE_SC_IP (optional; leave blank if not using Private Service Connect)' (Get-ExistingOr 'PRIVATE_SC_IP' '')
             $script:VECTOR_BLOCK_ORCH = @"
 # REQUIRED FOR RAG: Retriever plugin used by Orchestrator for Vertex AI Vector Search.
 RETRIEVER_PLUGIN_ENTRY_POINT=plugins.retrievers.vertexai_vector_search:VertexAIVectorSearchRetrieverPlugin
@@ -2377,7 +2394,29 @@ RETRIEVER_PLUGIN_ENTRY_POINT=
 
 function Invoke-CloudMasterEnvMode {
     Write-Section 'Cloud  env shortlist mode'
-    Write-Info 'This mode does not ask for secret values. It only shortlists the env variables the customer must configure in the cloud platform.'
+    Write-Info 'This mode shortlists the env variables the customer must configure in the cloud platform.'
+
+    # ----- optional: generate the four core credentials and inline them -----
+    # By default the checklist is name-only. On request we run the official
+    # generate_credentials.py and fill SECRET_KEY, HASHED_ADMIN_PASSWORD,
+    # OAUTH2_CLIENT_SECRET_HASH and OAUTH2_CLIENT_ID directly into the template so the
+    # customer can copy-paste them into their cloud secret manager. Customers who use
+    # their own approved tool can decline, and the fields stay blank as before.
+    $script:CLOUD_GEN_CREDS = 'no'
+    $cSecretKey = ''; $cHashedAdmin = ''; $cOauthId = ''; $cOauthHash = ''
+    Write-Info 'The four core credentials (SECRET_KEY, HASHED_ADMIN_PASSWORD, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET_HASH) can be generated now and written straight into the checklist for copy-paste.'
+    Write-Info 'Choose No if you prefer to produce them with your own approved tool - the fields will be left blank for you to fill in.'
+    $genCloudCreds = Read-YesNo 'Generate these credentials now and fill them into the template?' 'no'
+    if ($genCloudCreds -eq 'yes') {
+        Write-Section 'Credentials'
+        Ensure-Prereqs
+        New-CredentialsFile (Join-Path $script:OUT_DIR 'copilot-generated-values.txt')
+        $cSecretKey   = Get-FromCredentialsFile 'SECRET_KEY' $script:CREDENTIALS_FILE
+        $cHashedAdmin = Get-FromCredentialsFile 'HASHED_ADMIN_PASSWORD' $script:CREDENTIALS_FILE
+        $cOauthId     = Get-FromCredentialsFile 'OAUTH2_CLIENT_ID' $script:CREDENTIALS_FILE
+        $cOauthHash   = Get-FromCredentialsFile 'OAUTH2_CLIENT_SECRET_HASH' $script:CREDENTIALS_FILE
+        $script:CLOUD_GEN_CREDS = 'yes'
+    }
 
     $script:IMAGE_TAG = Read-ImageTag 'Copilot backend/data-loader image tag to show in the checklist' $script:DEFAULT_IMAGE_TAG ''
     $script:FASTAPI_APP_VERSION = $script:IMAGE_TAG
@@ -2446,7 +2485,7 @@ function Invoke-CloudMasterEnvMode {
     $secretHint  = Get-CloudSecretReferenceHint $script:DEPLOYMENT_TARGET
 
     if ($script:ENABLE_ADMIN_CONSOLE -eq 'yes') {
-        $adminSection = @'
+        $adminSection = @"
 # ############################################################
 # CONTAINER: ADMIN CONSOLE
 # Copy every variable in this block into the Admin Console container.
@@ -2458,11 +2497,11 @@ function Invoke-CloudMasterEnvMode {
 ORCHESTRATOR_INTERNAL_URL=
 
 # SECRET - must match the Orchestrator container exactly
-SECRET_KEY=
+SECRET_KEY=$($cSecretKey)
 DATABASE_URL=
 SYNC_DATABASE_URL=
-HASHED_ADMIN_PASSWORD=
-'@
+HASHED_ADMIN_PASSWORD=$($cHashedAdmin)
+"@
  } else {
         $adminSection = '# CONTAINER: ADMIN CONSOLE omitted because Admin Console was not selected.'
  }
@@ -2533,12 +2572,30 @@ ORCHESTRATOR_CLIENT_SECRET=
  }
     $llmBlock = Get-CloudLlmBlock $script:LLM_PROVIDER
 
+    if ($script:CLOUD_GEN_CREDS -eq 'yes') {
+        $secretsPresentNote = @'
+#
+# ############################################################
+# !! THIS FILE CONTAINS REAL GENERATED SECRETS !!
+# SECRET_KEY, HASHED_ADMIN_PASSWORD and OAUTH2_CLIENT_SECRET_HASH below
+# have been filled in with freshly generated values for copy-paste.
+# - Please keep this template file safe and treat it as a secret.
+# - After copying the values into your cloud secret manager, delete this
+#   file or move it into a secure vault.
+# - Do NOT commit it to version control.
+# ############################################################
+#
+'@
+    } else {
+        $secretsPresentNote = '#'
+    }
+
     $content = @"
 # ============================================================
 # Spotfire Copilot Cloud Template ENV Checklist
 # Target deployment: $targetLabel
 # Secret store: $secretStore
-#
+$secretsPresentNote
 # PURPOSE
 # This file is a customer-facing checklist for cloud deployments.
 # Please copy the variable names from this file into your cloud
@@ -2548,8 +2605,9 @@ ORCHESTRATOR_CLIENT_SECRET=
 #
 # IMPORTANT
 # This is not a completed runtime env file and should not be blindly mounted
-# into production containers. This generator intentionally does not ask for
-# secret values in cloud mode.
+# into production containers. Any GENERATED secret values present below must be
+# moved into your cloud secret manager; supply all remaining secret values
+# yourself from your approved tool or secret store.
 #
 # HOW TO USE
 # This file is organized into per-container blocks marked "CONTAINER: <name>".
@@ -2604,12 +2662,12 @@ ORCHESTRATOR_CLIENT_SECRET=
 # ------------------------------------------------------------
 
 # GENERATED + SECRET
-SECRET_KEY=
-HASHED_ADMIN_PASSWORD=
-OAUTH2_CLIENT_SECRET_HASH=
+SECRET_KEY=$($cSecretKey)
+HASHED_ADMIN_PASSWORD=$($cHashedAdmin)
+OAUTH2_CLIENT_SECRET_HASH=$($cOauthHash)
 
 # GENERATED + CONFIG
-OAUTH2_CLIENT_ID=
+OAUTH2_CLIENT_ID=$($cOauthId)
 
 # STORE ONLY - generated plaintext values shown once; keep in secure vault
 # Do not inject these into the container unless a documented setup flow requires it.
@@ -2650,6 +2708,11 @@ $agentSection
 "@
 
     Write-EnvFile $cloudFile $content
+
+    if ($script:CLOUD_GEN_CREDS -eq 'yes') {
+        Protect-File $cloudFile
+        Write-Warn 'This template now contains REAL generated secrets (SECRET_KEY, HASHED_ADMIN_PASSWORD, OAUTH2_CLIENT_SECRET_HASH). Please keep this template file safe: copy the values into your cloud secret manager, then delete the file or move it into a secure vault. Do not commit it to version control.'
+    }
 
     Write-Ok 'Cloud template env checklist generated.'
     Write-Host "cloud-env-template.env: $cloudFile"
@@ -3415,6 +3478,7 @@ if ($script:POSTGRES_MODE -eq 'existing') {
     $script:POSTGRES_HOST = 'orchestrator-postgres'
     $script:POSTGRES_PORT = '5432'
     $script:DB_SSLMODE = 'disable'
+    $script:POSTGRES_HOST_PORT = Read-Prompt 'Bundled PostgreSQL host port (published on 127.0.0.1; container port stays 5432)' '5432'
     $script:POSTGRES_DB   = Read-PgIdentifier 'Compose PostgreSQL database name' (Get-Existing 'POSTGRES_DB' $script:EXISTING_FILES) 'orchestrator'
     $script:POSTGRES_USER = Read-PgIdentifier 'Compose PostgreSQL username' (Get-Existing 'POSTGRES_USER' $script:EXISTING_FILES) 'orchestrator'
     $defaultComposePgPass = Get-ExistingOr 'POSTGRES_PASSWORD' ''
@@ -3454,10 +3518,18 @@ if ($script:POSTGRES_MODE -eq 'existing') {
 
 Configure-LlmProvider
 
+Write-Section 'Orchestrator host port'
+Write-Info 'The Orchestrator API is published on this host port. The container port stays 8080; change the host port only if 8080 is already in use on this host.'
+$script:ORCH_HOST_PORT = Read-Prompt 'Orchestrator host port' '8080'
+
 Write-Section 'Optional Admin Console'
 Write-Info 'Admin Console is optional and uses the same PostgreSQL database already configured for Orchestrator.'
-$script:ENABLE_ADMIN_CONSOLE = Read-YesNo 'Deploy Admin Console?' 'no'
-if ($script:ENABLE_ADMIN_CONSOLE -eq 'no') { Write-Warn 'Skipping Admin Console: manage OAuth clients, users, diagnostics, conversations, RAG indexes, and agents through REST API instead of the web UI.' }
+$script:ENABLE_ADMIN_CONSOLE = Read-YesNo 'Deploy Admin Console?' 'yes'
+if ($script:ENABLE_ADMIN_CONSOLE -eq 'no') {
+    Write-Warn 'Skipping Admin Console: manage OAuth clients, users, diagnostics, conversations, RAG indexes, and agents through REST API instead of the web UI.'
+} else {
+    $script:ADMIN_HOST_PORT = Read-Prompt 'Admin Console host port (container port stays 8081)' '8081'
+}
 
 Write-Section 'Optional RAG / Knowledge Base'
 Write-Info 'RAG is required for Help, HowTo, Spotfire documentation answers, and custom document Q&A.'
@@ -3494,7 +3566,11 @@ DEFAULT_RAG_RETRIEVER_TYPE=vector-store
     if ($script:VECTOR_WRITABLE -eq 'yes') {
         Write-Info 'Data Loader ingests Spotfire docs and custom PDFs into a writable vector database.'
         $script:ENABLE_DATA_LOADER = Read-YesNo 'Deploy Data Loader?' 'yes'
-        if ($script:ENABLE_DATA_LOADER -eq 'no') { Write-Warn 'Skipping Data Loader: populate the knowledge base through native tools or an existing ingestion process.' }
+        if ($script:ENABLE_DATA_LOADER -eq 'no') {
+            Write-Warn 'Skipping Data Loader: populate the knowledge base through native tools or an existing ingestion process.'
+        } else {
+            $script:LOADER_HOST_PORT = Read-Prompt 'Data Loader host port (container port stays 8080)' '8090'
+        }
  } else {
         $script:ENABLE_DATA_LOADER = 'no'
         $notice = if ([string]::IsNullOrEmpty($script:DATA_LOADER_NOTICE)) { 'selected vector DB uses native/manual ingestion or no writer plugin was configured.' } else { $script:DATA_LOADER_NOTICE }
@@ -3528,7 +3604,7 @@ if ($script:ENABLE_AGENT_REGISTRY -eq 'yes') {
     $exSecret = Get-Existing 'ORCHESTRATOR_CLIENT_SECRET' @($agentEnvFile)
     if (-not [string]::IsNullOrEmpty($exId) -and -not [string]::IsNullOrEmpty($exSecret) `
             -and $exId -notlike 'REPLACE_WITH_*' -and $exSecret -notlike 'REPLACE_WITH_*') {
-        $useExisting = Read-YesNo 'Existing Agent Registry orchestrator OAuth client found in .env.agent-registry. Reuse it?' 'yes'
+        $useExisting = Read-YesNo 'Existing Agent Registry Orchestrator OAuth client found in .env.agent-registry. Reuse it?' 'yes'
         if ($useExisting -eq 'yes') {
             $script:ORCHESTRATOR_CLIENT_ID = $exId
             $script:ORCHESTRATOR_CLIENT_SECRET = $exSecret
@@ -3538,7 +3614,7 @@ if ($script:ENABLE_AGENT_REGISTRY -eq 'yes') {
 
     if (-not $orchCredsReady) {
         Write-Warn 'Agent Registry needs its own orchestrator OAuth client with the agent_developer scope profile. Do not reuse the frontend/client OAuth credentials unless that client was explicitly created with agent_developer scopes.'
-        $haveClient = Read-YesNo 'Have you already created the orchestrator OAuth client for Agent Registry with Scope Profile agent_developer (you have its client ID and secret)?' 'no'
+        $haveClient = Read-YesNo 'Have you already created the Orchestrator OAuth client for Agent Registry with Scope Profile agent_developer (you have its client ID and secret)?' 'no'
         if ($haveClient -eq 'yes') {
             while ($true) {
                 $script:ORCHESTRATOR_CLIENT_ID = Get-StripOuterQuotes (Read-Prompt 'ORCHESTRATOR_CLIENT_ID from that agent_developer OAuth client' '')
@@ -3607,7 +3683,7 @@ if ($script:ENABLE_AGENT_REGISTRY -eq 'yes') {
 }
 
 Write-Section 'Output generation'
-$script:GENERATE_COMPOSE = Read-YesNo 'Generate docker-compose.yml too?' 'yes'
+$script:GENERATE_COMPOSE = Read-YesNo 'Generate a docker-compose.yml file?' 'yes'
 
 if ($script:POSTGRES_MODE -eq 'compose' -and $script:GENERATE_COMPOSE -ne 'yes') {
     $composePath = Join-Path $script:OUT_DIR 'docker-compose.yml'
@@ -3627,6 +3703,7 @@ if ($script:POSTGRES_MODE -eq 'compose' -and $script:GENERATE_COMPOSE -ne 'yes')
 # ---- assemble env file contents ----
 $embProviderOut = if ([string]::IsNullOrEmpty($script:EMBEDDING_PROVIDER)) { 'none' } else { $script:EMBEDDING_PROVIDER }
 $vecProviderOut = if ([string]::IsNullOrEmpty($script:VECTOR_DB_PROVIDER)) { 'none' } else { $script:VECTOR_DB_PROVIDER }
+$corsAdminPort = if (-not [string]::IsNullOrEmpty($script:ADMIN_HOST_PORT)) { $script:ADMIN_HOST_PORT } else { '8081' }
 
 $BASE_ENV_CONTENT = @"
 # ------------------------------
@@ -3693,7 +3770,7 @@ DB_SSLMODE=$($script:DB_SSLMODE)
 # Application URLs
 # ------------------------------
 ORCHESTRATOR_INTERNAL_URL=http://orchestrator:8080
-CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:3000
+CORS_ALLOWED_ORIGINS=http://localhost:$($corsAdminPort),http://localhost:3000
 
 # ------------------------------
 # LLM provider
@@ -3801,7 +3878,7 @@ if ($script:GENERATE_COMPOSE -eq 'yes') {
             '    container_name: orchestrator-postgres-${IMAGE_TAG}'
             '    restart: unless-stopped'
             '    ports:'
-            '      - "127.0.0.1:5432:5432"'
+            ('      - "127.0.0.1:{0}:5432"' -f $script:POSTGRES_HOST_PORT)
             '    env_file:'
             '      - .env'
             '      - .env.orchestrator'
@@ -3831,7 +3908,7 @@ if ($script:GENERATE_COMPOSE -eq 'yes') {
  }
     @(
         '    ports:'
-        '      - "8080:8080"'
+        ('      - "{0}:8080"' -f $script:ORCH_HOST_PORT)
         '    env_file:'
         '      - .env'
         '      - .env.orchestrator'
@@ -3857,7 +3934,7 @@ if ($script:GENERATE_COMPOSE -eq 'yes') {
             '      orchestrator:'
             '        condition: service_healthy'
             '    ports:'
-            '      - "8081:8081"'
+            ('      - "{0}:8081"' -f $script:ADMIN_HOST_PORT)
             '    env_file:'
             '      - .env'
             '      - .env.orchestrator'
@@ -3882,7 +3959,7 @@ if ($script:GENERATE_COMPOSE -eq 'yes') {
             '    container_name: data-loader-${IMAGE_TAG}'
             '    restart: unless-stopped'
             '    ports:'
-            '      - "8090:8080"'
+            ('      - "{0}:8080"' -f $script:LOADER_HOST_PORT)
             '    env_file:'
             '      - .env'
             '      - .env.dataloader'
