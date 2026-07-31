@@ -295,6 +295,8 @@ Commonly optional:
 | AZURE_OPENAI_ENDPOINT | Conditional | Azure OpenAI resource endpoint. Required when `DEEPAGENTS_MODEL=azure_openai:*`. | `https://<resource>.openai.azure.com` |
 | AZURE_OPENAI_API_KEY | Conditional | Azure OpenAI API key. Required when `DEEPAGENTS_MODEL=azure_openai:*` (unless using Azure AD). | `<azure-openai-key>` |
 | OPENAI_API_VERSION | Conditional | Azure OpenAI API version. Required when `DEEPAGENTS_MODEL=azure_openai:*`. `AZURE_OPENAI_API_VERSION` is also accepted. | `2024-10-21` |
+| OPENAI_BASE_URL | No | Route model calls through an OpenAI-compatible **gateway** (agentgateway, LiteLLM, …) instead of the provider directly. Set once for the whole server; each agent still names its model via `DEEPAGENTS_MODEL=openai:<name>`. Empty = direct to the provider. Per-agent override: `<PREFIX>_OPENAI_BASE_URL`. | `http://<gateway>/v1` |
+| DEEPAGENTS_OMIT_TEMPERATURE_MODELS | No | **Global**, comma-separated list of model-name prefixes for which `temperature` is **not** sent (some models reject a non-default temperature). `gpt-5*`, `o1`, `o3`, `o4`, and `claude-opus-5` are handled automatically; use this only to add a newer model without a code change. | `some-model,another` |
 | OPENAI_API_KEY | Conditional | Required when using an OpenAI model. | `<openai-key>` |
 | ANTHROPIC_API_KEY | Conditional | Required when using an Anthropic model. | `<anthropic-key>` |
 | GOOGLE_API_KEY | Conditional | Required when using a Google model. | `<google-key>` |

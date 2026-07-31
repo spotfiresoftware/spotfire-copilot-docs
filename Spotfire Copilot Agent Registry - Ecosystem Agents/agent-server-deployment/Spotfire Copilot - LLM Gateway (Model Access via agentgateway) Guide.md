@@ -190,24 +190,48 @@ Adding a model is a repeatable, **config-only** workflow — no code or template
    > parser rejected Foundry's body (*"missing field `type`"* — Foundry orders `model`
    > first while native Anthropic puts `type` first). On v1.4.1 the config above returns a
    > real completion (HTTP 200, verified).
-4. **Redeploy** the chart: `./gw-test.sh --env <env> all` (Helm creates the model and
-   prunes anything removed — no orphans). Always deploy `all`, not a single subset: a
-   subset run prunes every resource not in the subset.
-5. **Point agents at it** (env only). The gateway base is set once for the whole server;
-   each agent just names its model:
+4. **Redeploy the routes chart** — creates the model + `/v1` routing:
+   `./gw-test.sh --env <env> all`. Always deploy `all`, not a single subset (a subset run
+   prunes every resource not in the subset).
+5. **Price the model** so cost shows in the dashboards (built-in LLM Analytics **and**
+   Grafana read the same computed cost). Add the model to the cost catalog and roll the
+   platform chart. Rates are strings, **USD per 1,000,000 tokens**; the provider key is the
+   `gen_ai_system` label (`azure` for anything fronted by Azure/Foundry here):
+   ```jsonc
+   // devops/charts/agentgateway-platform/files/model-cost-catalog.json
+   { "providers": { "azure": { "models": {
+       "claude-opus-5": { "rates": { "input": "15", "output": "75", "cacheRead": "1.5", "cacheWrite": "18.75" } }
+   } } } }
+   ```
+   ```bash
+   helm upgrade agentgateway-platform ./agentgateway-platform \
+     -n agentgateway-system --set analytics.enabled=true --wait
+   ```
+   agentgateway **hot-reloads** the catalog (~1 min, no pod restart). This is the *only*
+   place rates live — it feeds both dashboards. Skip this step to leave the model unpriced
+   (dashboards still show tokens/latency; cost renders as `$0`). Keep `--set
+   analytics.enabled=true` so analytics isn't turned off by the earlier install-time flag.
+6. **Point agents at it** (env only). One base URL for the whole server; each agent just
+   names its model:
    ```
    OPENAI_BASE_URL=http://agentgateway-proxy.agentgateway-system.svc.cluster.local/v1
    DEEPAGENTS_MODEL=openai:gpt-4o                     # fleet default
    DATABRICKS_DEEPAGENTS_MODEL=openai:claude-opus-5   # one agent, a different model
    ```
-6. **Verify:**
+7. **Verify:**
    ```bash
-   curl http://<gw>/v1/models
+   curl http://<gw>/v1/models                          # new model listed
    curl http://<gw>/v1/chat/completions -d '{"model":"claude-opus-5","messages":[{"role":"user","content":"hi"}]}'
+   # priced? want status="Exact" (not Missing/Unpriced/NoCatalog):
+   kubectl -n agentgateway-system port-forward deploy/agentgateway-proxy 15020:15020 &
+   curl -s localhost:15020/metrics | grep agentgateway_cost_catalog_lookups_total | grep <model-name>
    ```
+   Then confirm it shows in **Grafana** (the *AgentGateway* dashboard) and the built-in
+   **LLM → Analytics** page (`kubectl -n agentgateway-system port-forward deploy/agentgateway-proxy 15000:15000`
+   → `http://localhost:15000/ui/llm/analytics`).
 
-For an existing provider type, steps **3 + 4** are the entire change. A brand-new
-provider type just adds the Secret in step 2.
+For an existing provider type, steps **3 → 5** are the whole change (routing + pricing). A
+brand-new provider type also adds the Secret (step 2). No code or template changes.
 
 ## 5. Governance — auth, model RBAC, and token policies
 

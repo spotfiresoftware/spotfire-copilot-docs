@@ -272,6 +272,14 @@ DEEPAGENTS_MODEL=openai:gpt-5.1
 # DEEPAGENTS_MODEL has NO provider prefix (a bare deployment name).
 # DEEPAGENTS_MODEL_PROVIDER=azure
 
+# Optional: route through an OpenAI-compatible GATEWAY (agentgateway, LiteLLM, ...)
+# instead of the provider directly. Set once; agents still name their model via
+# DEEPAGENTS_MODEL. Empty = direct to the provider.
+# OPENAI_BASE_URL=http://<gateway-host>/v1
+# Optional: models for which `temperature` must NOT be sent (gpt-5*/o1/o3/o4 and
+# claude-opus-5 are automatic). GLOBAL, comma-separated model-name prefixes.
+# DEEPAGENTS_OMIT_TEMPERATURE_MODELS=
+
 # Enable only the agents you need.
 AGENTS_ENABLED=osdu_agent
 
@@ -423,6 +431,8 @@ Commonly optional:
 | AZURE_OPENAI_ENDPOINT | Conditional | Azure OpenAI resource endpoint. Required when `DEEPAGENTS_MODEL=azure_openai:*`. | `https://<resource>.openai.azure.com` |
 | AZURE_OPENAI_API_KEY | Conditional | Azure OpenAI API key. Required when `DEEPAGENTS_MODEL=azure_openai:*` (unless using Azure AD). | `<azure-openai-key>` |
 | OPENAI_API_VERSION | Conditional | Azure OpenAI API version. Required when `DEEPAGENTS_MODEL=azure_openai:*`. `AZURE_OPENAI_API_VERSION` is also accepted. | `2024-10-21` |
+| OPENAI_BASE_URL | No | Route model calls through an OpenAI-compatible **gateway** (agentgateway, LiteLLM, …) instead of the provider directly. Set once for the whole server; each agent still names its model via `DEEPAGENTS_MODEL=openai:<name>`. Empty = direct to the provider. Per-agent override: `<PREFIX>_OPENAI_BASE_URL`. | `http://<gateway>/v1` |
+| DEEPAGENTS_OMIT_TEMPERATURE_MODELS | No | **Global**, comma-separated list of model-name prefixes for which `temperature` is **not** sent (some models reject a non-default temperature). `gpt-5*`, `o1`, `o3`, `o4`, and `claude-opus-5` are handled automatically; use this only to add a newer model without a code change. | `some-model,another` |
 | MCP_BEARER_TOKEN | No | Global fallback bearer token for MCP servers when per-server token is not set. | `shared-mcp-token` |
 | MCP_CLIENT_ID | Conditional | Keycloak client_id for outbound MCP auth (`aud=mcp`). Required to enable the in-process token minter; must be set together with `MCP_CLIENT_SECRET` and `KEYCLOAK_TOKEN_URL`. | `mcp-clients` |
 | MCP_CLIENT_SECRET | Conditional | Keycloak client_secret paired with `MCP_CLIENT_ID`. | `<secret>` |
