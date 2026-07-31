@@ -50,9 +50,9 @@ The complete set of guides, grouped by the component they cover.
 
 The server-side orchestrator and its companion services. Located in [Spotfire Copilot Backend Services/](Spotfire%20Copilot%20Backend%20Services).
 
-- **[Installation Guide — Backend Setup](Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md)** — Deploy the orchestrator: generate credentials, choose an LLM provider, configure the knowledge base, and deploy with Docker across Azure, GCP, AWS, or Kubernetes, followed by verification and post-deployment setup. *Applies to: Orchestrator Service (versions 2.3.0–2.3.5).*
+- **[Installation Guide — Backend Setup](Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md)** — Deploy the orchestrator: generate credentials, choose an LLM provider, configure the knowledge base, and deploy with Docker across Azure, GCP, AWS, or Kubernetes, followed by verification and post-deployment setup. *Applies to: Orchestrator Service (versions 2.3.0–2.3.7).*
 - **[Admin Console Guide](Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md)** — Day-to-day operation of the admin console for customer administrators: managing users, OAuth2 clients, conversations, RAG indexes, and system health. *Applies to: Admin Console (versions 2.3.0–2.3.4).*
-- **[Data Loaders Installation Guide](Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md)** — Install and configure the data-loader services that ingest documents into the knowledge base: image selection, LLM and embedding providers, supported vector databases, and document preparation. *Applies to: Data Loader Services (versions 2.3.0–2.3.4).*
+- **[Data Loaders Installation Guide](Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md)** — Install and configure the data-loader services that ingest documents into the knowledge base: image selection, LLM and embedding providers, supported vector databases, and document preparation. *Applies to: Data Loader Services (versions 2.3.0–2.3.7).*
 
 ### Client extension
 
