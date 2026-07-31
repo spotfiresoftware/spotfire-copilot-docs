@@ -11,6 +11,10 @@
 > ## Milvus PDF loading fix
 >
 > The Milvus / Zilliz PDF-ingestion failure that surfaces as **`ConnectionNotExistException`** during `/load` was fixed in **2.3.2**. That fix remains included in **2.3.4**, which is the recommended tag for all current data-loader deployments.
+>
+> ## Tip: automate the setup
+>
+> Instead of writing the data-loader `.env` and compose files by hand, you can generate them with the interactive installer described in the [Backend Deployment Scripts User Guide](../Spotfire%20Copilot%20Deployment%20Scripts/Spotfire%20Copilot%20-%20Backend%20Deployment%20Scripts%20User%20Guide.md), which includes a dedicated data-loader deployment option.
 
 ---
 

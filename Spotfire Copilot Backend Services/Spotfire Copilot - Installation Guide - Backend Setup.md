@@ -3,6 +3,8 @@
 > **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, and 2.3.5 &nbsp;|&nbsp; **Last updated:** 29 June 2026 &nbsp;|&nbsp; **Applies to:** Orchestrator Service
 >
 > This guide covers backend versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, and **2.3.5**. New configuration introduced in 2.3.1, 2.3.2, and 2.3.4 is called out inline and summarised in **[Appendix D](#appendix-d--release-notes) — Release notes** at the end of this guide. **2.3.5 is a security release for the Admin Console** — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**.
+>
+> **Tip — prefer a guided install?** Rather than hand-writing your `.env` and `docker-compose.yml`, you can run the interactive installer documented in the [Backend Deployment Scripts User Guide](../Spotfire%20Copilot%20Deployment%20Scripts/Spotfire%20Copilot%20-%20Backend%20Deployment%20Scripts%20User%20Guide.md). It walks you through credentials, LLM provider, knowledge base, and Docker or Kubernetes output. This guide remains the reference for what each setting does.
 
 ## Table of Contents
 

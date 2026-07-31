@@ -3,6 +3,8 @@
 > **Versions covered:** 2.3.0, 2.3.1, 2.3.2, and 2.3.4 &nbsp;|&nbsp; **Last updated:** 24 June 2026 &nbsp;|&nbsp; **Applies to:** Admin Console (companion service to the orchestrator)
 >
 > This guide is for **customer administrators** who need to operate the Spotfire Copilot admin console day-to-day — managing users, OAuth2 clients, conversations, RAG indexes, and system health. For installing or deploying the admin console alongside the orchestrator, see the [Spotfire Copilot Installation Guide — Backend Infrastructure Setup](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md).
+>
+> **Tip:** The Admin Console can be deployed together with the orchestrator using the interactive installer in the [Backend Deployment Scripts User Guide](../Spotfire%20Copilot%20Deployment%20Scripts/Spotfire%20Copilot%20-%20Backend%20Deployment%20Scripts%20User%20Guide.md), which prompts you to enable the console and choose its port during setup.
 
 ## Table of Contents
 
