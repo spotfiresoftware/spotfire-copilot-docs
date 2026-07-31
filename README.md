@@ -6,6 +6,16 @@ Beyond these built-in capabilities, Spotfire Copilot is significantly enhanced b
 
 This repository is the canonical home for the Spotfire Copilot documentation.
 
+## Component versions
+
+| Component | Latest version |
+|-----------|:--------------:|
+| [Backend Services](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md) (Orchestrator + [Data Loaders](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md)) | **2.3.5** |
+| [Spotfire client packages](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md) | **2.3.4** |
+| [Kubernetes / Helm charts](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agent-server-deployment/README.md) (DeepAgents + [MCP servers](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/mcp-servers/README.md)) | **0.3.2** |
+| [Agent Registry — Domain Agents Container](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20-%20Domain%20Agents/Spotfire%20Copilot%20-%20Agent%20Registry%20Installation%20Guide.md) | **1.1.0** |
+| [Agent Registry — Platform Integrations Container](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/README.md) | **1.0.0** |
+
 ## Where to start
 
 The documentation covers several audiences. Pick the path that matches what you want to do — you don't need to read everything, and only the **core platform** path is required for every deployment.
