@@ -388,7 +388,7 @@ Quick-start minimum set:
 - Optional per-agent override: prefix any model variable with an agent's MCP prefix to change just that agent (same convention as `<PREFIX>_MCP_SERVER_URL`). For example, keep the fleet on OpenAI but move only `osdu_agent` to Azure by setting `OSDU_DEEPAGENTS_MODEL=azure_openai:<deployment>` (the `AZURE_*` vars are shared globally, or can be overridden as `OSDU_AZURE_OPENAI_*`). Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`, `SNOWFLAKE`. and set matching credentials (for example `A2A_BEARER_TOKENS` for `bearer`).
 - For each enabled agent integration, set `*_MCP_SERVER_URL`.
 - Set per-server `*_MCP_BEARER_TOKEN` values as required by your MCP backends, or set `MCP_BEARER_TOKEN` as a shared fallback.
-- Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored.
+- Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored. To keep one agent on its own static token while the minter is active — for example an **external SaaS MCP** such as Databricks Genie or Snowflake that authenticates with its own token rather than a Keycloak `aud=mcp` JWT — set `<PREFIX>_MCP_STATIC_TOKEN_ONLY=true` for that agent.
 
 Commonly optional:
 
@@ -442,7 +442,8 @@ Commonly optional:
 | MCP_TOKEN_EXCHANGE | No | Opt-in. `1`/`true` enables agent-mediated **per-user** MCP authorization via OAuth token exchange (requires `A2A_AUTH_MODE=oidc` + the three minter vars). Unset = app identity / static tokens (default). | `1` |
 | MCP_EXCHANGE_AUDIENCE | No | Target client id for the exchanged token; leave empty (the `aud=mcp` claim comes from the client's audience mapper). | *(empty)* |
 | <PREFIX>_MCP_SERVER_URL | Conditional | MCP server URL for an enabled agent integration. Required to load that integration's tools. | `OSDU_MCP_SERVER_URL=https://mcp-osdu.example.com/mcp` |
-| <PREFIX>_MCP_BEARER_TOKEN | Conditional | Per-server bearer token; falls back to `MCP_BEARER_TOKEN` if unset. Ignored when the Keycloak minter is active (all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, `KEYCLOAK_TOKEN_URL` set). | `OSDU_MCP_BEARER_TOKEN=<token>` |
+| <PREFIX>_MCP_BEARER_TOKEN | Conditional | Per-server bearer token; falls back to `MCP_BEARER_TOKEN` if unset. Ignored when the Keycloak minter is active (all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, `KEYCLOAK_TOKEN_URL` set) — unless `<PREFIX>_MCP_STATIC_TOKEN_ONLY` is set for that agent. | `OSDU_MCP_BEARER_TOKEN=<token>` |
+| <PREFIX>_MCP_STATIC_TOKEN_ONLY | No | Per-agent opt-out of the Keycloak minter: when `true`, that agent uses its own `<PREFIX>_MCP_BEARER_TOKEN` instead of a minted `aud=mcp` JWT. Set for **external SaaS MCP** (e.g. Databricks Genie, Snowflake) that authenticate with their own token. Default `false`. | `true` |
 | <PREFIX>_MCP_SERVER_TRANSPORT | No | MCP transport. | `streamable-http` |
 | <PREFIX>_MCP_ALLOW_DEGRADED_STARTUP | No | Allow startup to continue when that MCP integration fails to initialize. | `false` |
 | <PREFIX>_MCP_CALL_TIMEOUT | No | Per-tool call timeout (seconds). | `60` |
@@ -487,6 +488,7 @@ Use this table when you want concrete variable names instead of `<PREFIX>` patte
 | GENIE_MCP_BEARER_TOKEN | Conditional | Bearer token for Databricks Genie MCP. | `<token>` |
 | GENIE_MCP_SERVER_TRANSPORT | No | Databricks Genie MCP transport. | `streamable-http` |
 | GENIE_MCP_CALL_TIMEOUT | No | Databricks Genie per-call timeout seconds. | `60` |
+| GENIE_MCP_STATIC_TOKEN_ONLY | No | Use `GENIE_MCP_BEARER_TOKEN` instead of the Keycloak minter (Genie is an external SaaS MCP). | `true` |
 | DV_MCP_SERVER_URL | Conditional | DV MCP endpoint URL when `dv_agent` is enabled. | `https://mcp-dv.example.com/mcp` |
 | DV_MCP_BEARER_TOKEN | Conditional | Bearer token for DV MCP. | `<token>` |
 | DV_MCP_SERVER_TRANSPORT | No | DV MCP transport. | `streamable-http` |
@@ -515,6 +517,7 @@ Use this table when you want concrete variable names instead of `<PREFIX>` patte
 | SNOWFLAKE_MCP_BEARER_TOKEN | Conditional | Bearer token for Snowflake MCP. | `<token>` |
 | SNOWFLAKE_MCP_SERVER_TRANSPORT | No | Snowflake MCP transport. | `streamable-http` |
 | SNOWFLAKE_MCP_CALL_TIMEOUT | No | Snowflake per-call timeout seconds. | `60` |
+| SNOWFLAKE_MCP_STATIC_TOKEN_ONLY | No | Use `SNOWFLAKE_MCP_BEARER_TOKEN` instead of the Keycloak minter (Snowflake is an external SaaS MCP). | `true` |
 
 ### 4.7 Verify
 

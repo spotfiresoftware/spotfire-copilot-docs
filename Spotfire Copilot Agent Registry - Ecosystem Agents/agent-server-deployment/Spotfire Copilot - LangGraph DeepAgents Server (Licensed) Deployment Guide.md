@@ -278,7 +278,7 @@ Quick-start minimum set:
 - Optional per-agent override: prefix any model variable with an agent's MCP prefix to change just that agent (same convention as `<PREFIX>_MCP_SERVER_URL`). For example, keep the fleet on OpenAI but move only `osdu_agent` to Azure by setting `OSDU_DEEPAGENTS_MODEL=azure_openai:<deployment>` (the `AZURE_*` vars are shared globally, or can be overridden as `OSDU_AZURE_OPENAI_*`). Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`, `SNOWFLAKE`.
 - For each enabled agent integration, set its `*_MCP_SERVER_URL`.
 - Set per-server `*_MCP_BEARER_TOKEN` values as required by your MCP backends, or set `MCP_BEARER_TOKEN` as a shared fallback.
-- Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored.
+- Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored. To keep one agent on its own static token while the minter is active — for example an **external SaaS MCP** such as Databricks Genie or Snowflake that authenticates with its own token rather than a Keycloak `aud=mcp` JWT — set `<PREFIX>_MCP_STATIC_TOKEN_ONLY=true` for that agent.
 - For full, identity-aware access control, an **enterprise / advanced** option enables agent-mediated **per-user** authorization (`MCP_TOKEN_EXCHANGE=1` + `A2A_AUTH_MODE=oidc`; see the [Per-User Authorization and Token Exchange Guide](./Spotfire%20Copilot%20-%20Per-User%20Authorization%20and%20Token%20Exchange%20Guide.md)). The default static-token / app-identity configuration above is the standard starting point for most deployments and needs none of this.
 - Set `LANGSMITH_API_KEY` when `LANGSMITH_TRACING=true`.
 
@@ -314,6 +314,7 @@ Commonly optional:
 | DATABRICKS_MCP_BEARER_TOKEN | Conditional | Per-server bearer token for Databricks MCP; falls back to `MCP_BEARER_TOKEN` if unset. | `<databricks-token>` |
 | GENIE_MCP_SERVER_URL | Conditional | Databricks Genie MCP endpoint for `databricks_genie_agent`. | `https://mcp-databricks-genie.example.com/mcp` |
 | GENIE_MCP_BEARER_TOKEN | Conditional | Per-server bearer token for Databricks Genie MCP; falls back to `MCP_BEARER_TOKEN` if unset. | `<genie-token>` |
+| GENIE_MCP_STATIC_TOKEN_ONLY | No | Use `GENIE_MCP_BEARER_TOKEN` instead of the Keycloak minter (Genie is an external SaaS MCP). | `true` |
 | DV_MCP_SERVER_URL | Conditional | DV MCP endpoint for `dv_agent`. | `https://mcp-dv.example.com/mcp` |
 | DV_MCP_BEARER_TOKEN | Conditional | Per-server bearer token for DV MCP; falls back to `MCP_BEARER_TOKEN` if unset. | `<dv-token>` |
 | SFLIB_MCP_SERVER_URL | Conditional | Spotfire Library MCP endpoint for `sf_lib_md_agent`. | `https://mcp-spotfire-lib.example.com/mcp` |
@@ -328,8 +329,10 @@ Commonly optional:
 | DDR_MCP_BEARER_TOKEN | Conditional | Per-server bearer token for DDR MCP; falls back to `MCP_BEARER_TOKEN` if unset. | `<ddr-token>` |
 | SNOWFLAKE_MCP_SERVER_URL | Conditional | Snowflake MCP endpoint for `snowflake_agent`. | `https://mcp-snowflake.example.com/mcp` |
 | SNOWFLAKE_MCP_BEARER_TOKEN | Conditional | Per-server bearer token for Snowflake MCP; falls back to `MCP_BEARER_TOKEN` if unset. | `<snowflake-token>` |
+| SNOWFLAKE_MCP_STATIC_TOKEN_ONLY | No | Use `SNOWFLAKE_MCP_BEARER_TOKEN` instead of the Keycloak minter (Snowflake is an external SaaS MCP). | `true` |
 | <PREFIX>_MCP_SERVER_TRANSPORT | No | Transport mode for an enabled MCP integration. | `streamable-http` |
 | <PREFIX>_MCP_ALLOW_DEGRADED_STARTUP | No | Allows startup to continue if that MCP backend is unavailable. | `false` |
+| <PREFIX>_MCP_STATIC_TOKEN_ONLY | No | Per-agent opt-out of the Keycloak minter: when `true`, that agent uses its own `<PREFIX>_MCP_BEARER_TOKEN` instead of a minted `aud=mcp` JWT. Set for external SaaS MCP (e.g. Databricks Genie, Snowflake). Default `false`. | `true` |
 | <PREFIX>_MCP_CALL_TIMEOUT | No | Per-tool call timeout in seconds. | `60` |
 | <PREFIX>_MCP_INIT_TIMEOUT | No | MCP session initialize timeout in seconds. | `10` |
 | <PREFIX>_MCP_CONNECT_TIMEOUT | No | HTTP connect timeout in seconds. | `5` |
