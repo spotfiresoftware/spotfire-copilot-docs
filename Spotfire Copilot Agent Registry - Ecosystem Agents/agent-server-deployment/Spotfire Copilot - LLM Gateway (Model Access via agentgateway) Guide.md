@@ -94,19 +94,61 @@ set `OPENAI_BASE_URL=http://<gateway>/v1` and `DEEPAGENTS_MODEL=openai:<name>`.
 ```yaml
 # values.<env>.yaml
 llmModels:
-  - name: gpt-4o                 # client-facing model name (== /v1/models id)
+  - name: azureopenai-gpt-4o     # client-facing model name (== /v1/models id)
     provider: Azure
     azure: { resourceName: openai-tibco, resourceType: OpenAI, apiVersion: "2024-10-21" }
     auth: { secretRef: azure-openai-key }   # Secret holds the key under `Authorization`
-  - name: claude-opus-5          # Claude Opus 5 on Azure AI Foundry
+    transformations:                        # rewrite the UPSTREAM model (see note below)
+      - { field: model, expression: "'gpt-4o'" }
+  - name: azurefoundry-claude-opus-5   # Claude Opus 5 on Azure AI Foundry
     provider: Azure
     azure: { resourceName: openai-tibco, resourceType: Foundry, projectName: SpotfireCopilot }
     auth: { secretRef: azure-foundry-key }
+    transformations:
+      - { field: model, expression: "'claude-opus-5'" }
 ```
 
 Providers: `Azure`, `OpenAI`, `Anthropic`, `Bedrock`, `VertexAI`, `Gemini`, `Custom`,
 and more. Optional per entry: `match` (exact | `suffix*` | `*prefix` | `*`), `baseURL`,
-`visibility` (`Public`/`Internal`). Create the referenced Secret out-of-band.
+`visibility` (`Public`/`Internal`), and `transformations` (see below). Create the
+referenced Secret out-of-band.
+
+#### Naming convention & the `transformations` model rewrite
+
+The `AgentgatewayModel` API **routes by the request's `model` name and has no
+upstream-model field** — by default it forwards that name verbatim to the provider (so
+the Azure *deployment* / OpenAI *model* must literally equal the entry `name`). Two
+consequences:
+
+- **Naming convention.** Prefer **`<platform>-<model>`** (e.g. `azureopenai-gpt-5`,
+  `openai-gpt-5`, `azurefoundry-claude-opus-5`, `bedrock-claude-sonnet`). It groups
+  models by serving platform in `/v1/models` and avoids collision with LangChain's
+  `provider:model` colon syntax (we use a hyphen).
+- **`transformations` rewrite.** Whenever the client-facing `name` differs from the real
+  upstream id — which is **always** with the convention above, and **required** when you
+  expose the *same* real model on two platforms (e.g. `gpt-5` on Azure **and** OpenAI) —
+  add a CEL `transformations` entry that rewrites the upstream `model` back to the real
+  id. Each entry is `{ field: model, expression: "'<real-upstream-id>'" }` (the value is a
+  CEL string literal, so the inner quotes are required). Example — one real `gpt-5`,
+  two routable names:
+
+  ```yaml
+  llmModels:
+    - name: azureopenai-gpt-5
+      provider: Azure
+      azure: { resourceName: openai-tibco, resourceType: OpenAI, apiVersion: "2024-10-21" }
+      auth: { secretRef: azure-openai-key }
+      transformations: [{ field: model, expression: "'gpt-5'" }]
+    - name: openai-gpt-5
+      provider: OpenAI
+      auth: { secretRef: openai-key }
+      transformations: [{ field: model, expression: "'gpt-5'" }]
+  ```
+
+  Agents then pick the platform purely by name: `DEEPAGENTS_MODEL=openai:azureopenai-gpt-5`
+  vs `openai:openai-gpt-5` (the `openai:` prefix is the SDK/gateway transport; the token
+  after it is the gateway model name above). Per-agent override:
+  `LANGGRAPH_OSS_<AGENT>_DEEPAGENTS_MODEL`.
 
 **One-time platform prerequisites** (gateway-wide, not rendered by this chart):
 
@@ -172,18 +214,22 @@ Adding a model is a repeatable, **config-only** workflow — no code or template
    kubectl -n agentgateway-system create secret generic <secret-name> \
      --from-literal=Authorization="$PROVIDER_KEY"
    ```
-3. **Add one `llmModels` entry** to `values.<env>.yaml` (model-name routing, §4.1). The
-   entry `name` is the client-facing model name that shows up in `/v1/models`:
+3. **Add one `llmModels` entry** to `values.<env>.yaml` (model-name routing, §4.1). Use
+   the **`<platform>-<model>`** naming convention; the `name` is the client-facing model
+   name that shows up in `/v1/models`, and a `transformations` rewrite maps it to the
+   real upstream deployment/model id:
    ```yaml
    llmModels:
-     - name: gpt-4o                       # Azure OpenAI (deployment gpt-4o on openai-tibco)
+     - name: azureopenai-gpt-4o           # Azure OpenAI (deployment gpt-4o on openai-tibco)
        provider: Azure
        azure: { resourceName: openai-tibco, resourceType: OpenAI, apiVersion: "2024-10-21" }
        auth: { secretRef: azure-openai-key }
-     - name: claude-opus-5                # Claude Opus 5 on Azure AI Foundry
+       transformations: [{ field: model, expression: "'gpt-4o'" }]
+     - name: azurefoundry-claude-opus-5   # Claude Opus 5 on Azure AI Foundry
        provider: Azure
        azure: { resourceName: openai-tibco, resourceType: Foundry, projectName: SpotfireCopilot }
        auth: { secretRef: azure-foundry-key }
+       transformations: [{ field: model, expression: "'claude-opus-5'" }]
    ```
    > **Foundry needs agentgateway v1.4+.** Native Anthropic-on-Foundry support (PR #2190)
    > and the Foundry hostname fix (#1906) landed in v1.4. On v1.2.x the Anthropic response
