@@ -150,6 +150,21 @@ consequences:
   after it is the gateway model name above). Per-agent override:
   `LANGGRAPH_OSS_<AGENT>_DEEPAGENTS_MODEL`.
 
+  **`transformations` aren't only for `model`.** Any request field can be normalized the
+  same way — a common case is **reasoning models** (`gpt-5`, `o1`, …) that reject
+  `temperature != 1`. Colocating the constraint on the model entry fixes it for *every*
+  caller (no per-agent config), e.g.:
+
+  ```yaml
+    - name: azureopenai-gpt-5
+      provider: Azure
+      azure: { resourceName: openai-tibco, resourceType: OpenAI, apiVersion: "2024-10-21" }
+      auth: { secretRef: azure-openai-key }
+      transformations:
+        - { field: model, expression: "'gpt-5'" }
+        - { field: temperature, expression: "1" }   # reasoning model: only temperature=1 is accepted
+  ```
+
 **One-time platform prerequisites** (gateway-wide, not rendered by this chart):
 
 1. Enable the (experimental in v1.4) model API on the control plane —
