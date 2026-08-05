@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# ==============================================================================
+#  Spotfire Copilot — Ecosystem Deployment Script (DeepAgents OSS)
+#  Version: 2.3.x
+#
+#  Usage:
+#    ./spotfire-copilot-ecosystem-deploy.sh
+#    ./spotfire-copilot-ecosystem-deploy.sh --dir /opt/deepagents-oss
+#    ./spotfire-copilot-ecosystem-deploy.sh --help
+# ==============================================================================
 set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077

@@ -1,9 +1,10 @@
 #Requires -Version 5.1
 <#
 ================================================================================
- DeepAgents OSS base configuration generator  (Windows / PowerShell port)
+ Spotfire Copilot — Ecosystem Deployment Script (DeepAgents OSS)
+ Version: 2.3.x
 ================================================================================
- Faithful PowerShell port of spotfire-deepagents-deploy.sh.
+ Faithful PowerShell port of spotfire-copilot-ecosystem-deploy.sh.
 
  Windows adaptations (behavior kept identical where possible):
    * `openssl rand` -> .NET RandomNumberGenerator (URL-safe base64, no padding).

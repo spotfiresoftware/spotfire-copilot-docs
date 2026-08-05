@@ -10,8 +10,8 @@ Two equivalent scripts are provided so you can run the generator from either pla
 
 | Script | Platform | Interpreter |
 | --- | --- | --- |
-| [`spotfire-copilot-deploy.sh`](spotfire-copilot-deploy.sh) | Linux / macOS | Bash 4+ |
-| [`spotfire-copilot-deploy.ps1`](spotfire-copilot-deploy.ps1) | Windows | PowerShell 5.1+ |
+| [`spotfire-copilot-backend-deploy.sh`](spotfire-copilot-backend-deploy.sh) | Linux / macOS | Bash 4+ |
+| [`spotfire-copilot-backend-deploy.ps1`](spotfire-copilot-backend-deploy.ps1) | Windows | PowerShell 5.1+ |
 
 Both scripts are functionally equivalent: same prompts, same defaults, same
 generated files. Choose the one that matches your operating system.
@@ -86,14 +86,14 @@ The default backend image tag is `2.3.4` (override with `--image-tag` /
   already have a `copilot-generated-values.txt`. The script does not create
   credentials itself; it runs the official generator.
 
-**Linux / macOS (`spotfire-copilot-deploy.sh`)**
+**Linux / macOS (`spotfire-copilot-backend-deploy.sh`)**
 
 - Bash 4 or newer, `openssl`.
 - Python 3 with `bcrypt` (used by `generate_credentials.py`). The script can
   install/check prerequisites with `--install-prereqs`.
 - Docker Engine + Docker Compose V2 for single-host deploys and Compose validation.
 
-**Windows (`spotfire-copilot-deploy.ps1`)**
+**Windows (`spotfire-copilot-backend-deploy.ps1`)**
 
 - Windows PowerShell 5.1 or newer.
 - Python 3 with `bcrypt` for credential generation.
@@ -109,15 +109,15 @@ The default backend image tag is `2.3.4` (override with `--image-tag` /
 **Linux / macOS**
 
 ```bash
-chmod +x spotfire-copilot-deploy.sh
+chmod +x spotfire-copilot-backend-deploy.sh
 # Ensure generate_credentials.py is in the same folder (unless you already have credentials)
-./spotfire-copilot-deploy.sh
+./spotfire-copilot-backend-deploy.sh
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-.\spotfire-copilot-deploy.ps1
+.\spotfire-copilot-backend-deploy.ps1
 ```
 
 Answer the prompts, review the files written under
@@ -126,11 +126,11 @@ Answer the prompts, review the files written under
 Custom output directory:
 
 ```bash
-./spotfire-copilot-deploy.sh --dir /opt/spotfire-copilot/backend
+./spotfire-copilot-backend-deploy.sh --dir /opt/spotfire-copilot/backend
 ```
 
 ```powershell
-.\spotfire-copilot-deploy.ps1 -Dir C:\opt\spotfire-copilot\backend
+.\spotfire-copilot-backend-deploy.ps1 -Dir C:\opt\spotfire-copilot\backend
 ```
 
 ---
@@ -349,14 +349,14 @@ Upgrade mode copies an existing deployment into a new versioned folder and updat
 the image tags:
 
 ```bash
-./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.6
-./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.6 --from-dir /root/spotfire-copilot/2.3.4/backend
-./spotfire-copilot-deploy.sh --upgrade --image-tag 2.3.6 --agent-tag 1.0.0
+./spotfire-copilot-backend-deploy.sh --upgrade --image-tag 2.3.6
+./spotfire-copilot-backend-deploy.sh --upgrade --image-tag 2.3.6 --from-dir /root/spotfire-copilot/2.3.4/backend
+./spotfire-copilot-backend-deploy.sh --upgrade --image-tag 2.3.6 --agent-tag 1.0.0
 ```
 
 ```powershell
-.\spotfire-copilot-deploy.ps1 -Upgrade -ImageTag 2.3.6
-.\spotfire-copilot-deploy.ps1 -Upgrade -ImageTag 2.3.6 -AgentTag 1.0.0
+.\spotfire-copilot-backend-deploy.ps1 -Upgrade -ImageTag 2.3.6
+.\spotfire-copilot-backend-deploy.ps1 -Upgrade -ImageTag 2.3.6 -AgentTag 1.0.0
 ```
 
 It updates `IMAGE_TAG`, `FASTAPI_APP_VERSION`, and (when `--agent-tag` is given)
@@ -401,11 +401,11 @@ Because Agent Registry needs an Orchestrator OAuth client with the `agent_develo
 scope profile, create it against a **running** Orchestrator using the dedicated flow:
 
 ```bash
-./spotfire-copilot-deploy.sh --install-agent-registry --dir <backend-folder>
+./spotfire-copilot-backend-deploy.sh --install-agent-registry --dir <backend-folder>
 ```
 
 ```powershell
-.\spotfire-copilot-deploy.ps1 -InstallAgentRegistry -Dir <backend-folder>
+.\spotfire-copilot-backend-deploy.ps1 -InstallAgentRegistry -Dir <backend-folder>
 ```
 
 This adds/updates only the Agent Registry configuration (`.env.agent-registry` and the
@@ -444,7 +444,7 @@ deployment.
 | `docker-compose.yml is missing orchestrator-postgres` | You chose `POSTGRES_MODE=compose` but the compose file lacks the service; let the script regenerate it. |
 | `Invalid image tag` | Use an approved OCI tag: letters, digits, `.`, `_`, `-` (max 128), starting with an alphanumeric or underscore. |
 | Agent Registry deferred / not configured | Its OAuth client didn't exist yet. Start the Orchestrator, then run `--install-agent-registry --dir <backend>`. |
-| PowerShell "running scripts is disabled" | Launch with `powershell -ExecutionPolicy Bypass -File .\spotfire-copilot-deploy.ps1`, or set an appropriate execution policy. |
+| PowerShell "running scripts is disabled" | Launch with `powershell -ExecutionPolicy Bypass -File .\.spotfire-copilot-backend-deploy.ps1`, or set an appropriate execution policy. |
 
 ---
 

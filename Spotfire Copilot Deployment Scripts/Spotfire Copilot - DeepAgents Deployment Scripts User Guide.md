@@ -8,8 +8,8 @@ Two equivalent scripts are provided so you can run the generator from either pla
 
 | Script | Platform | Interpreter |
 | --- | --- | --- |
-| [`spotfire-deepagents-deploy.sh`](spotfire-deepagents-deploy.sh) | Linux / macOS | Bash 4+ |
-| [`spotfire-deepagents-deploy.ps1`](spotfire-deepagents-deploy.ps1) | Windows | PowerShell 5.1+ |
+| [`spotfire-copilot-ecosystem-deploy.sh`](spotfire-copilot-ecosystem-deploy.sh) | Linux / macOS | Bash 4+ |
+| [`spotfire-copilot-ecosystem-deploy.ps1`](spotfire-copilot-ecosystem-deploy.ps1) | Windows | PowerShell 5.1+ |
 
 Both scripts are functionally identical: same prompts, same defaults, same
 generated files. Choose the one that matches your operating system.
@@ -78,14 +78,14 @@ The scripts never run `docker compose down -v` and never delete data volumes.
 - Network access to the registry `copilotoci.azurecr.io`.
 - Credentials for the LLM provider you intend to use.
 
-**Linux / macOS (`spotfire-deepagents-deploy.sh`)**
+**Linux / macOS (`spotfire-copilot-ecosystem-deploy.sh`)**
 
 - Bash 4 or newer.
 - `openssl` (used to generate random secrets).
 - Docker Engine + Docker Compose V2 — required for Compose validation and to run
   the deployment. Optional at generation time (validation is skipped if absent).
 
-**Windows (`spotfire-deepagents-deploy.ps1`)**
+**Windows (`spotfire-copilot-ecosystem-deploy.ps1`)**
 
 - Windows PowerShell 5.1 or newer.
 - Docker Desktop (Compose V2) — optional at generation time, required to run the
@@ -108,14 +108,14 @@ The scripts never run `docker compose down -v` and never delete data volumes.
 **Linux / macOS**
 
 ```bash
-chmod +x spotfire-deepagents-deploy.sh
-./spotfire-deepagents-deploy.sh
+chmod +x spotfire-copilot-ecosystem-deploy.sh
+./spotfire-copilot-ecosystem-deploy.sh
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-.\spotfire-deepagents-deploy.ps1
+.\spotfire-copilot-ecosystem-deploy.ps1
 ```
 
 Answer the prompts, review the files written to the output directory
@@ -125,18 +125,18 @@ Non-interactive examples that pre-seed some choices:
 
 ```bash
 # Compose, local Postgres/Redis, a fixed image tag
-./spotfire-deepagents-deploy.sh --compose --local --image-tag 1.0.0
+./spotfire-copilot-ecosystem-deploy.sh --compose --local --image-tag 1.0.0
 
 # Kubernetes values bundle in a custom directory
-./spotfire-deepagents-deploy.sh --kubernetes --dir /opt/deepagents-oss --namespace deepagents
+./spotfire-copilot-ecosystem-deploy.sh --kubernetes --dir /opt/deepagents-oss --namespace deepagents
 ```
 
 ```powershell
 # Compose, external Postgres/Redis
-.\spotfire-deepagents-deploy.ps1 -Compose -External -ImageTag 1.0.0
+.\spotfire-copilot-ecosystem-deploy.ps1 -Compose -External -ImageTag 1.0.0
 
 # Kubernetes values bundle
-.\spotfire-deepagents-deploy.ps1 -Kubernetes -Dir C:\opt\deepagents-oss -Namespace deepagents
+.\spotfire-copilot-ecosystem-deploy.ps1 -Kubernetes -Dir C:\opt\deepagents-oss -Namespace deepagents
 ```
 
 ---
@@ -330,11 +330,11 @@ re-validates the Compose file, and prints restart commands. It requires the targ
 directory to already contain `.env` and `docker-compose.yml`.
 
 ```bash
-./spotfire-deepagents-deploy.sh --upgrade --image-tag 1.0.1 --dir ./deepagents-oss-deploy
+./spotfire-copilot-ecosystem-deploy.sh --upgrade --image-tag 1.0.1 --dir ./deepagents-oss-deploy
 ```
 
 ```powershell
-.\spotfire-deepagents-deploy.ps1 -Upgrade -ImageTag 1.0.1 -Dir .\deepagents-oss-deploy
+.\spotfire-copilot-ecosystem-deploy.ps1 -Upgrade -ImageTag 1.0.1 -Dir .\deepagents-oss-deploy
 ```
 
 Then apply it:
@@ -386,7 +386,7 @@ force a new A2A credential (remember to update every registered client afterward
 | `Invalid image tag` | Use an approved OCI tag: letters, digits, `.`, `_`, `-` only. |
 | `DEEPAGENTS_MODEL must start with '<provider>:'` | The model string must match the selected provider, e.g. `openai:gpt-5.1`. |
 | An enabled agent can't be reached | Confirm the agent's MCP server is deployed, reachable at the configured URL, and that any required bearer token matches. |
-| PowerShell "running scripts is disabled" | Launch with `powershell -ExecutionPolicy Bypass -File .\spotfire-deepagents-deploy.ps1`, or set an appropriate execution policy. |
+| PowerShell "running scripts is disabled" | Launch with `powershell -ExecutionPolicy Bypass -File .\.spotfire-copilot-ecosystem-deploy.ps1`, or set an appropriate execution policy. |
 
 ---
 
