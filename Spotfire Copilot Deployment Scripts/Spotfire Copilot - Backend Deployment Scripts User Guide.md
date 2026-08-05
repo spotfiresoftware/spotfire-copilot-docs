@@ -1,9 +1,8 @@
 # Spotfire Copilot - Backend Deployment Scripts User Guide
 
-Interactive helper scripts that generate the **Spotfire Copilot backend**
-deployment configuration: the Orchestrator core plus optional Admin Console,
-RAG / Knowledge Base, Data Loader, and Agent Registry components. The scripts
-produce environment files and (for single-host installs) a `docker-compose.yml`,
+Interactive helper scripts that generate **Spotfire Copilot backend** deployment configuration 
+and optionally deploy directly. Supports Docker Compose (single-host), AWS ECS/Fargate, and 
+Azure Container Apps. The scripts produce environment files and (for single-host) a `docker-compose.yml`, 
 and can optionally chain the DeepAgents OSS generator.
 
 Two equivalent scripts are provided so you can run the generator from either platform:
@@ -16,9 +15,25 @@ Two equivalent scripts are provided so you can run the generator from either pla
 Both scripts are functionally equivalent: same prompts, same defaults, same
 generated files. Choose the one that matches your operating system.
 
-> These scripts **generate** configuration. They do not pull images, start
-> containers, or install into a cluster. You review the generated files, then run
-> `docker compose` / `helm` yourself. For full background, see the
+**Platform-specific deployment scripts** (sourced automatically for cloud deployments):
+
+| Script | Platform | Purpose |
+| --- | --- | --- |
+| `spotfire-copilot-backend-deploy-ecs.sh` | AWS ECS/Fargate | Phase 3-4: AWS-specific config + deployment |
+| `spotfire-copilot-backend-deploy-ecs.ps1` | AWS ECS/Fargate | Phase 3-4: AWS-specific config + deployment (PowerShell) |
+| `spotfire-copilot-backend-deploy-aca.sh` | Azure Container Apps | Phase 3-4: Azure-specific config + deployment |
+| `spotfire-copilot-backend-deploy-aca.ps1` | Azure Container Apps | Phase 3-4: Azure-specific config + deployment (PowerShell) |
+
+> **Note:** Platform scripts handle Phase 3-4 only (AWS ECS/Azure-specific questions and deployment). 
+> All Phase 1-2 variables (credentials, database, LLM provider, optional components) are collected by 
+> the main script and passed to platform scripts via environment export. You normally run only the main 
+> script (`spotfire-copilot-backend-deploy.sh` or `.ps1`) — platform scripts are sourced automatically 
+> when needed.
+
+> **Generation vs. Deployment:**
+> - **Docker Compose**: Script generates `docker-compose.yml` + env files; you run `docker compose up -d`.
+> - **AWS ECS / Azure ACA**: Script can deploy directly (if CLI is available) or generate deployment scripts for later use.
+> - For full background, see the
 > [Backend Setup Installation Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md).
 
 ---
@@ -53,10 +68,11 @@ generated files. Choose the one that matches your operating system.
 ## 1. What the scripts do
 
 The generator interviews you about a Spotfire Copilot backend deployment and
-writes ready-to-use configuration. Depending on your answers it can:
+writes ready-to-use configuration. For cloud deployments (AWS ECS, Azure Container Apps), 
+it can also execute the deployment directly. Depending on your answers it can:
 
-- Select the deployment target (single-host Docker Compose, a managed cloud
-  container platform, or Kubernetes/Helm).
+- Select the deployment target: **Docker Compose** (single-host), **AWS ECS/Fargate**, 
+  or **Azure Container Apps**.
 - Pin approved container image tags for the Orchestrator, Admin Console, Data
   Loader, and Agent Registry.
 - Wire up **credentials** by running the official `generate_credentials.py`, or by
@@ -67,8 +83,10 @@ writes ready-to-use configuration. Depending on your answers it can:
 - Optionally enable **Admin Console**, **RAG / Knowledge Base** (embeddings +
   vector DB), **Data Loader**, and **Agent Registry**.
 - Optionally chain the **DeepAgents OSS** generator for the agent server.
-- Generate a `docker-compose.yml` (single-host) and validate it with
+- Generate a `docker-compose.yml` (single-host Docker Compose) and validate it with
   `docker compose config`.
+- **For AWS ECS / Azure Container Apps**: Optionally deploy immediately using local 
+  CLI, or generate deployment scripts for AWS CloudShell / Azure CloudShell.
 
 The default backend image tag is `2.3.4` (override with `--image-tag` /
 `-ImageTag` or the `DEFAULT_IMAGE_TAG` environment variable).
@@ -92,12 +110,22 @@ The default backend image tag is `2.3.4` (override with `--image-tag` /
 - Python 3 with `bcrypt` (used by `generate_credentials.py`). The script can
   install/check prerequisites with `--install-prereqs`.
 - Docker Engine + Docker Compose V2 for single-host deploys and Compose validation.
+- *Optional (for immediate cloud deployment):*
+  - **AWS CLI** (configured with credentials) for direct AWS ECS/Fargate deployment.
+  - **Azure CLI** (authenticated) for direct Azure Container Apps deployment.
 
 **Windows (`spotfire-copilot-backend-deploy.ps1`)**
 
 - Windows PowerShell 5.1 or newer.
 - Python 3 with `bcrypt` for credential generation.
 - Docker Desktop (Compose V2) to run single-host deployments.
+- *Optional (for immediate cloud deployment):*
+  - **AWS CLI** (configured with credentials) for direct AWS ECS/Fargate deployment.
+  - **Azure CLI** (authenticated) for direct Azure Container Apps deployment.
+
+> **Note on cloud CLIs:** If AWS/Azure CLI is not installed, the script generates a 
+> deployment script (e.g., `awscli-deploy.sh` or `azurecli-deploy.sh`) that you can 
+> run later from AWS/Azure CloudShell or after installing the CLI locally.
 
 **Credential keys** expected in `copilot-generated-values.txt`:
 `SECRET_KEY`, `HASHED_ADMIN_PASSWORD`, `OAUTH2_CLIENT_ID`, `OAUTH2_CLIENT_SECRET_HASH`.
@@ -212,17 +240,30 @@ the volume.
 
 ### 7.1 Deployment target
 
-Choose where you are deploying:
+After answering all Phase 1-2 questions (credentials, database, LLM provider, optional components), the script asks:
 
-1. **Linux VM / Docker Compose** — full generation plus a `docker-compose.yml`.
-2. **Azure Container Apps**
-3. **AWS ECS / Fargate**
-4. **GCP Cloud Run**
-5. **Kubernetes (AKS / EKS / GKE)** — generates a Helm-oriented environment bundle.
-6. **Other cloud / customer-managed container platform**
+```
+Where do you want to deploy Spotfire Copilot?
+  1) Docker Compose (single-host)
+  2) AWS ECS / Fargate
+  3) Azure Container Apps
+```
 
-Targets other than the Linux VM produce a portable "master env" / cloud shortlist
-(or a Kubernetes bundle) rather than a Compose file, then exit.
+**Docker Compose (single-host)**
+- Generates `.env`, `.env.orchestrator`, and a `docker-compose.yml` file.
+- Script exits; you run `docker compose up -d` locally.
+
+**AWS ECS / Fargate**
+- The main script hands off to the ECS-specific script (`spotfire-copilot-backend-deploy-ecs.sh`).
+- Asks: "Deploy now?" — YES sources the ECS script to continue (Phase 3-4), NO provides instructions for deferred deployment.
+- ECS script collects AWS-specific inputs (cluster, subnets, security group, etc.) and deploys via AWS CLI or generates a CloudShell script.
+
+**Azure Container Apps**
+- The main script hands off to the ACA-specific script (`spotfire-copilot-backend-deploy-aca.sh`).
+- Asks: "Deploy now?" — YES sources the ACA script to continue (Phase 3-4), NO provides instructions for deferred deployment.
+- ACA script collects Azure-specific inputs (resource group, app name, etc.) and deploys via Azure CLI or generates an Azure CloudShell script.
+
+> **Note:** The main script is the **single entry point** for Phase 1-2 (credentials, database, LLM, components). Platform scripts (`ecs` and `aca`) handle Phase 3-4 (platform-specific inputs and deployment) only. All Phase 1-2 variables are exported so platform scripts don't duplicate questions.
 
 ### 7.2 Core setup
 
@@ -325,7 +366,9 @@ provider, Data Loader, Agent Registry). See
 
 ## 9. Deploying the generated configuration
 
-For a single-host (Linux VM) deployment:
+### 9.1 Docker Compose (single-host)
+
+After the script completes:
 
 ```bash
 cd <output-dir>            # e.g. ./spotfire-copilot/2.3.4/backend
@@ -334,10 +377,48 @@ docker compose config > /tmp/copilot-compose-rendered.yml   # optional sanity ch
 docker compose up -d --no-build
 ```
 
-For cloud or Kubernetes targets, use the generated master-env / Helm bundle with your
-platform's deployment process. Refer to the
+### 9.2 AWS ECS / Fargate
+
+**Option A: Immediate deployment**
+
+After answering all questions, the main script asks "Deploy now?". If you answer YES:
+- The main script sources the ECS-specific script (`spotfire-copilot-backend-deploy-ecs.sh`).
+- The ECS script collects AWS inputs (cluster, subnets, security group, etc.).
+- If AWS CLI is installed and configured locally, it deploys directly.
+- Otherwise, it generates `awscli-deploy.sh` for AWS CloudShell.
+
+**Option B: Deferred deployment**
+
+If you answer NO, the script saves a template and prints instructions:
+
+```bash
+./spotfire-copilot-backend-deploy-ecs.sh --dir /path/to/backend/folder
+```
+
+For more details, see the
+[Backend Setup Installation Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md).
+
+### 9.3 Azure Container Apps
+
+**Option A: Immediate deployment**
+
+After answering all questions, the main script asks "Deploy now?". If you answer YES:
+- The main script sources the ACA-specific script (`spotfire-copilot-backend-deploy-aca.sh`).
+- The ACA script collects Azure inputs (resource group, app name, etc.).
+- If Azure CLI is installed and configured locally, it deploys directly.
+- Otherwise, it generates `azurecli-deploy.sh` for Azure CloudShell.
+
+**Option B: Deferred deployment**
+
+If you answer NO, the script saves a template and prints instructions:
+
+```bash
+./spotfire-copilot-backend-deploy-aca.sh --dir /path/to/backend/folder
+```
+
+For more details, see the
 [Backend Setup Installation Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md)
-for platform specifics, and the
+and the
 [Frontend Setup Guide](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md)
 for the client extension.
 
