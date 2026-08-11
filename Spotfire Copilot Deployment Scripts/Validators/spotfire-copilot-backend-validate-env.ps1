@@ -1,5 +1,5 @@
-#############################################################################
-#  Spotfire Copilot — Backend Environment Validation Script
+﻿#############################################################################
+#  Spotfire Copilot - Backend Environment Validation Script
 #  Version: 2.3.x
 #
 #  Purpose: Validates environment variables for Orchestrator and Admin Console
@@ -48,17 +48,17 @@ function Write-Info {
 
 function Write-Success {
     param([string]$Message)
-    Write-Host "[✓] $Message" -ForegroundColor Green
+    Write-Host "[OK] $Message" -ForegroundColor Green
 }
 
 function Write-Warning {
     param([string]$Message)
-    Write-Host "[⚠] $Message" -ForegroundColor Yellow
+    Write-Host "[!] $Message" -ForegroundColor Yellow
 }
 
 function Write-Error {
     param([string]$Message)
-    Write-Host "[✗] $Message" -ForegroundColor Red
+    Write-Host "[X] $Message" -ForegroundColor Red
 }
 
 function Read-Choice {
@@ -74,6 +74,173 @@ function Read-Choice {
         }
         Write-Host "Invalid choice. Please enter a number between 1 and $MaxChoice"
     } while ($true)
+}
+
+##############################################################################
+# Phase 0: CLI Preflight - install, auth and connectivity check
+##############################################################################
+
+function Get-OSKind {
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        if ($IsMacOS) { return "macos" }
+        if ($IsLinux) { return "linux" }
+        return "windows"
+    }
+    return "windows"  # Windows PowerShell 5.1 is Windows-only
+}
+
+function Preflight-CheckPrereqs {
+    # PowerShell parses JSON natively (ConvertFrom-Json), so no jq is required.
+    if ($PSVersionTable.PSVersion.Major -lt 5) {
+        Write-Error "Windows PowerShell 5.1 or later is required."
+        Write-Host ""
+        Write-Host "Install it, then re-run this validator:"
+        Write-Host "  https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell"
+        Write-Host ""
+        exit 1
+    }
+    Write-Success "PowerShell $($PSVersionTable.PSVersion) found (JSON parsing built-in, no jq needed)."
+}
+
+function Preflight-CheckCli {
+    Write-Host ""
+    Write-Info "Phase 0: CLI Preflight Check"
+    Write-Host ""
+
+    Preflight-CheckPrereqs
+
+    if ($script:CloudPlatform -eq "aws") {
+        Preflight-CheckAws
+    } else {
+        Preflight-CheckAzure
+    }
+}
+
+function Preflight-CheckAws {
+    # 1) Is the AWS CLI installed?
+    if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
+        Write-Error "AWS CLI is not installed."
+        Write-Host ""
+        Write-Host "Install it, then re-run this validator:"
+        switch (Get-OSKind) {
+            "macos" { Write-Host "  brew install awscli" }
+            "linux" { Write-Host "  curl 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o awscliv2.zip; unzip awscliv2.zip; sudo ./aws/install" }
+            default {
+                Write-Host "  winget install -e --id Amazon.AWSCLI"
+                Write-Host "  # or download and run the MSI: https://awscli.amazonaws.com/AWSCLIV2.msi"
+            }
+        }
+        Write-Host "  Docs: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+        Write-Host ""
+        Write-Host "No local CLI? Use the AWS CloudShell export fallback (see Validators/README.md)."
+        exit 1
+    }
+    $awsVersion = (aws --version 2>&1 | Select-Object -First 1)
+    Write-Success "AWS CLI found: $awsVersion"
+
+    # 2) Is it configured / authenticated?
+    Write-Host ""
+    Write-Info "Verifying AWS credentials (aws sts get-caller-identity)..."
+    $caller = aws sts get-caller-identity --query 'Arn' --output text 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "AWS CLI is installed but not configured, or the credentials are invalid/expired."
+        Write-Host ""
+        Write-Host "Configure it, then re-run this validator:"
+        Write-Host "  aws configure                 # static access key + secret + default region"
+        Write-Host "  # or use SSO:"
+        Write-Host "  aws configure sso"
+        Write-Host "  # or set temporary credentials in this session:"
+        Write-Host "  `$env:AWS_ACCESS_KEY_ID='...'; `$env:AWS_SECRET_ACCESS_KEY='...'; `$env:AWS_SESSION_TOKEN='...'; `$env:AWS_DEFAULT_REGION='...'"
+        Write-Host ""
+        Write-Host "Detail: $caller"
+        exit 1
+    }
+    Write-Success "Authenticated as: $caller"
+
+    # 3) Prove connectivity to ECS by listing clusters
+    Write-Host ""
+    Write-Info "Checking ECS connectivity (aws ecs list-clusters)..."
+    $clusters = aws ecs list-clusters --query 'clusterArns' --output text 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Could not list ECS clusters. Check IAM permission 'ecs:ListClusters' and your region."
+        Write-Host "Detail: $clusters"
+        exit 1
+    }
+    if ([string]::IsNullOrWhiteSpace($clusters)) {
+        Write-Warning "No ECS clusters are visible with these credentials/region."
+        Write-Warning "Confirm you are pointed at the correct AWS account and region before continuing."
+    } else {
+        Write-Success "ECS reachable. Clusters visible to this identity:"
+        foreach ($c in ($clusters -split "\s+")) {
+            if ($c) { Write-Host ("    - " + ($c -replace '.*/', '')) }
+        }
+    }
+    Write-Host ""
+    Write-Success "Preflight passed - the AWS CLI can talk to your resources."
+}
+
+function Preflight-CheckAzure {
+    # 1) Is the Azure CLI installed?
+    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+        Write-Error "Azure CLI is not installed."
+        Write-Host ""
+        Write-Host "Install it, then re-run this validator:"
+        switch (Get-OSKind) {
+            "macos" { Write-Host "  brew install azure-cli" }
+            "linux" { Write-Host "  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash" }
+            default {
+                Write-Host "  winget install -e --id Microsoft.AzureCLI"
+                Write-Host "  # or download and run the MSI: https://aka.ms/installazurecliwindows"
+            }
+        }
+        Write-Host "  Docs: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli"
+        Write-Host ""
+        Write-Host "No local CLI? Use the Azure Cloud Shell export fallback (see Validators/README.md)."
+        exit 1
+    }
+    $azVersion = az version --query '\"azure-cli\"' -o tsv 2>$null
+    if (-not $azVersion) { $azVersion = "installed" }
+    Write-Success "Azure CLI found: $azVersion"
+
+    # 2) Is it logged in?
+    Write-Host ""
+    Write-Info "Verifying Azure login (az account show)..."
+    $account = az account show --query 'name' --output tsv 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Azure CLI is installed but you are not logged in (or the session expired)."
+        Write-Host ""
+        Write-Host "Log in, then re-run this validator:"
+        Write-Host "  az login                       # interactive browser login"
+        Write-Host "  # or device code (headless):"
+        Write-Host "  az login --use-device-code"
+        Write-Host "  # then select the right subscription:"
+        Write-Host "  az account set --subscription <SUBSCRIPTION_ID>"
+        Write-Host ""
+        Write-Host "Detail: $account"
+        exit 1
+    }
+    Write-Success "Logged in to subscription: $account"
+
+    # 3) Prove connectivity by listing resource groups
+    Write-Host ""
+    Write-Info "Checking connectivity (az group list)..."
+    $groups = az group list --query '[].name' --output tsv 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Could not list resource groups. Check your permissions and selected subscription."
+        Write-Host "Detail: $groups"
+        exit 1
+    }
+    if ([string]::IsNullOrWhiteSpace($groups)) {
+        Write-Warning "No resource groups are visible with this account/subscription."
+        Write-Warning "Confirm you selected the correct subscription before continuing."
+    } else {
+        Write-Success "Azure reachable. Resource groups visible to this account:"
+        foreach ($g in ($groups -split "\r?\n")) {
+            if ($g) { Write-Host ("    - " + $g) }
+        }
+    }
+    Write-Host ""
+    Write-Success "Preflight passed - the Azure CLI can talk to your resources."
 }
 
 ##############################################################################
@@ -99,10 +266,12 @@ function Phase1-DetectPlatform {
     switch ($platformChoice) {
         1 {
             $script:CloudPlatform = "aws"
+            Preflight-CheckCli
             Phase1-DetectAWSTopology
         }
         2 {
             $script:CloudPlatform = "azure"
+            Preflight-CheckCli
             Phase1-DetectAzureTopology
         }
     }
@@ -125,13 +294,15 @@ function Phase1-DetectAWSTopology {
         1 {
             $taskDef = Read-Host "Enter task definition name (e.g., spotfire-copilot-services)"
             $script:AWSTaskDefinitions = @($taskDef)
+            $script:AWSTaskRoles = @("both")
             Write-Info "Task definition: $taskDef (will validate both orchestrator and admin-console containers)"
         }
         2 {
             $taskOrch = Read-Host "Enter Orchestrator task definition name"
             $taskAdmin = Read-Host "Enter Admin Console task definition name"
             $script:AWSTaskDefinitions = @($taskOrch, $taskAdmin)
-            Write-Info "Task definitions: $taskOrch, $taskAdmin"
+            $script:AWSTaskRoles = @("orchestrator", "admin")
+            Write-Info "Task definitions: $taskOrch (orchestrator), $taskAdmin (admin-console)"
         }
     }
 }
@@ -153,13 +324,15 @@ function Phase1-DetectAzureTopology {
         1 {
             $appName = Read-Host "Enter Container App name (e.g., spotfire-copilot-services)"
             $script:AzureContainerApps = @($appName)
+            $script:AzureAppRoles = @("both")
             Write-Info "Container App: $appName (will validate both services)"
         }
         2 {
             $appOrch = Read-Host "Enter Orchestrator Container App name"
             $appAdmin = Read-Host "Enter Admin Console Container App name"
             $script:AzureContainerApps = @($appOrch, $appAdmin)
-            Write-Info "Container Apps: $appOrch, $appAdmin"
+            $script:AzureAppRoles = @("orchestrator", "admin")
+            Write-Info "Container Apps: $appOrch (orchestrator), $appAdmin (admin-console)"
         }
     }
 }
@@ -360,28 +533,19 @@ function Build-ValidationSchemas {
 function Validate-AWSECS {
     Write-Info "Validating AWS ECS environment..."
     Write-Host ""
-    
-    # Check if AWS CLI is installed
-    if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
-        Write-Error "AWS CLI not found. Please install it or use manual import option."
-        Write-Host ""
-        Write-Host "Option 1: Install AWS CLI"
-        Write-Host "  https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
-        Write-Host ""
-        Write-Host "Option 2: Export from CloudShell and validate locally"
-        Write-Host "  aws ecs describe-task-definition --cluster $AWSCluster --task-definition TASK_NAME --query taskDefinition.containerDefinitions[0].[environment,secrets] > export.json"
-        Write-Host "  Then re-run with: .\spotfire-copilot-validate.ps1 -Import export.json"
-        exit 1
-    }
-    
-    # Validate each task definition
-    foreach ($taskDef in $script:AWSTaskDefinitions) {
-        Validate-AWSTaskDefinition $taskDef
+    # CLI install/auth/connectivity already verified in Phase 0 preflight.
+
+    # Validate each task definition (schema bound to entry order via AWSTaskRoles)
+    for ($i = 0; $i -lt $script:AWSTaskDefinitions.Count; $i++) {
+        Validate-AWSTaskDefinition $script:AWSTaskDefinitions[$i] $script:AWSTaskRoles[$i]
     }
 }
 
 function Validate-AWSTaskDefinition {
-    param([string]$TaskDef)
+    param(
+        [string]$TaskDef,
+        [string]$Role
+    )
     
     Write-Info "Fetching task definition: $TaskDef"
     
@@ -398,22 +562,39 @@ function Validate-AWSTaskDefinition {
         return
     }
     
-    # Validate each container
-    foreach ($container in $taskJson) {
-        if ($container.name -match "orchestrator|admin") {
-            Validate-ContainerEnv -ContainerName $container.name -Container $container
+    if ($Role -eq "both") {
+        # All-in-one task definition: identify each service container by name
+        foreach ($container in $taskJson) {
+            if ($container.name -match "orchestrator") {
+                Validate-ContainerEnv -ContainerName $container.name -Container $container -Role "orchestrator"
+            }
+            elseif ($container.name -match "admin") {
+                Validate-ContainerEnv -ContainerName $container.name -Container $container -Role "admin"
+            }
         }
+    }
+    else {
+        # Separate task definition: schema is bound to $Role (entry order), not the container name
+        $target = $taskJson | Where-Object { $_.name -match $Role } | Select-Object -First 1
+        if (-not $target) {
+            $target = $taskJson | Select-Object -First 1
+            if ($taskJson.Count -gt 1) {
+                Write-Warning "Task definition '$TaskDef' has $($taskJson.Count) containers; none match '$Role'. Validating first container ('$($target.name)') against the $Role schema."
+            }
+        }
+        Validate-ContainerEnv -ContainerName $target.name -Container $target -Role $Role
     }
 }
 
 function Validate-ContainerEnv {
     param(
         [string]$ContainerName,
-        [object]$Container
+        [object]$Container,
+        [string]$Role
     )
     
     Write-Host ""
-    Write-Info "Validating container: $ContainerName"
+    Write-Info "Validating container: $ContainerName (schema: $Role)"
     
     $envVarNames = @()
     if ($Container.environment) {
@@ -425,8 +606,8 @@ function Validate-ContainerEnv {
         $secretNames = $Container.secrets | ForEach-Object { $_.name }
     }
     
-    # Determine which schema to use
-    $varsToCheck = if ($ContainerName -match "admin") {
+    # Determine which schema to use (bound to role, not container name)
+    $varsToCheck = if ($Role -eq "admin") {
         $script:AdminConsoleVars
     }
     else {
@@ -436,13 +617,13 @@ function Validate-ContainerEnv {
     # Check required vars
     foreach ($var in $varsToCheck) {
         if ($var -in $envVarNames) {
-            Write-Success "$var — present"
+            Write-Success "$var - present"
         }
         elseif ($var -in $secretNames) {
-            Write-Success "$var — present (secret ref)"
+            Write-Success "$var - present (secret ref)"
         }
         else {
-            Write-Error "$var — MISSING [REQUIRED]"
+            Write-Error "$var - MISSING [REQUIRED]"
             $script:ValidationErrors++
         }
     }
@@ -463,11 +644,11 @@ function Validate-ContainerEnv {
     foreach ($var in ($envVarNames + $secretNames)) {
         if ($var -in $allLLMVars) {
             if ($script:LLMProvider -ne "openai" -and $var -eq "OPENAI_API_KEY") {
-                Write-Warning "$var — orphaned (you're using $($script:LLMProvider), not OpenAI)"
+                Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not OpenAI)"
                 $script:ValidationWarnings++
             }
             elseif ($script:LLMProvider -ne "azure_openai" -and $var -eq "AZURE_OPENAI_ENDPOINT") {
-                Write-Warning "$var — orphaned (you're using $($script:LLMProvider), not Azure OpenAI)"
+                Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not Azure OpenAI)"
                 $script:ValidationWarnings++
             }
         }
@@ -481,28 +662,19 @@ function Validate-ContainerEnv {
 function Validate-AzureACA {
     Write-Info "Validating Azure Container Apps environment..."
     Write-Host ""
-    
-    # Check if Azure CLI is installed
-    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
-        Write-Error "Azure CLI not found. Please install it or use manual import option."
-        Write-Host ""
-        Write-Host "Option 1: Install Azure CLI"
-        Write-Host "  https://learn.microsoft.com/en-us/cli/azure/install-azure-cli"
-        Write-Host ""
-        Write-Host "Option 2: Export from Azure Portal and validate locally"
-        Write-Host "  az containerapp show --resource-group $AzureResourceGroup --name APP_NAME --output json > export.json"
-        Write-Host "  Then re-run with: .\spotfire-copilot-validate.ps1 -Import export.json"
-        exit 1
-    }
-    
-    # Validate each container app
-    foreach ($appName in $script:AzureContainerApps) {
-        Validate-AzureContainerApp $appName
+    # CLI install/auth/connectivity already verified in Phase 0 preflight.
+
+    # Validate each container app (schema bound to entry order via AzureAppRoles)
+    for ($i = 0; $i -lt $script:AzureContainerApps.Count; $i++) {
+        Validate-AzureContainerApp $script:AzureContainerApps[$i] $script:AzureAppRoles[$i]
     }
 }
 
 function Validate-AzureContainerApp {
-    param([string]$AppName)
+    param(
+        [string]$AppName,
+        [string]$Role
+    )
     
     Write-Info "Fetching Container App: $AppName"
     
@@ -517,11 +689,28 @@ function Validate-AzureContainerApp {
         return
     }
     
-    # Validate each container
-    foreach ($container in $appJson.properties.template.containers) {
-        if ($container.name -match "orchestrator|admin") {
-            Validate-ACAContainerEnv -AppName $AppName -ContainerName $container.name -Container $container
+    if ($Role -eq "both") {
+        # All-in-one Container App: identify each service container by name
+        foreach ($container in $appJson.properties.template.containers) {
+            if ($container.name -match "orchestrator") {
+                Validate-ACAContainerEnv -AppName $AppName -ContainerName $container.name -Container $container -Role "orchestrator"
+            }
+            elseif ($container.name -match "admin") {
+                Validate-ACAContainerEnv -AppName $AppName -ContainerName $container.name -Container $container -Role "admin"
+            }
         }
+    }
+    else {
+        # Separate Container App: schema is bound to $Role (entry order), not the container name
+        $containers = @($appJson.properties.template.containers)
+        $target = $containers | Where-Object { $_.name -match $Role } | Select-Object -First 1
+        if (-not $target) {
+            $target = $containers | Select-Object -First 1
+            if ($containers.Count -gt 1) {
+                Write-Warning "Container App '$AppName' has $($containers.Count) containers; none match '$Role'. Validating first container ('$($target.name)') against the $Role schema."
+            }
+        }
+        Validate-ACAContainerEnv -AppName $AppName -ContainerName $target.name -Container $target -Role $Role
     }
 }
 
@@ -529,19 +718,20 @@ function Validate-ACAContainerEnv {
     param(
         [string]$AppName,
         [string]$ContainerName,
-        [object]$Container
+        [object]$Container,
+        [string]$Role
     )
     
     Write-Host ""
-    Write-Info "Validating Container App: $AppName, Container: $ContainerName"
+    Write-Info "Validating Container App: $AppName, Container: $ContainerName (schema: $Role)"
     
     $envVarNames = @()
     if ($Container.env) {
         $envVarNames = $Container.env | ForEach-Object { $_.name }
     }
     
-    # Determine which schema to use
-    $varsToCheck = if ($ContainerName -match "admin") {
+    # Determine which schema to use (bound to role, not container name)
+    $varsToCheck = if ($Role -eq "admin") {
         $script:AdminConsoleVars
     }
     else {
@@ -551,10 +741,10 @@ function Validate-ACAContainerEnv {
     # Check required vars
     foreach ($var in $varsToCheck) {
         if ($var -in $envVarNames) {
-            Write-Success "$var — present"
+            Write-Success "$var - present"
         }
         else {
-            Write-Error "$var — MISSING [REQUIRED]"
+            Write-Error "$var - MISSING [REQUIRED]"
             $script:ValidationErrors++
         }
     }
@@ -575,11 +765,11 @@ function Validate-ACAContainerEnv {
     foreach ($var in $envVarNames) {
         if ($var -in $allLLMVars) {
             if ($script:LLMProvider -ne "openai" -and $var -eq "OPENAI_API_KEY") {
-                Write-Warning "$var — orphaned (you're using $($script:LLMProvider), not OpenAI)"
+                Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not OpenAI)"
                 $script:ValidationWarnings++
             }
             elseif ($script:LLMProvider -ne "azure_openai" -and $var -eq "AZURE_OPENAI_ENDPOINT") {
-                Write-Warning "$var — orphaned (you're using $($script:LLMProvider), not Azure OpenAI)"
+                Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not Azure OpenAI)"
                 $script:ValidationWarnings++
             }
         }
@@ -623,7 +813,7 @@ Summary:
   Errors:   $($script:ValidationErrors)
   Warnings: $($script:ValidationWarnings)
 
-Status: $(if ($script:ValidationErrors -eq 0) { '✓ VALIDATION PASSED' } else { '✗ VALIDATION FAILED' })
+Status: $(if ($script:ValidationErrors -eq 0) { 'OK VALIDATION PASSED' } else { 'X VALIDATION FAILED' })
 
 ========================================================================
 "@

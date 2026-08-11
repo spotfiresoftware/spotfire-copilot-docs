@@ -62,6 +62,165 @@ VALIDATION_ERRORS=0
 VALIDATION_WARNINGS=0
 
 ##############################################################################
+# Phase 0: CLI Preflight — install, auth & connectivity check
+##############################################################################
+
+detect_os() {
+    case "$(uname -s)" in
+        Darwin)               echo "macos" ;;
+        Linux)                echo "linux" ;;
+        MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+        *)                    echo "unknown" ;;
+    esac
+}
+
+preflight_check_prereqs() {
+    # jq is required to parse the JSON returned by the cloud CLI
+    if ! command -v jq &> /dev/null; then
+        error "jq is not installed (required to parse task definition / container app JSON)."
+        echo ""
+        echo "Install it, then re-run this validator:"
+        case "$(detect_os)" in
+            macos) echo "  brew install jq" ;;
+            linux) echo "  sudo apt-get install -y jq     # Debian/Ubuntu"
+                   echo "  sudo dnf install -y jq         # Fedora/RHEL" ;;
+            *)     echo "  https://jqlang.github.io/jq/download/" ;;
+        esac
+        echo ""
+        exit 1
+    fi
+    success "jq found: $(jq --version 2>&1)"
+}
+
+preflight_check_cli() {
+    echo ""
+    info "Phase 0: CLI Preflight Check"
+    echo ""
+
+    preflight_check_prereqs
+
+    if [[ "$CLOUD_PLATFORM" == "aws" ]]; then
+        preflight_check_aws
+    else
+        preflight_check_azure
+    fi
+}
+
+preflight_check_aws() {
+    # 1) Is the AWS CLI installed?
+    if ! command -v aws &> /dev/null; then
+        error "AWS CLI is not installed."
+        echo ""
+        echo "Install it, then re-run this validator:"
+        case "$(detect_os)" in
+            macos) echo "  brew install awscli" ;;
+            linux) echo "  curl 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o awscliv2.zip && unzip awscliv2.zip && sudo ./aws/install" ;;
+            *)     echo "  Download and run: https://awscli.amazonaws.com/AWSCLIV2.msi" ;;
+        esac
+        echo "  Docs: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+        echo ""
+        echo "No local CLI? Use the AWS CloudShell export fallback (see Validators/README.md)."
+        exit 1
+    fi
+    success "AWS CLI found: $(aws --version 2>&1 | head -n1)"
+
+    # 2) Is it configured / authenticated?
+    echo ""
+    info "Verifying AWS credentials (aws sts get-caller-identity)..."
+    local caller
+    if ! caller=$(aws sts get-caller-identity --query 'Arn' --output text 2>&1); then
+        error "AWS CLI is installed but not configured, or the credentials are invalid/expired."
+        echo ""
+        echo "Configure it, then re-run this validator:"
+        echo "  aws configure                 # static access key + secret + default region"
+        echo "  # or use SSO:"
+        echo "  aws configure sso"
+        echo "  # or export temporary credentials:"
+        echo "  export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_SESSION_TOKEN=... AWS_DEFAULT_REGION=..."
+        echo ""
+        echo "Detail: $caller"
+        exit 1
+    fi
+    success "Authenticated as: $caller"
+
+    # 3) Prove connectivity to ECS by listing clusters
+    echo ""
+    info "Checking ECS connectivity (aws ecs list-clusters)..."
+    local clusters
+    if ! clusters=$(aws ecs list-clusters --query 'clusterArns' --output text 2>&1); then
+        error "Could not list ECS clusters. Check IAM permission 'ecs:ListClusters' and your region."
+        echo "Detail: $clusters"
+        exit 1
+    fi
+    if [[ -z "$clusters" ]]; then
+        warn "No ECS clusters are visible with these credentials/region."
+        warn "Confirm you are pointed at the correct AWS account and region before continuing."
+    else
+        success "ECS reachable. Clusters visible to this identity:"
+        echo "$clusters" | tr '\t' '\n' | sed 's#.*/##; s/^/    • /'
+    fi
+    echo ""
+    success "Preflight passed — the AWS CLI can talk to your resources."
+}
+
+preflight_check_azure() {
+    # 1) Is the Azure CLI installed?
+    if ! command -v az &> /dev/null; then
+        error "Azure CLI is not installed."
+        echo ""
+        echo "Install it, then re-run this validator:"
+        case "$(detect_os)" in
+            macos) echo "  brew install azure-cli" ;;
+            linux) echo "  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash" ;;
+            *)     echo "  Download and run: https://aka.ms/installazurecliwindows" ;;
+        esac
+        echo "  Docs: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli"
+        echo ""
+        echo "No local CLI? Use the Azure Cloud Shell export fallback (see Validators/README.md)."
+        exit 1
+    fi
+    success "Azure CLI found: $(az version --query '\"azure-cli\"' -o tsv 2>/dev/null || echo 'installed')"
+
+    # 2) Is it logged in?
+    echo ""
+    info "Verifying Azure login (az account show)..."
+    local account
+    if ! account=$(az account show --query 'name' --output tsv 2>&1); then
+        error "Azure CLI is installed but you are not logged in (or the session expired)."
+        echo ""
+        echo "Log in, then re-run this validator:"
+        echo "  az login                       # interactive browser login"
+        echo "  # or device code (headless):"
+        echo "  az login --use-device-code"
+        echo "  # then select the right subscription:"
+        echo "  az account set --subscription <SUBSCRIPTION_ID>"
+        echo ""
+        echo "Detail: $account"
+        exit 1
+    fi
+    success "Logged in to subscription: $account"
+
+    # 3) Prove connectivity by listing resource groups
+    echo ""
+    info "Checking connectivity (az group list)..."
+    local groups
+    if ! groups=$(az group list --query '[].name' --output tsv 2>&1); then
+        error "Could not list resource groups. Check your permissions and selected subscription."
+        echo "Detail: $groups"
+        exit 1
+    fi
+    if [[ -z "$groups" ]]; then
+        warn "No resource groups are visible with this account/subscription."
+        warn "Confirm you selected the correct subscription before continuing."
+    else
+        success "Azure reachable. Resource groups visible to this account:"
+        echo "$groups" | sed 's/^/    • /'
+    fi
+    echo ""
+    success "Preflight passed — the Azure CLI can talk to your resources."
+}
+
+##############################################################################
 # Phase 1: Platform & Topology Detection
 ##############################################################################
 
@@ -83,10 +242,12 @@ phase1_detect_platform() {
     case "$platform_choice" in
         1)
             CLOUD_PLATFORM="aws"
+            preflight_check_cli
             phase1_detect_aws_topology
             ;;
         2)
             CLOUD_PLATFORM="azure"
+            preflight_check_cli
             phase1_detect_azure_topology
             ;;
         *)
@@ -112,13 +273,15 @@ phase1_detect_aws_topology() {
         1)
             read -p "Enter task definition name (e.g., spotfire-copilot-services): " task_def
             AWS_TASK_DEFINITIONS=("$task_def")
+            AWS_TASK_ROLES=("both")
             info "Task definition: $task_def (will validate both orchestrator and admin-console containers)"
             ;;
         2)
             read -p "Enter Orchestrator task definition name: " task_orch
             read -p "Enter Admin Console task definition name: " task_admin
             AWS_TASK_DEFINITIONS=("$task_orch" "$task_admin")
-            info "Task definitions: $task_orch, $task_admin"
+            AWS_TASK_ROLES=("orchestrator" "admin")
+            info "Task definitions: $task_orch (orchestrator), $task_admin (admin-console)"
             ;;
         *)
             error "Invalid choice. Exiting."
@@ -143,13 +306,15 @@ phase1_detect_azure_topology() {
         1)
             read -p "Enter Container App name (e.g., spotfire-copilot-services): " app_name
             AZURE_CONTAINER_APPS=("$app_name")
+            AZURE_APP_ROLES=("both")
             info "Container App: $app_name (will validate both services)"
             ;;
         2)
             read -p "Enter Orchestrator Container App name: " app_orch
             read -p "Enter Admin Console Container App name: " app_admin
             AZURE_CONTAINER_APPS=("$app_orch" "$app_admin")
-            info "Container Apps: $app_orch, $app_admin"
+            AZURE_APP_ROLES=("orchestrator" "admin")
+            info "Container Apps: $app_orch (orchestrator), $app_admin (admin-console)"
             ;;
         *)
             error "Invalid choice. Exiting."
@@ -349,28 +514,17 @@ build_validation_schemas() {
 validate_aws_ecs() {
     info "Validating AWS ECS environment..."
     echo ""
-    
-    # Check if AWS CLI is installed
-    if ! command -v aws &> /dev/null; then
-        error "AWS CLI not found. Please install it or use manual import option."
-        echo ""
-        echo "Option 1: Install AWS CLI"
-        echo "  https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
-        echo ""
-        echo "Option 2: Export from CloudShell and validate locally"
-        echo "  aws ecs describe-task-definition --cluster $AWS_CLUSTER --task-definition TASK_NAME --query taskDefinition.containerDefinitions[0].[environment,secrets] > export.json"
-        echo "  Then re-run with: ./spotfire-copilot-validate.sh --import export.json"
-        exit 1
-    fi
-    
-    # Validate each task definition
-    for task_def in "${AWS_TASK_DEFINITIONS[@]}"; do
-        validate_aws_task_definition "$task_def"
+    # CLI install/auth/connectivity already verified in Phase 0 preflight.
+
+    # Validate each task definition (schema bound to entry order via AWS_TASK_ROLES)
+    for i in "${!AWS_TASK_DEFINITIONS[@]}"; do
+        validate_aws_task_definition "${AWS_TASK_DEFINITIONS[$i]}" "${AWS_TASK_ROLES[$i]}"
     done
 }
 
 validate_aws_task_definition() {
     local task_def="$1"
+    local role="$2"
     
     info "Fetching task definition: $task_def"
     
@@ -385,20 +539,38 @@ validate_aws_task_definition() {
         return 1
     }
     
-    # Extract environment and secrets from each container
-    echo "$task_json" | jq -r '.[] | .name' | while read -r container_name; do
-        if [[ "$container_name" == *"orchestrator"* ]] || [[ "$container_name" == *"admin"* ]]; then
-            validate_container_env "$container_name" "$task_json"
+    if [[ "$role" == "both" ]]; then
+        # All-in-one task definition: identify each service container by name
+        while read -r container_name; do
+            if [[ "$container_name" == *"orchestrator"* ]]; then
+                validate_container_env "$container_name" "$task_json" "orchestrator"
+            elif [[ "$container_name" == *"admin"* ]]; then
+                validate_container_env "$container_name" "$task_json" "admin"
+            fi
+        done < <(echo "$task_json" | jq -r '.[] | .name')
+    else
+        # Separate task definition: schema is bound to $role (entry order), not the container name
+        local target
+        target=$(echo "$task_json" | jq -r --arg r "$role" '.[] | select(.name | test($r; "i")) | .name' | head -n1)
+        if [[ -z "$target" ]]; then
+            local count
+            count=$(echo "$task_json" | jq 'length')
+            target=$(echo "$task_json" | jq -r '.[0].name')
+            if [[ "$count" -gt 1 ]]; then
+                warn "Task definition '$task_def' has $count containers; none match '$role'. Validating first container ('$target') against the $role schema."
+            fi
         fi
-    done
+        validate_container_env "$target" "$task_json" "$role"
+    fi
 }
 
 validate_container_env() {
     local container_name="$1"
     local task_json="$2"
+    local role="$3"
     
     echo ""
-    info "Validating container: $container_name"
+    info "Validating container: $container_name (schema: $role)"
     
     local env_vars
     env_vars=$(echo "$task_json" | jq -r ".[] | select(.name == \"$container_name\") | .environment // [] | map(.name) | .[]")
@@ -406,9 +578,9 @@ validate_container_env() {
     local secret_refs
     secret_refs=$(echo "$task_json" | jq -r ".[] | select(.name == \"$container_name\") | .secrets // [] | map(.name) | .[]")
     
-    # Determine which schema to use
+    # Determine which schema to use (bound to role, not container name)
     local vars_to_check=()
-    if [[ "$container_name" == *"admin"* ]]; then
+    if [[ "$role" == "admin" ]]; then
         vars_to_check=("${ADMIN_CONSOLE_VARS[@]}")
     else
         vars_to_check=("${ORCHESTRATOR_VARS[@]}")
@@ -464,28 +636,17 @@ validate_container_env() {
 validate_azure_aca() {
     info "Validating Azure Container Apps environment..."
     echo ""
-    
-    # Check if Azure CLI is installed
-    if ! command -v az &> /dev/null; then
-        error "Azure CLI not found. Please install it or use manual import option."
-        echo ""
-        echo "Option 1: Install Azure CLI"
-        echo "  https://learn.microsoft.com/en-us/cli/azure/install-azure-cli"
-        echo ""
-        echo "Option 2: Export from Azure Portal and validate locally"
-        echo "  az containerapp show --resource-group $AZURE_RESOURCE_GROUP --name APP_NAME --output json > export.json"
-        echo "  Then re-run with: ./spotfire-copilot-validate.sh --import export.json"
-        exit 1
-    fi
-    
-    # Validate each container app
-    for app_name in "${AZURE_CONTAINER_APPS[@]}"; do
-        validate_azure_container_app "$app_name"
+    # CLI install/auth/connectivity already verified in Phase 0 preflight.
+
+    # Validate each container app (schema bound to entry order via AZURE_APP_ROLES)
+    for i in "${!AZURE_CONTAINER_APPS[@]}"; do
+        validate_azure_container_app "${AZURE_CONTAINER_APPS[$i]}" "${AZURE_APP_ROLES[$i]}"
     done
 }
 
 validate_azure_container_app() {
     local app_name="$1"
+    local role="$2"
     
     info "Fetching Container App: $app_name"
     
@@ -498,28 +659,46 @@ validate_azure_container_app() {
         return 1
     }
     
-    # Extract environment from each container
-    echo "$app_json" | jq -r '.properties.template.containers[].name' | while read -r container_name; do
-        if [[ "$container_name" == *"orchestrator"* ]] || [[ "$container_name" == *"admin"* ]]; then
-            validate_aca_container_env "$app_name" "$container_name" "$app_json"
+    if [[ "$role" == "both" ]]; then
+        # All-in-one Container App: identify each service container by name
+        while read -r container_name; do
+            if [[ "$container_name" == *"orchestrator"* ]]; then
+                validate_aca_container_env "$app_name" "$container_name" "$app_json" "orchestrator"
+            elif [[ "$container_name" == *"admin"* ]]; then
+                validate_aca_container_env "$app_name" "$container_name" "$app_json" "admin"
+            fi
+        done < <(echo "$app_json" | jq -r '.properties.template.containers[].name')
+    else
+        # Separate Container App: schema is bound to $role (entry order), not the container name
+        local target
+        target=$(echo "$app_json" | jq -r --arg r "$role" '.properties.template.containers[] | select(.name | test($r; "i")) | .name' | head -n1)
+        if [[ -z "$target" ]]; then
+            local count
+            count=$(echo "$app_json" | jq '.properties.template.containers | length')
+            target=$(echo "$app_json" | jq -r '.properties.template.containers[0].name')
+            if [[ "$count" -gt 1 ]]; then
+                warn "Container App '$app_name' has $count containers; none match '$role'. Validating first container ('$target') against the $role schema."
+            fi
         fi
-    done
+        validate_aca_container_env "$app_name" "$target" "$app_json" "$role"
+    fi
 }
 
 validate_aca_container_env() {
     local app_name="$1"
     local container_name="$2"
     local app_json="$3"
+    local role="$4"
     
     echo ""
-    info "Validating Container App: $app_name, Container: $container_name"
+    info "Validating Container App: $app_name, Container: $container_name (schema: $role)"
     
     local env_vars
     env_vars=$(echo "$app_json" | jq -r ".properties.template.containers[] | select(.name == \"$container_name\") | .env[].name")
     
-    # Determine which schema to use
+    # Determine which schema to use (bound to role, not container name)
     local vars_to_check=()
-    if [[ "$container_name" == *"admin"* ]]; then
+    if [[ "$role" == "admin" ]]; then
         vars_to_check=("${ADMIN_CONSOLE_VARS[@]}")
     else
         vars_to_check=("${ORCHESTRATOR_VARS[@]}")

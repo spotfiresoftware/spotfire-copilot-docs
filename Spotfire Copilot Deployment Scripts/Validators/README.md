@@ -90,20 +90,53 @@ cd Validators
 Then answer the interactive prompts:
 
 1. **Platform:** AWS ECS or Azure Container Apps?
-2. **Topology:** Single or multiple task definitions / Container Apps?
-3. **Schema:** Do you have a config template from our deploy script?
+2. **Preflight (Phase 0):** The validator first checks local prerequisites (`jq` for the Bash script; PowerShell needs none), then confirms the matching CLI (AWS or Azure) is **installed**, **authenticated**, and can **reach your resources** — it lists your ECS clusters / Azure resource groups to prove connectivity. If any check fails, it prints the exact install/configure command **for your OS** and stops.
+3. **Topology:** Single or multiple task definitions / Container Apps?
+4. **Schema:** Do you have a config template from our deploy script?
    - Yes → Load LLM provider + Admin Console settings from template
    - No → Interactively select LLM provider + whether Admin Console is deployed
-4. **Validation:** Fetch env vars from live services and check against schema
-5. **Report:** Write timestamped report file to current directory
+5. **Validation:** Fetch env vars from live services and check against schema
+6. **Report:** Write timestamped report file to current directory
 
 ---
 
 ## How validators work
 
+### Phase 0: Prerequisites & CLI Preflight
+
+Immediately after you pick a platform, the validator confirms the environment is ready **before** asking for cluster/app names.
+
+First it checks local **prerequisites**:
+
+- **Bash (`.sh`):** requires `jq` for JSON parsing. If it's missing, the script prints the install command for your OS (e.g. `brew install jq` on macOS) and stops.
+- **PowerShell (`.ps1`):** parses JSON natively (`ConvertFrom-Json`), so **no `jq` is needed** — it just confirms PowerShell 5.1+.
+
+Then it runs three checks against the matching CLI. All install guidance is **OS-aware** — you only see the command for the OS you're running on (macOS `brew`, Windows `winget`/MSI, or Linux).
+
+**AWS ECS**
+
+| Check | Command run | If it fails |
+| --- | --- | --- |
+| CLI installed | `aws --version` | Prints the install command for your OS (macOS brew / Windows winget or MSI / Linux zip) and exits |
+| Authenticated | `aws sts get-caller-identity` | Prints `aws configure` / `aws configure sso` / env-var guidance and exits |
+| Can reach ECS | `aws ecs list-clusters` | Prints IAM/region guidance and exits; lists visible clusters on success |
+
+**Azure Container Apps**
+
+| Check | Command run | If it fails |
+| --- | --- | --- |
+| CLI installed | `az version` | Prints the install command for your OS (macOS brew / Windows winget or MSI / Linux) and exits |
+| Logged in | `az account show` | Prints `az login` / `az login --use-device-code` / `az account set` guidance and exits |
+| Can reach resources | `az group list` | Prints permission/subscription guidance and exits; lists visible resource groups on success |
+
+On success it prints the clusters / resource groups the identity can see, so you can confirm you are pointed at the right account and region before continuing.
+
 ### Phase 1: Platform & Topology Detection
 
-Asks which cloud platform and whether services are in a single container/task or separate ones.
+Asks which cloud platform and whether services are in a single task/Container App or separate ones:
+
+- **All-in-one** — both Orchestrator and Admin Console share one task definition / Container App. The validator picks each service container by name (`orchestrator` / `admin`).
+- **Separate (individual containers)** — you enter the Orchestrator name first, then the Admin Console name. The schema is bound to that **entry order**, not the container's name, so the audit works even if your containers use custom names.
 
 ### Phase 2: Configuration Schema
 
@@ -142,17 +175,56 @@ Writes a timestamped report file with:
 - Approved Spotfire Copilot image tags (from Spotfire Support or your platform team)
 - Deployed Orchestrator and/or Admin Console on AWS ECS/Fargate or Azure Container Apps
 
+### AWS ECS/Fargate prerequisites
+
+Before running the validator against AWS, make sure the CLI is **installed** and **configured to reach your account** (the Phase 0 preflight checks all of this and stops with guidance if anything is missing):
+
+1. **Install the AWS CLI v2** (Phase 0 prints only the line for your OS)
+   - Windows: `winget install -e --id Amazon.AWSCLI` (or the MSI: https://awscli.amazonaws.com/AWSCLIV2.msi)
+   - macOS: `brew install awscli`
+   - Linux: `curl 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o awscliv2.zip && unzip awscliv2.zip && sudo ./aws/install`
+   - Docs: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+2. **Configure credentials + default region** (any one of):
+   - `aws configure` (static access key + secret + region)
+   - `aws configure sso` (IAM Identity Center / SSO)
+   - Export `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_DEFAULT_REGION`
+3. **Verify connectivity** — these must succeed and show your cluster:
+   ```bash
+   aws sts get-caller-identity          # confirms who you are
+   aws ecs list-clusters                # must list your ECS cluster
+   ```
+4. **IAM permissions required:** `sts:GetCallerIdentity`, `ecs:ListClusters`, `ecs:DescribeTaskDefinition`.
+
+### Azure Container Apps prerequisites
+
+1. **Install the Azure CLI** (Phase 0 prints only the line for your OS)
+   - Windows: `winget install -e --id Microsoft.AzureCLI` (or the MSI: https://aka.ms/installazurecliwindows)
+   - macOS: `brew install azure-cli`
+   - Linux: `curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash`
+   - Docs: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
+2. **Log in and select the subscription:**
+   - `az login` (or `az login --use-device-code` for headless hosts)
+   - `az account set --subscription <SUBSCRIPTION_ID>`
+3. **Verify connectivity** — these must succeed and show your app:
+   ```bash
+   az account show                      # confirms subscription
+   az group list                        # must list your resource group
+   az containerapp show --resource-group <RG> --name <APP>   # confirms app access
+   ```
+4. **Permissions required:** `Reader` on the resource group (or `Microsoft.App/containerApps/read`).
+
 ### Linux / macOS (`spotfire-copilot-backend-validate-env.sh`)
 
 - Bash 4 or newer
+- `jq` (JSON parsing — the script prints the install command for your OS if it's missing)
 - AWS CLI (for AWS ECS validation) — or manually export env vars to JSON for offline validation
 - Azure CLI (for Azure Container Apps validation) — or manually export env vars to JSON for offline validation
 
 ### Windows (`spotfire-copilot-backend-validate-env.ps1`)
 
-- PowerShell 5.1 or newer
-- AWS CLI (for AWS ECS validation) — or manually export env vars to JSON for offline validation
-- Azure CLI (for Azure Container Apps validation) — or manually export env vars to JSON for offline validation
+- PowerShell 5.1 or newer (parses JSON natively — **no `jq` required**)
+- AWS CLI (for AWS ECS validation) — install via `winget install -e --id Amazon.AWSCLI`, or manually export env vars to JSON for offline validation
+- Azure CLI (for Azure Container Apps validation) — install via `winget install -e --id Microsoft.AzureCLI`, or manually export env vars to JSON for offline validation
 
 ### No-CLI scenario
 
