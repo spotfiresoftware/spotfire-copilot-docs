@@ -55,7 +55,7 @@ The validators in this folder provide an **interactive, multi-phase audit** with
 Validates environment variables for **Spotfire Copilot Orchestrator** and **Admin Console** on AWS ECS/Fargate or Azure Container Apps.
 
 **Supported platforms:**
-- AWS ECS/Fargate (single or multiple task definitions)
+- AWS ECS/Fargate — identify by ECS **service name** (resolves the running task definition) or task definition name; single or separate deployments
 - Azure Container Apps (single or multiple Container Apps)
 
 **What it checks:**
@@ -91,12 +91,14 @@ Then answer the interactive prompts:
 
 1. **Platform:** AWS ECS or Azure Container Apps?
 2. **Preflight (Phase 0):** The validator first checks local prerequisites (`jq` for the Bash script; PowerShell needs none), then confirms the matching CLI (AWS or Azure) is **installed**, **authenticated**, and can **reach your resources** — it lists your ECS clusters / Azure resource groups to prove connectivity. If any check fails, it prints the exact install/configure command **for your OS** and stops.
-3. **Topology:** Single or multiple task definitions / Container Apps?
+3. **Topology:** On AWS, identify what to validate by **ECS service name** (recommended — the validator resolves the task definition each service is actually running) or by **task definition name** directly. Then choose all-in-one or separate (orchestrator + admin-console). On Azure, enter the Container App name(s).
 4. **Schema:** Do you have a config template from our deploy script?
    - Yes → Load LLM provider + Admin Console settings from template
    - No → Interactively select LLM provider + whether Admin Console is deployed
 5. **Validation:** Fetch env vars from live services and check against schema
 6. **Report:** Write timestamped report file to current directory
+
+> **Your answers are saved.** After you finish entering the prompts, the validator writes them to `validator-answers.env` in the current directory. On the next run it offers to **resume** with those answers so you don't have to re-enter everything if you need to re-run (for example after fixing a misconfiguration). Delete the file to start fresh, or set `VALIDATOR_ANSWERS_FILE` (Bash) / `$env:VALIDATOR_ANSWERS_FILE` (PowerShell) to change its location.
 
 ---
 
@@ -137,6 +139,24 @@ Asks which cloud platform and whether services are in a single task/Container Ap
 
 - **All-in-one** — both Orchestrator and Admin Console share one task definition / Container App. The validator picks each service container by name (`orchestrator` / `admin`).
 - **Separate (individual containers)** — you enter the Orchestrator name first, then the Admin Console name. The schema is bound to that **entry order**, not the container's name, so the audit works even if your containers use custom names.
+
+**Identify by ECS service or task definition (AWS)**
+
+On AWS you first choose how to name what to validate:
+
+- **ECS service name (recommended)** — enter the service name(s) and the validator resolves the task definition each service is *currently running* via `aws ecs describe-services ... --query 'services[0].taskDefinition'`. This validates exactly what's deployed and live, so you don't have to know the revision number.
+- **Task definition name** — enter the task definition name directly (existing behaviour).
+
+Azure Container Apps are already the deployable/running unit, so on Azure you simply enter the Container App name(s) — no separate service-vs-definition choice is needed.
+
+### Resume: saved answers
+
+After you complete the prompts (Phase 1 + Phase 2), the validator writes your answers to `validator-answers.env` in the current directory (`KEY=VALUE`, `chmod 600` on Bash). On the next run it shows a summary of the saved answers and asks **"Resume with these saved answers? (y/n)"**:
+
+- **Yes** — it loads every answer, re-runs the Phase 0 CLI preflight (so connectivity is always re-checked), and goes straight to validation. Nothing is re-typed.
+- **No** — it walks the prompts normally and overwrites the file with your new answers.
+
+This means an interrupted or failed run (or one where you fixed a misconfiguration and want to re-check) never forces you to start over. The file is shared by both the Bash and PowerShell validators. Delete it to start fresh, or point `VALIDATOR_ANSWERS_FILE` / `$env:VALIDATOR_ANSWERS_FILE` elsewhere.
 
 ### Phase 2: Configuration Schema
 
@@ -297,6 +317,7 @@ Status: ✗ VALIDATION FAILED
 | `AWS CLI not found` | Install AWS CLI, or export env vars manually from CloudShell and import the JSON file locally. |
 | `Azure CLI not found` | Install Azure CLI, or export env vars manually from Azure Portal and import the JSON file locally. |
 | `Failed to fetch task definition` | Verify cluster name, region, and task definition name are correct. Check AWS IAM permissions. |
+| `Could not resolve a task definition for ECS service` | Verify the ECS service name, cluster, and region. The service must exist in that cluster and your IAM identity needs `ecs:DescribeServices`. |
 | `HASHED_ADMIN_PASSWORD — MISSING` | Ensure SECRET_KEY and HASHED_ADMIN_PASSWORD are stored in AWS Secrets Manager or Azure Key Vault, and task definition references them. |
 | `OPENAI_API_KEY — orphaned` | You selected provider X but have keys for provider Y. Remove the orphaned key or update the LLM provider. |
 | `Invalid DATABASE_URL format` | Use `postgresql://user:pass@host:port/db?sslmode=require` for sync, or `postgresql+asyncpg://...` for async. |

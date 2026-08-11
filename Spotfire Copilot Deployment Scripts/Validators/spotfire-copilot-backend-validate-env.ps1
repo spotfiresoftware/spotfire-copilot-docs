@@ -9,9 +9,10 @@
 #    .\spotfire-copilot-backend-validate-env.ps1
 #
 #  Supports:
-#    - AWS ECS/Fargate (single or multiple task definitions)
+#    - AWS ECS/Fargate (identify by ECS service name or task definition)
 #    - Azure Container Apps (single or multiple apps)
 #    - Template-based validation or interactive schema builder
+#    - Saved answers with resume (validator-answers.env)
 #    - No-CLI fallback (manual JSON import)
 #############################################################################
 
@@ -24,9 +25,12 @@ $CloudPlatform = ""
 $AWSRegion = ""
 $AWSCluster = ""
 $AWSTaskDefinitions = @()
+$AWSTaskRoles = @()
+$AWSServiceNames = @()
 $AzureResourceGroup = ""
 $AzureLocation = ""
 $AzureContainerApps = @()
+$AzureAppRoles = @()
 $HasTemplate = $false
 $TemplateFile = ""
 $LLMProvider = ""
@@ -36,6 +40,10 @@ $AdminConsoleVars = @()
 $ReportFile = ""
 $ValidationErrors = 0
 $ValidationWarnings = 0
+
+# Saved-answers file (resume support). Override with $env:VALIDATOR_ANSWERS_FILE.
+$AnswersFile = if ($env:VALIDATOR_ANSWERS_FILE) { $env:VALIDATOR_ANSWERS_FILE } else { "validator-answers.env" }
+$Resumed = $false
 
 ##############################################################################
 # Utility Functions
@@ -74,6 +82,81 @@ function Read-Choice {
         }
         Write-Host "Invalid choice. Please enter a number between 1 and $MaxChoice"
     } while ($true)
+}
+
+##############################################################################
+# Answer persistence - save/resume interactive answers
+##############################################################################
+
+function Save-Answers {
+    $lines = @(
+        "# Spotfire Copilot validator - saved answers"
+        "# Generated: $(Get-Date)"
+        "# Delete this file to start fresh, or re-run and choose 'resume' to reuse it."
+        "CLOUD_PLATFORM=$($script:CloudPlatform)"
+        "AWS_REGION=$($script:AWSRegion)"
+        "AWS_CLUSTER=$($script:AWSCluster)"
+        "AWS_TASK_DEFINITIONS=$($script:AWSTaskDefinitions -join ' ')"
+        "AWS_TASK_ROLES=$($script:AWSTaskRoles -join ' ')"
+        "AWS_SERVICE_NAMES=$($script:AWSServiceNames -join ' ')"
+        "AZURE_RESOURCE_GROUP=$($script:AzureResourceGroup)"
+        "AZURE_LOCATION=$($script:AzureLocation)"
+        "AZURE_CONTAINER_APPS=$($script:AzureContainerApps -join ' ')"
+        "AZURE_APP_ROLES=$($script:AzureAppRoles -join ' ')"
+        "LLM_PROVIDER=$($script:LLMProvider)"
+        "HAS_ADMIN_CONSOLE=$(if ($script:HasAdminConsole) { 'true' } else { 'false' })"
+        "HAS_TEMPLATE=$(if ($script:HasTemplate) { 'true' } else { 'false' })"
+        "TEMPLATE_FILE=$($script:TemplateFile)"
+    )
+    $lines | Set-Content -Path $script:AnswersFile -Encoding UTF8
+    Write-Host ""
+    Write-Success "Answers saved to $($script:AnswersFile)"
+    Write-Info "Next time, re-run the validator and choose 'resume' to skip re-entering these."
+}
+
+function Load-Answers {
+    Get-Content -Path $script:AnswersFile | ForEach-Object {
+        $line = $_
+        if ($line -match '^\s*#' -or $line -notmatch '=') { return }
+        $parts = $line -split '=', 2
+        $key = $parts[0].Trim()
+        $value = $parts[1]
+        switch ($key) {
+            'CLOUD_PLATFORM'       { $script:CloudPlatform = $value }
+            'AWS_REGION'           { $script:AWSRegion = $value }
+            'AWS_CLUSTER'          { $script:AWSCluster = $value }
+            'AWS_TASK_DEFINITIONS' { $script:AWSTaskDefinitions = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'AWS_TASK_ROLES'       { $script:AWSTaskRoles = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'AWS_SERVICE_NAMES'    { $script:AWSServiceNames = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'AZURE_RESOURCE_GROUP' { $script:AzureResourceGroup = $value }
+            'AZURE_LOCATION'       { $script:AzureLocation = $value }
+            'AZURE_CONTAINER_APPS' { $script:AzureContainerApps = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'AZURE_APP_ROLES'      { $script:AzureAppRoles = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'LLM_PROVIDER'         { $script:LLMProvider = $value }
+            'HAS_ADMIN_CONSOLE'    { $script:HasAdminConsole = ($value -match '^(?i)(true|1|yes)$') }
+            'HAS_TEMPLATE'         { $script:HasTemplate = ($value -match '^(?i)(true|1|yes)$') }
+            'TEMPLATE_FILE'        { $script:TemplateFile = $value }
+        }
+    }
+}
+
+# Resolve the task definition an ECS service is currently running.
+function Resolve-TaskDefFromService {
+    param([string]$ServiceName)
+    $td = aws ecs describe-services `
+        --cluster $script:AWSCluster `
+        --services $ServiceName `
+        --region $script:AWSRegion `
+        --query 'services[0].taskDefinition' `
+        --output text 2>$null
+    if ($td) { $td = $td.ToString().Trim() }
+    if ([string]::IsNullOrWhiteSpace($td) -or $td -eq 'None') {
+        Write-Error "Could not resolve a task definition for ECS service '$ServiceName'."
+        Write-Error "Check the service name, cluster ('$($script:AWSCluster)'), and region ('$($script:AWSRegion)')."
+        exit 1
+    }
+    Write-Info "Service '$ServiceName' -> task definition '$td'"
+    return $td
 }
 
 ##############################################################################
@@ -249,11 +332,6 @@ function Preflight-CheckAzure {
 
 function Phase1-DetectPlatform {
     Write-Host ""
-    Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host "  Spotfire Copilot Environment Validator" -ForegroundColor Cyan
-    Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host ""
-    
     Write-Info "Phase 1: Platform Detection"
     Write-Host ""
     Write-Host "Which cloud platform are you using?"
@@ -281,28 +359,57 @@ function Phase1-DetectAWSTopology {
     Write-Host ""
     $script:AWSRegion = Read-Host "Enter AWS region (e.g., us-east-1)"
     $script:AWSCluster = Read-Host "Enter ECS cluster name"
-    
+
+    Write-Host ""
+    Write-Host "How do you want to identify what to validate?"
+    Write-Host "  1) ECS service names (recommended - resolves the task definition each service is actually running)"
+    Write-Host "  2) Task definition names"
+    Write-Host ""
+    $idChoice = Read-Choice -Prompt "Enter choice (1 or 2)" -MaxChoice 2
+
     Write-Host ""
     Write-Host "How are your services deployed?"
-    Write-Host "  1) All in one task definition"
-    Write-Host "  2) Separate task definitions (orchestrator + admin-console)"
+    Write-Host "  1) All in one (both containers in a single service / task definition)"
+    Write-Host "  2) Separate (orchestrator + admin-console)"
     Write-Host ""
-    
     $topologyChoice = Read-Choice -Prompt "Enter choice (1 or 2)" -MaxChoice 2
-    
-    switch ($topologyChoice) {
-        1 {
-            $taskDef = Read-Host "Enter task definition name (e.g., spotfire-copilot-services)"
-            $script:AWSTaskDefinitions = @($taskDef)
-            $script:AWSTaskRoles = @("both")
-            Write-Info "Task definition: $taskDef (will validate both orchestrator and admin-console containers)"
+
+    if ($idChoice -eq 1) {
+        # Identify by ECS service -> resolve the running task definition
+        switch ($topologyChoice) {
+            1 {
+                $svc = Read-Host "Enter ECS service name"
+                $script:AWSServiceNames = @($svc)
+                $script:AWSTaskDefinitions = @((Resolve-TaskDefFromService -ServiceName $svc))
+                $script:AWSTaskRoles = @("both")
+                Write-Info "Service '$svc' (will validate both orchestrator and admin-console containers)"
+            }
+            2 {
+                $svcOrch = Read-Host "Enter Orchestrator ECS service name"
+                $svcAdmin = Read-Host "Enter Admin Console ECS service name"
+                $script:AWSServiceNames = @($svcOrch, $svcAdmin)
+                $script:AWSTaskDefinitions = @((Resolve-TaskDefFromService -ServiceName $svcOrch), (Resolve-TaskDefFromService -ServiceName $svcAdmin))
+                $script:AWSTaskRoles = @("orchestrator", "admin")
+                Write-Info "Services: $svcOrch (orchestrator), $svcAdmin (admin-console)"
+            }
         }
-        2 {
-            $taskOrch = Read-Host "Enter Orchestrator task definition name"
-            $taskAdmin = Read-Host "Enter Admin Console task definition name"
-            $script:AWSTaskDefinitions = @($taskOrch, $taskAdmin)
-            $script:AWSTaskRoles = @("orchestrator", "admin")
-            Write-Info "Task definitions: $taskOrch (orchestrator), $taskAdmin (admin-console)"
+    }
+    else {
+        # Identify by task definition name (direct)
+        switch ($topologyChoice) {
+            1 {
+                $taskDef = Read-Host "Enter task definition name (e.g., spotfire-copilot-services)"
+                $script:AWSTaskDefinitions = @($taskDef)
+                $script:AWSTaskRoles = @("both")
+                Write-Info "Task definition: $taskDef (will validate both orchestrator and admin-console containers)"
+            }
+            2 {
+                $taskOrch = Read-Host "Enter Orchestrator task definition name"
+                $taskAdmin = Read-Host "Enter Admin Console task definition name"
+                $script:AWSTaskDefinitions = @($taskOrch, $taskAdmin)
+                $script:AWSTaskRoles = @("orchestrator", "admin")
+                Write-Info "Task definitions: $taskOrch (orchestrator), $taskAdmin (admin-console)"
+            }
         }
     }
 }
@@ -345,18 +452,27 @@ function Phase2-TemplateOrSchema {
     Write-Host ""
     Write-Info "Phase 2: Configuration Schema"
     Write-Host ""
+    Write-Host "The validator always reads the live environment variables from your ECS task"
+    Write-Host "definition / Container App. A deploy-script template is OPTIONAL and only used to"
+    Write-Host "auto-detect your LLM provider and whether the Admin Console is deployed."
+    Write-Host ""
     Write-Host "Do you have a configuration template from our deploy script?"
-    Write-Host "  1) Yes, I have cloud-env-checklist.txt or spotfire-copilot-config.json"
-    Write-Host "  2) No, build schema interactively"
+    Write-Host "  1) Yes - auto-detect from cloud-env-checklist.txt or spotfire-copilot-config.json"
+    Write-Host "  2) No  - pick the LLM provider interactively (default)"
     Write-Host ""
     
-    $templateChoice = Read-Choice -Prompt "Enter choice (1 or 2)" -MaxChoice 2
+    $templateChoice = Read-Host "Enter choice (1 or 2) [2]"
+    if ([string]::IsNullOrWhiteSpace($templateChoice)) { $templateChoice = "2" }
     
     switch ($templateChoice) {
-        1 {
+        "1" {
             Phase2-LoadTemplate
         }
-        2 {
+        "2" {
+            Phase2-BuildSchemaInteractive
+        }
+        default {
+            Write-Warning "Unrecognized choice '$templateChoice'; building schema interactively."
             Phase2-BuildSchemaInteractive
         }
     }
@@ -364,12 +480,17 @@ function Phase2-TemplateOrSchema {
 
 function Phase2-LoadTemplate {
     Write-Host ""
-    $templatePath = Read-Host "Enter path to template file"
+    $templatePath = Read-Host "Enter path to template file (leave blank to pick the provider manually)"
+    
+    if ([string]::IsNullOrWhiteSpace($templatePath)) {
+        Write-Info "No template provided - switching to interactive provider selection."
+        Phase2-BuildSchemaInteractive
+        return
+    }
     
     if (-not (Test-Path $templatePath)) {
-        Write-Error "Template file not found: $templatePath"
-        Write-Host ""
-        Write-Info "Falling back to interactive schema builder..."
+        Write-Warning "Template file not found: $templatePath"
+        Write-Info "Switching to interactive provider selection..."
         Phase2-BuildSchemaInteractive
         return
     }
@@ -378,20 +499,34 @@ function Phase2-LoadTemplate {
     $script:TemplateFile = $templatePath
     Write-Success "Template loaded: $script:TemplateFile"
     
-    # Parse template to detect LLM provider and admin console
+    # Parse template to detect LLM provider and admin console.
+    # Primary signal: the MODEL_PLUGIN_ENTRY_POINT plugin path (emitted for every provider).
+    # Note: check azure_openai before openai (azure_openai_enhanced contains openai_enhanced).
     $templateContent = Get-Content $templatePath -Raw
     
-    if ($templateContent -match "AZURE_OPENAI_ENDPOINT") {
+    if ($templateContent -match "azure_openai_enhanced") {
         $script:LLMProvider = "azure_openai"
     }
-    elseif ($templateContent -match "OPENAI_API_KEY") {
+    elseif ($templateContent -match "openai_enhanced") {
         $script:LLMProvider = "openai"
     }
-    elseif ($templateContent -match "AWS_BEDROCK") {
+    elseif ($templateContent -match "bedrock_enhanced") {
         $script:LLMProvider = "aws_bedrock"
     }
-    elseif ($templateContent -match "VERTEX_AI") {
+    elseif ($templateContent -match "vertexai_enhanced") {
         $script:LLMProvider = "vertex_ai"
+    }
+    elseif ($templateContent -match "gemini_enhanced") {
+        $script:LLMProvider = "gemini"
+    }
+    elseif ($templateContent -match "nvidia_nim_enhanced") {
+        $script:LLMProvider = "nvidia_nim"
+    }
+    elseif ($templateContent -match "ollama_enhanced") {
+        $script:LLMProvider = "ollama"
+    }
+    elseif ($templateContent -match "AZURE_OPENAI_ENDPOINT") {
+        $script:LLMProvider = "azure_openai"
     }
     elseif ($templateContent -match "GOOGLE_API_KEY") {
         $script:LLMProvider = "gemini"
@@ -399,8 +534,11 @@ function Phase2-LoadTemplate {
     elseif ($templateContent -match "NVIDIA_API_KEY") {
         $script:LLMProvider = "nvidia_nim"
     }
-    elseif ($templateContent -match "OLLAMA") {
+    elseif ($templateContent -match "OLLAMA_BASE_URL") {
         $script:LLMProvider = "ollama"
+    }
+    elseif ($templateContent -match "OPENAI_API_KEY") {
+        $script:LLMProvider = "openai"
     }
     
     if ($templateContent -match "ADMIN_CONSOLE|admin.console") {
@@ -470,31 +608,37 @@ function Build-ValidationSchemas {
         "OAUTH2_CLIENT_ID",
         "OAUTH2_CLIENT_SECRET_HASH",
         "DATABASE_URL",
-        "DB_SSLMODE"
+        "DB_SSLMODE",
+        # Model plumbing - emitted for EVERY provider by the deploy script
+        "MODEL_PLUGIN_ENTRY_POINT",
+        "SECONDARY_MODEL_PLUGIN_ENTRY_POINT",
+        "MODEL_NAME"
     )
     
-    # Add LLM-specific vars
+    # Add LLM-specific vars (matches the deploy script's per-provider blocks)
     switch ($script:LLMProvider) {
         "azure_openai" {
             $script:OrchestratorVars += @(
-                "AZURE_OPENAI_ENDPOINT",
+                "OPENAI_API_TYPE",
                 "OPENAI_API_KEY",
+                "AZURE_OPENAI_ENDPOINT",
                 "OPENAI_API_VERSION"
             )
         }
         "openai" {
-            $script:OrchestratorVars += "OPENAI_API_KEY"
+            $script:OrchestratorVars += @(
+                "OPENAI_API_TYPE",
+                "OPENAI_API_KEY"
+            )
         }
         "aws_bedrock" {
-            $script:OrchestratorVars += @(
-                "AWS_REGION",
-                "MODEL_NAME"
-            )
+            $script:OrchestratorVars += "AWS_REGION"
         }
         "vertex_ai" {
             $script:OrchestratorVars += @(
-                "GOOGLE_PROJECT_ID",
-                "GOOGLE_REGION"
+                "PROJECT_ID",
+                "LOCATION_ID",
+                "GOOGLE_APPLICATION_CREDENTIALS"
             )
         }
         "gemini" {
@@ -507,10 +651,7 @@ function Build-ValidationSchemas {
             )
         }
         "ollama" {
-            $script:OrchestratorVars += @(
-                "OLLAMA_BASE_URL",
-                "OLLAMA_MODEL"
-            )
+            $script:OrchestratorVars += "OLLAMA_BASE_URL"
         }
     }
     
@@ -551,7 +692,6 @@ function Validate-AWSTaskDefinition {
     
     try {
         $taskJson = aws ecs describe-task-definition `
-            --cluster $script:AWSCluster `
             --task-definition $TaskDef `
             --region $script:AWSRegion `
             --query 'taskDefinition.containerDefinitions' `
@@ -643,7 +783,7 @@ function Validate-ContainerEnv {
     
     foreach ($var in ($envVarNames + $secretNames)) {
         if ($var -in $allLLMVars) {
-            if ($script:LLMProvider -ne "openai" -and $var -eq "OPENAI_API_KEY") {
+            if ($script:LLMProvider -ne "openai" -and $script:LLMProvider -ne "azure_openai" -and $var -eq "OPENAI_API_KEY") {
                 Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not OpenAI)"
                 $script:ValidationWarnings++
             }
@@ -764,7 +904,7 @@ function Validate-ACAContainerEnv {
     
     foreach ($var in $envVarNames) {
         if ($var -in $allLLMVars) {
-            if ($script:LLMProvider -ne "openai" -and $var -eq "OPENAI_API_KEY") {
+            if ($script:LLMProvider -ne "openai" -and $script:LLMProvider -ne "azure_openai" -and $var -eq "OPENAI_API_KEY") {
                 Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not OpenAI)"
                 $script:ValidationWarnings++
             }
@@ -795,9 +935,10 @@ Generated: $(Get-Date)
 Platform: $(if ($script:CloudPlatform -eq 'aws') { 'AWS ECS/Fargate' } else { 'Azure Container Apps' })
 
 $(if ($script:CloudPlatform -eq 'aws') {
-"Region: $($script:AWSRegion)
-Cluster: $($script:AWSCluster)
-Task Definitions: $($script:AWSTaskDefinitions -join ', ')"
+    $awsLines = "Region: $($script:AWSRegion)`nCluster: $($script:AWSCluster)"
+    if ($script:AWSServiceNames.Count -gt 0) { $awsLines += "`nServices: $($script:AWSServiceNames -join ', ')" }
+    $awsLines += "`nTask Definitions: $($script:AWSTaskDefinitions -join ', ')"
+    $awsLines
 } else {
 "Resource Group: $($script:AzureResourceGroup)
 Location: $($script:AzureLocation)
@@ -827,8 +968,37 @@ Status: $(if ($script:ValidationErrors -eq 0) { 'OK VALIDATION PASSED' } else { 
 ##############################################################################
 
 function Main {
-    Phase1-DetectPlatform
-    Phase2-TemplateOrSchema
+    Write-Host ""
+    Write-Host "================================================" -ForegroundColor Cyan
+    Write-Host "  Spotfire Copilot Environment Validator" -ForegroundColor Cyan
+    Write-Host "================================================" -ForegroundColor Cyan
+
+    # Offer to resume from previously saved answers
+    if (Test-Path $script:AnswersFile) {
+        Write-Host ""
+        Write-Info "Found saved answers: $($script:AnswersFile)"
+        Get-Content $script:AnswersFile |
+            Where-Object { $_ -match '^(CLOUD_PLATFORM|AWS_REGION|AWS_CLUSTER|AWS_TASK_DEFINITIONS|AWS_SERVICE_NAMES|AZURE_RESOURCE_GROUP|AZURE_LOCATION|AZURE_CONTAINER_APPS|LLM_PROVIDER|HAS_ADMIN_CONSOLE)=' } |
+            ForEach-Object { Write-Host "    $_" }
+        Write-Host ""
+        $resume = Read-Host "Resume with these saved answers? (y/n)"
+        if ($resume -match '^(?i)y') {
+            Load-Answers
+            $script:Resumed = $true
+            Write-Success "Resumed from saved answers."
+        }
+    }
+
+    if ($script:Resumed) {
+        # Still verify the CLI is installed, authenticated, and can reach resources
+        Preflight-CheckCli
+    }
+    else {
+        Phase1-DetectPlatform
+        Phase2-TemplateOrSchema
+        Save-Answers
+    }
+
     Build-ValidationSchemas
     
     Write-Host ""

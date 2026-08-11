@@ -11,9 +11,10 @@
 #    ./spotfire-copilot-backend-validate-env.sh
 #
 #  Supports:
-#    - AWS ECS/Fargate (single or multiple task definitions)
+#    - AWS ECS/Fargate (identify by ECS service name or task definition)
 #    - Azure Container Apps (single or multiple apps)
 #    - Template-based validation or interactive schema builder
+#    - Saved answers with resume (validator-answers.env)
 #    - No-CLI fallback (manual JSON import)
 ##############################################################################
 
@@ -48,9 +49,12 @@ CLOUD_PLATFORM=""
 AWS_REGION=""
 AWS_CLUSTER=""
 AWS_TASK_DEFINITIONS=()
+AWS_TASK_ROLES=()
+AWS_SERVICE_NAMES=()
 AZURE_RESOURCE_GROUP=""
 AZURE_LOCATION=""
 AZURE_CONTAINER_APPS=()
+AZURE_APP_ROLES=()
 HAS_TEMPLATE=false
 TEMPLATE_FILE=""
 LLM_PROVIDER=""
@@ -60,6 +64,83 @@ ADMIN_CONSOLE_VARS=()
 REPORT_FILE=""
 VALIDATION_ERRORS=0
 VALIDATION_WARNINGS=0
+
+# Saved-answers file (resume support). Override with VALIDATOR_ANSWERS_FILE=... if desired.
+ANSWERS_FILE="${VALIDATOR_ANSWERS_FILE:-validator-answers.env}"
+RESUMED=false
+
+##############################################################################
+# Answer persistence — save/resume interactive answers
+##############################################################################
+
+save_answers() {
+    cat > "$ANSWERS_FILE" <<EOF
+# Spotfire Copilot validator - saved answers
+# Generated: $(date)
+# Delete this file to start fresh, or re-run and choose 'resume' to reuse it.
+CLOUD_PLATFORM=$CLOUD_PLATFORM
+AWS_REGION=$AWS_REGION
+AWS_CLUSTER=$AWS_CLUSTER
+AWS_TASK_DEFINITIONS=${AWS_TASK_DEFINITIONS[*]}
+AWS_TASK_ROLES=${AWS_TASK_ROLES[*]}
+AWS_SERVICE_NAMES=${AWS_SERVICE_NAMES[*]}
+AZURE_RESOURCE_GROUP=$AZURE_RESOURCE_GROUP
+AZURE_LOCATION=$AZURE_LOCATION
+AZURE_CONTAINER_APPS=${AZURE_CONTAINER_APPS[*]}
+AZURE_APP_ROLES=${AZURE_APP_ROLES[*]}
+LLM_PROVIDER=$LLM_PROVIDER
+HAS_ADMIN_CONSOLE=$HAS_ADMIN_CONSOLE
+HAS_TEMPLATE=$HAS_TEMPLATE
+TEMPLATE_FILE=$TEMPLATE_FILE
+EOF
+    chmod 600 "$ANSWERS_FILE" 2>/dev/null || true
+    echo ""
+    success "Answers saved to $ANSWERS_FILE"
+    info "Next time, re-run the validator and choose 'resume' to skip re-entering these."
+}
+
+load_answers() {
+    local key value
+    while IFS='=' read -r key value; do
+        [[ -z "$key" || "$key" == \#* ]] && continue
+        case "$key" in
+            CLOUD_PLATFORM)        CLOUD_PLATFORM="$value" ;;
+            AWS_REGION)            AWS_REGION="$value" ;;
+            AWS_CLUSTER)           AWS_CLUSTER="$value" ;;
+            AWS_TASK_DEFINITIONS)  read -ra AWS_TASK_DEFINITIONS <<< "$value" ;;
+            AWS_TASK_ROLES)        read -ra AWS_TASK_ROLES <<< "$value" ;;
+            AWS_SERVICE_NAMES)     read -ra AWS_SERVICE_NAMES <<< "$value" ;;
+            AZURE_RESOURCE_GROUP)  AZURE_RESOURCE_GROUP="$value" ;;
+            AZURE_LOCATION)        AZURE_LOCATION="$value" ;;
+            AZURE_CONTAINER_APPS)  read -ra AZURE_CONTAINER_APPS <<< "$value" ;;
+            AZURE_APP_ROLES)       read -ra AZURE_APP_ROLES <<< "$value" ;;
+            LLM_PROVIDER)          LLM_PROVIDER="$value" ;;
+            HAS_ADMIN_CONSOLE)     HAS_ADMIN_CONSOLE="$value" ;;
+            HAS_TEMPLATE)          HAS_TEMPLATE="$value" ;;
+            TEMPLATE_FILE)         TEMPLATE_FILE="$value" ;;
+        esac
+    done < "$ANSWERS_FILE"
+}
+
+# Resolve the task definition an ECS service is currently running.
+# Prints the task definition ARN to stdout; diagnostics go to stderr.
+resolve_task_def_from_service() {
+    local svc="$1"
+    local td
+    td=$(aws ecs describe-services \
+        --cluster "$AWS_CLUSTER" \
+        --services "$svc" \
+        --region "$AWS_REGION" \
+        --query 'services[0].taskDefinition' \
+        --output text 2>/dev/null)
+    if [[ -z "$td" || "$td" == "None" ]]; then
+        error "Could not resolve a task definition for ECS service '$svc'." >&2
+        error "Check the service name, cluster ('$AWS_CLUSTER'), and region ('$AWS_REGION')." >&2
+        exit 1
+    fi
+    info "Service '$svc' -> task definition '$td'" >&2
+    echo "$td"
+}
 
 ##############################################################################
 # Phase 0: CLI Preflight — install, auth & connectivity check
@@ -226,11 +307,6 @@ preflight_check_azure() {
 
 phase1_detect_platform() {
     echo ""
-    echo "================================================"
-    echo "  Spotfire Copilot Environment Validator"
-    echo "================================================"
-    echo ""
-    
     info "Phase 1: Platform Detection"
     echo ""
     echo "Which cloud platform are you using?"
@@ -261,27 +337,67 @@ phase1_detect_aws_topology() {
     echo ""
     read -p "Enter AWS region (e.g., us-east-1): " AWS_REGION
     read -p "Enter ECS cluster name: " AWS_CLUSTER
-    
+
+    echo ""
+    echo "How do you want to identify what to validate?"
+    echo "  1) ECS service names (recommended - resolves the task definition each service is actually running)"
+    echo "  2) Task definition names"
+    echo ""
+    read -p "Enter choice (1 or 2): " id_choice
+
     echo ""
     echo "How are your services deployed?"
-    echo "  1) All in one task definition"
-    echo "  2) Separate task definitions (orchestrator + admin-console)"
+    echo "  1) All in one (both containers in a single service / task definition)"
+    echo "  2) Separate (orchestrator + admin-console)"
     echo ""
     read -p "Enter choice (1 or 2): " topology_choice
-    
-    case "$topology_choice" in
+
+    case "$id_choice" in
         1)
-            read -p "Enter task definition name (e.g., spotfire-copilot-services): " task_def
-            AWS_TASK_DEFINITIONS=("$task_def")
-            AWS_TASK_ROLES=("both")
-            info "Task definition: $task_def (will validate both orchestrator and admin-console containers)"
+            # Identify by ECS service -> resolve the running task definition
+            case "$topology_choice" in
+                1)
+                    read -p "Enter ECS service name: " svc
+                    AWS_SERVICE_NAMES=("$svc")
+                    AWS_TASK_DEFINITIONS=("$(resolve_task_def_from_service "$svc")")
+                    AWS_TASK_ROLES=("both")
+                    info "Service '$svc' (will validate both orchestrator and admin-console containers)"
+                    ;;
+                2)
+                    read -p "Enter Orchestrator ECS service name: " svc_orch
+                    read -p "Enter Admin Console ECS service name: " svc_admin
+                    AWS_SERVICE_NAMES=("$svc_orch" "$svc_admin")
+                    AWS_TASK_DEFINITIONS=("$(resolve_task_def_from_service "$svc_orch")" "$(resolve_task_def_from_service "$svc_admin")")
+                    AWS_TASK_ROLES=("orchestrator" "admin")
+                    info "Services: $svc_orch (orchestrator), $svc_admin (admin-console)"
+                    ;;
+                *)
+                    error "Invalid choice. Exiting."
+                    exit 1
+                    ;;
+            esac
             ;;
         2)
-            read -p "Enter Orchestrator task definition name: " task_orch
-            read -p "Enter Admin Console task definition name: " task_admin
-            AWS_TASK_DEFINITIONS=("$task_orch" "$task_admin")
-            AWS_TASK_ROLES=("orchestrator" "admin")
-            info "Task definitions: $task_orch (orchestrator), $task_admin (admin-console)"
+            # Identify by task definition name (direct)
+            case "$topology_choice" in
+                1)
+                    read -p "Enter task definition name (e.g., spotfire-copilot-services): " task_def
+                    AWS_TASK_DEFINITIONS=("$task_def")
+                    AWS_TASK_ROLES=("both")
+                    info "Task definition: $task_def (will validate both orchestrator and admin-console containers)"
+                    ;;
+                2)
+                    read -p "Enter Orchestrator task definition name: " task_orch
+                    read -p "Enter Admin Console task definition name: " task_admin
+                    AWS_TASK_DEFINITIONS=("$task_orch" "$task_admin")
+                    AWS_TASK_ROLES=("orchestrator" "admin")
+                    info "Task definitions: $task_orch (orchestrator), $task_admin (admin-console)"
+                    ;;
+                *)
+                    error "Invalid choice. Exiting."
+                    exit 1
+                    ;;
+            esac
             ;;
         *)
             error "Invalid choice. Exiting."
@@ -331,12 +447,17 @@ phase2_template_or_schema() {
     echo ""
     info "Phase 2: Configuration Schema"
     echo ""
-    echo "Do you have a configuration template from our deploy script?"
-    echo "  1) Yes, I have cloud-env-checklist.txt or spotfire-copilot-config.json"
-    echo "  2) No, build schema interactively"
+    echo "The validator always reads the live environment variables from your ECS task"
+    echo "definition / Container App. A deploy-script template is OPTIONAL and only used to"
+    echo "auto-detect your LLM provider and whether the Admin Console is deployed."
     echo ""
-    read -p "Enter choice (1 or 2): " template_choice
-    
+    echo "Do you have a configuration template from our deploy script?"
+    echo "  1) Yes - auto-detect from cloud-env-checklist.txt or spotfire-copilot-config.json"
+    echo "  2) No  - pick the LLM provider interactively (default)"
+    echo ""
+    read -p "Enter choice (1 or 2) [2]: " template_choice
+    template_choice="${template_choice:-2}"
+
     case "$template_choice" in
         1)
             phase2_load_template
@@ -345,20 +466,25 @@ phase2_template_or_schema() {
             phase2_build_schema_interactive
             ;;
         *)
-            error "Invalid choice. Exiting."
-            exit 1
+            warn "Unrecognized choice '$template_choice'; building schema interactively."
+            phase2_build_schema_interactive
             ;;
     esac
 }
 
 phase2_load_template() {
     echo ""
-    read -p "Enter path to template file: " template_path
-    
+    read -p "Enter path to template file (leave blank to pick the provider manually): " template_path
+
+    if [[ -z "$template_path" ]]; then
+        info "No template provided - switching to interactive provider selection."
+        phase2_build_schema_interactive
+        return
+    fi
+
     if [[ ! -f "$template_path" ]]; then
-        error "Template file not found: $template_path"
-        echo ""
-        info "Falling back to interactive schema builder..."
+        warn "Template file not found: $template_path"
+        info "Switching to interactive provider selection..."
         phase2_build_schema_interactive
         return
     fi
@@ -367,21 +493,34 @@ phase2_load_template() {
     TEMPLATE_FILE="$template_path"
     success "Template loaded: $TEMPLATE_FILE"
     
-    # Parse template to detect LLM provider and admin console
-    if grep -q "AZURE_OPENAI_ENDPOINT" "$TEMPLATE_FILE"; then
+    # Parse template to detect LLM provider and admin console.
+    # Primary signal: the MODEL_PLUGIN_ENTRY_POINT plugin path (emitted for every provider).
+    # Note: check azure_openai before openai (azure_openai_enhanced contains openai_enhanced).
+    if grep -q "azure_openai_enhanced" "$TEMPLATE_FILE"; then
         LLM_PROVIDER="azure_openai"
-    elif grep -q "OPENAI_API_KEY" "$TEMPLATE_FILE"; then
+    elif grep -q "openai_enhanced" "$TEMPLATE_FILE"; then
         LLM_PROVIDER="openai"
-    elif grep -q "AWS_BEDROCK" "$TEMPLATE_FILE"; then
+    elif grep -q "bedrock_enhanced" "$TEMPLATE_FILE"; then
         LLM_PROVIDER="aws_bedrock"
-    elif grep -q "VERTEX_AI" "$TEMPLATE_FILE"; then
+    elif grep -q "vertexai_enhanced" "$TEMPLATE_FILE"; then
         LLM_PROVIDER="vertex_ai"
+    elif grep -q "gemini_enhanced" "$TEMPLATE_FILE"; then
+        LLM_PROVIDER="gemini"
+    elif grep -q "nvidia_nim_enhanced" "$TEMPLATE_FILE"; then
+        LLM_PROVIDER="nvidia_nim"
+    elif grep -q "ollama_enhanced" "$TEMPLATE_FILE"; then
+        LLM_PROVIDER="ollama"
+    # Fallbacks for older/hand-written templates without the plugin path
+    elif grep -q "AZURE_OPENAI_ENDPOINT" "$TEMPLATE_FILE"; then
+        LLM_PROVIDER="azure_openai"
     elif grep -q "GOOGLE_API_KEY" "$TEMPLATE_FILE"; then
         LLM_PROVIDER="gemini"
     elif grep -q "NVIDIA_API_KEY" "$TEMPLATE_FILE"; then
         LLM_PROVIDER="nvidia_nim"
-    elif grep -q "OLLAMA" "$TEMPLATE_FILE"; then
+    elif grep -q "OLLAMA_BASE_URL" "$TEMPLATE_FILE"; then
         LLM_PROVIDER="ollama"
+    elif grep -q "OPENAI_API_KEY" "$TEMPLATE_FILE"; then
+        LLM_PROVIDER="openai"
     fi
     
     if grep -q "ADMIN_CONSOLE" "$TEMPLATE_FILE" || grep -q "admin.console" "$TEMPLATE_FILE"; then
@@ -452,30 +591,36 @@ build_validation_schemas() {
         "OAUTH2_CLIENT_SECRET_HASH"
         "DATABASE_URL"
         "DB_SSLMODE"
+        # Model plumbing — emitted for EVERY provider by the deploy script
+        "MODEL_PLUGIN_ENTRY_POINT"
+        "SECONDARY_MODEL_PLUGIN_ENTRY_POINT"
+        "MODEL_NAME"
     )
     
-    # Add LLM-specific vars
+    # Add LLM-specific vars (matches the deploy script's per-provider blocks)
     case "$LLM_PROVIDER" in
         azure_openai)
             ORCHESTRATOR_VARS+=(
-                "AZURE_OPENAI_ENDPOINT"
+                "OPENAI_API_TYPE"
                 "OPENAI_API_KEY"
+                "AZURE_OPENAI_ENDPOINT"
                 "OPENAI_API_VERSION"
             )
             ;;
         openai)
-            ORCHESTRATOR_VARS+=("OPENAI_API_KEY")
+            ORCHESTRATOR_VARS+=(
+                "OPENAI_API_TYPE"
+                "OPENAI_API_KEY"
+            )
             ;;
         aws_bedrock)
-            ORCHESTRATOR_VARS+=(
-                "AWS_REGION"
-                "MODEL_NAME"
-            )
+            ORCHESTRATOR_VARS+=("AWS_REGION")
             ;;
         vertex_ai)
             ORCHESTRATOR_VARS+=(
-                "GOOGLE_PROJECT_ID"
-                "GOOGLE_REGION"
+                "PROJECT_ID"
+                "LOCATION_ID"
+                "GOOGLE_APPLICATION_CREDENTIALS"
             )
             ;;
         gemini)
@@ -488,10 +633,7 @@ build_validation_schemas() {
             )
             ;;
         ollama)
-            ORCHESTRATOR_VARS+=(
-                "OLLAMA_BASE_URL"
-                "OLLAMA_MODEL"
-            )
+            ORCHESTRATOR_VARS+=("OLLAMA_BASE_URL")
             ;;
     esac
     
@@ -530,7 +672,6 @@ validate_aws_task_definition() {
     
     local task_json
     task_json=$(aws ecs describe-task-definition \
-        --cluster "$AWS_CLUSTER" \
         --task-definition "$task_def" \
         --region "$AWS_REGION" \
         --query 'taskDefinition.containerDefinitions' \
@@ -617,7 +758,7 @@ validate_container_env() {
         for llm_var in "${all_llm_vars[@]}"; do
             if [[ "$var" == "$llm_var" ]]; then
                 # Check if it's for a different provider
-                if [[ "$LLM_PROVIDER" != "openai" ]] && [[ "$var" == "OPENAI_API_KEY" ]]; then
+                if [[ "$LLM_PROVIDER" != "openai" && "$LLM_PROVIDER" != "azure_openai" ]] && [[ "$var" == "OPENAI_API_KEY" ]]; then
                     warn "$var — orphaned (you're using $LLM_PROVIDER, not OpenAI)"
                     ((VALIDATION_WARNINGS++))
                 elif [[ "$LLM_PROVIDER" != "azure_openai" ]] && [[ "$var" == "AZURE_OPENAI_ENDPOINT" ]]; then
@@ -730,7 +871,7 @@ validate_aca_container_env() {
     for var in $env_vars; do
         for llm_var in "${all_llm_vars[@]}"; do
             if [[ "$var" == "$llm_var" ]]; then
-                if [[ "$LLM_PROVIDER" != "openai" ]] && [[ "$var" == "OPENAI_API_KEY" ]]; then
+                if [[ "$LLM_PROVIDER" != "openai" && "$LLM_PROVIDER" != "azure_openai" ]] && [[ "$var" == "OPENAI_API_KEY" ]]; then
                     warn "$var — orphaned (you're using $LLM_PROVIDER, not OpenAI)"
                     ((VALIDATION_WARNINGS++))
                 elif [[ "$LLM_PROVIDER" != "azure_openai" ]] && [[ "$var" == "AZURE_OPENAI_ENDPOINT" ]]; then
@@ -771,6 +912,9 @@ generate_report() {
         if [[ "$CLOUD_PLATFORM" == "aws" ]]; then
             echo "Region: $AWS_REGION"
             echo "Cluster: $AWS_CLUSTER"
+            if [[ ${#AWS_SERVICE_NAMES[@]} -gt 0 ]]; then
+                echo "Services: ${AWS_SERVICE_NAMES[*]}"
+            fi
             echo "Task Definitions: ${AWS_TASK_DEFINITIONS[*]}"
         else
             echo "Resource Group: $AZURE_RESOURCE_GROUP"
@@ -808,8 +952,34 @@ generate_report() {
 ##############################################################################
 
 main() {
-    phase1_detect_platform
-    phase2_template_or_schema
+    echo ""
+    echo "================================================"
+    echo "  Spotfire Copilot Environment Validator"
+    echo "================================================"
+
+    # Offer to resume from previously saved answers
+    if [[ -f "$ANSWERS_FILE" ]]; then
+        echo ""
+        info "Found saved answers: $ANSWERS_FILE"
+        grep -E '^(CLOUD_PLATFORM|AWS_REGION|AWS_CLUSTER|AWS_TASK_DEFINITIONS|AWS_SERVICE_NAMES|AZURE_RESOURCE_GROUP|AZURE_LOCATION|AZURE_CONTAINER_APPS|LLM_PROVIDER|HAS_ADMIN_CONSOLE)=' "$ANSWERS_FILE" 2>/dev/null | sed 's/^/    /' || true
+        echo ""
+        read -p "Resume with these saved answers? (y/n): " resume_choice
+        if [[ "$resume_choice" =~ ^[Yy] ]]; then
+            load_answers
+            RESUMED=true
+            success "Resumed from saved answers."
+        fi
+    fi
+
+    if [[ "$RESUMED" == true ]]; then
+        # Still verify the CLI is installed, authenticated, and can reach resources
+        preflight_check_cli
+    else
+        phase1_detect_platform
+        phase2_template_or_schema
+        save_answers
+    fi
+
     build_validation_schemas
     
     echo ""
