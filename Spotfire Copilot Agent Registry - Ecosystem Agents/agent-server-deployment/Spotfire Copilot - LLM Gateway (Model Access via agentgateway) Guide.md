@@ -61,12 +61,20 @@ each request to the configured provider's chat-completions API.
 
 The deepagents server builds its chat model in
 `agents/deepagents/deepagents_shared/model_factory.py` via
-`build_chat_model(prefix=<AGENT>)`. Two provider paths:
+`build_chat_model(prefix=<AGENT>)`. Provider paths:
 
 | Path | Client | Reads from env | Repointable at a gateway? |
 |---|---|---|---|
 | Azure | `AzureChatOpenAI` | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `OPENAI_API_VERSION` | via env (endpoint) |
 | OpenAI | `ChatOpenAI` | `OPENAI_API_KEY`, **`OPENAI_BASE_URL`** | via env (base URL) |
+| Any other provider | LangChain `init_chat_model(<provider>:<model>)` | provider-native env (e.g. `ANTHROPIC_API_KEY`; `AWS_REGION` + IRSA for `bedrock_converse:`) | not needed (direct to provider) |
+
+The OpenAI and Azure paths are special-cased to preserve the gateway routing
+(`OPENAI_BASE_URL`) and Azure deployment mapping. **Every other `provider:model`
+spec is delegated to LangChain's `init_chat_model`**, so the full deepagents
+provider matrix is available directly — Anthropic (`anthropic:`), AWS Bedrock
+(`bedrock_converse:` / `bedrock:`), Google (`google_genai:`), and so on. Use this
+path when you want a provider **without** the gateway.
 
 Model selection is per-agent: `DEEPAGENTS_MODEL=openai:gpt-5.1` globally, with
 `<PREFIX>_DEEPAGENTS_MODEL` overrides (e.g. `SFLIB_DEEPAGENTS_MODEL=azure_openai:gpt-4o`).

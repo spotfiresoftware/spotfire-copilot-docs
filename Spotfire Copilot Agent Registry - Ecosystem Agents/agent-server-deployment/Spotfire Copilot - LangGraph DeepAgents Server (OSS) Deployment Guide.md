@@ -272,6 +272,15 @@ DEEPAGENTS_MODEL=openai:gpt-5.1
 # DEEPAGENTS_MODEL has NO provider prefix (a bare deployment name).
 # DEEPAGENTS_MODEL_PROVIDER=azure
 
+# Any other provider is supported via LangChain init_chat_model — use the standard
+# "<provider>:<model>" spec and set that provider's own credentials. Examples:
+#   Anthropic (native):  DEEPAGENTS_MODEL=anthropic:claude-3-5-sonnet-latest  + ANTHROPIC_API_KEY
+#   Google:              DEEPAGENTS_MODEL=google_genai:gemini-2.0-flash       + GOOGLE_API_KEY
+#   AWS Bedrock:         DEEPAGENTS_MODEL=bedrock_converse:us.anthropic.claude-sonnet-4-5-20250929-v1:0
+#                        + AWS_REGION  (credentials come from the standard AWS chain /
+#                        IRSA role on EKS — no keys in the env file)
+# Per-agent: prefix any of these, e.g. DV_DEEPAGENTS_MODEL / DV_AWS_REGION for dv_agent only.
+
 # Optional: route through an OpenAI-compatible GATEWAY (agentgateway, LiteLLM, ...)
 # instead of the provider directly. Set once; agents still name their model via
 # DEEPAGENTS_MODEL. Empty = direct to the provider.
@@ -384,6 +393,7 @@ Quick-start minimum set:
   - `OPENAI_API_KEY` for `openai:*`
   - `ANTHROPIC_API_KEY` for `anthropic:*`
   - `GOOGLE_API_KEY` for `google:*`
+  - AWS Bedrock: `DEEPAGENTS_MODEL=bedrock_converse:<model-id>` plus `AWS_REGION`; credentials come from the standard AWS chain (env or, on EKS, the pod's IRSA role — no keys). The role needs `bedrock:InvokeModel` / `bedrock:InvokeModelWithResponseStream`.
   - Azure OpenAI: set `DEEPAGENTS_MODEL=azure_openai:<deployment-name>` (the value after the colon is the Azure **deployment** name, not the model name) plus `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION`.
 - Optional per-agent override: prefix any model variable with an agent's MCP prefix to change just that agent (same convention as `<PREFIX>_MCP_SERVER_URL`). For example, keep the fleet on OpenAI but move only `osdu_agent` to Azure by setting `OSDU_DEEPAGENTS_MODEL=azure_openai:<deployment>` (the `AZURE_*` vars are shared globally, or can be overridden as `OSDU_AZURE_OPENAI_*`). Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`, `SNOWFLAKE`. and set matching credentials (for example `A2A_BEARER_TOKENS` for `bearer`).
 - For each enabled agent integration, set `*_MCP_SERVER_URL`.
@@ -426,7 +436,8 @@ Commonly optional:
 | OPENAI_API_KEY | Conditional | Required when using `DEEPAGENTS_MODEL=openai:*`. | `<openai-key>` |
 | ANTHROPIC_API_KEY | Conditional | Required when using `DEEPAGENTS_MODEL=anthropic:*`. | `<anthropic-key>` |
 | GOOGLE_API_KEY | Conditional | Required when using `DEEPAGENTS_MODEL=google:*`. | `<google-key>` |
-| DEEPAGENTS_MODEL | Yes | Model spec as `<provider>:<model>`. Use `openai:<model>` for public OpenAI or `azure_openai:<deployment-name>` for Azure OpenAI (the value after the colon is the Azure deployment name). | `openai:gpt-5.1` |
+| AWS_REGION | Conditional | AWS region for `DEEPAGENTS_MODEL=bedrock_converse:*` / `bedrock:*`. Credentials come from the standard AWS chain (env vars or, on EKS, the pod's IRSA role — no keys). Per-agent override: `<PREFIX>_AWS_REGION`. | `us-east-2` |
+| DEEPAGENTS_MODEL | Yes | Model spec as `<provider>:<model>`. `openai:<model>` and `azure_openai:<deployment>` have dedicated paths (the latter's value is the Azure deployment name); **any other provider** supported by LangChain `init_chat_model` also works — e.g. `anthropic:<model>`, `bedrock_converse:<model-id>`, `google_genai:<model>`. | `openai:gpt-5.1` |
 | DEEPAGENTS_MODEL_PROVIDER | No | Optional. Not needed when `DEEPAGENTS_MODEL` uses the `azure_openai:` prefix. Only set to `azure` to force the Azure path when `DEEPAGENTS_MODEL` has no provider prefix (a bare deployment name). | `azure` |
 | AZURE_OPENAI_ENDPOINT | Conditional | Azure OpenAI resource endpoint. Required when `DEEPAGENTS_MODEL=azure_openai:*`. | `https://<resource>.openai.azure.com` |
 | AZURE_OPENAI_API_KEY | Conditional | Azure OpenAI API key. Required when `DEEPAGENTS_MODEL=azure_openai:*` (unless using Azure AD). | `<azure-openai-key>` |
