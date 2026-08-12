@@ -1449,10 +1449,29 @@ function Get-ExistingOr { param([string]$Key, [string]$Default)
     return $v
 }
 
-# configure_advanced_categories: the installer does not prompt for overrides.
+# configure_advanced_categories: emit optional per-category model overrides (commented out).
 function Set-AdvancedCategories { param([string]$Prefix, [string]$Primary)
-    $script:CATEGORY_BLOCK = ''
-    Write-Info "Advanced model category overrides are not prompted by this installer. Using $Primary as MODEL_NAME; add ${Prefix}_FAST_MODEL / ${Prefix}_LARGE_MODEL overrides manually after generation if needed."
+    $reason = switch ($Prefix) { 'BEDROCK' { '1.0' } 'VERTEXAI' { '0.1' } 'GEMINI' { '0.1' } default { '0.2' } }
+    $script:CATEGORY_BLOCK = @"
+# OPTIONAL per-category model overrides. Each category falls back to MODEL_NAME ($Primary) unless BOTH
+# the *_MODEL and *_TEMPERATURE for that category are set. Uncomment and edit to override the image defaults.
+# Fast model/deployment for title generation, summarization, and RAG enrichment.
+#${Prefix}_FAST_MODEL=$Primary
+#${Prefix}_FAST_TEMPERATURE=0.3
+# Large model/deployment for general chat and data analysis.
+#${Prefix}_LARGE_MODEL=$Primary
+#${Prefix}_LARGE_TEMPERATURE=0.2
+# Vision model/deployment for visualization/image analysis.
+#${Prefix}_VISION_MODEL=$Primary
+#${Prefix}_VISION_TEMPERATURE=0.1
+# Code model/deployment for SQL/code/data-function generation.
+#${Prefix}_CODE_MODEL=$Primary
+#${Prefix}_CODE_TEMPERATURE=0.0
+# Reasoning model/deployment for complex multi-step analysis.
+#${Prefix}_REASONING_MODEL=$Primary
+#${Prefix}_REASONING_TEMPERATURE=$reason
+"@
+    Write-Info "Optional per-category model overrides for $Prefix were written to the generated env (commented out). Uncomment ${Prefix}_FAST_MODEL / ${Prefix}_LARGE_MODEL etc. to override the $Primary default."
 }
 
 function Configure-LlmProvider {

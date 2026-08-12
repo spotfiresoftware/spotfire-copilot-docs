@@ -663,6 +663,65 @@ build_validation_schemas() {
 }
 
 ##############################################################################
+# Category-based model overrides
+##############################################################################
+
+# Provider -> environment prefix used for optional per-category model overrides.
+provider_env_prefix() {
+    case "$1" in
+        azure_openai) echo "AZURE" ;;
+        openai)       echo "OPENAI" ;;
+        aws_bedrock)  echo "BEDROCK" ;;
+        vertex_ai)    echo "VERTEXAI" ;;
+        gemini)       echo "GEMINI" ;;
+        nvidia_nim)   echo "NVIDIA" ;;
+        ollama)       echo "OLLAMA" ;;
+        *)            echo "" ;;
+    esac
+}
+
+# Validate optional per-category model overrides (<PREFIX>_<CATEGORY>_MODEL / _TEMPERATURE).
+# These are OPTIONAL, so all findings are WARNINGS:
+#   - an incomplete pair (only _MODEL or only _TEMPERATURE) makes the category silently
+#     fall back to MODEL_NAME
+#   - a category override whose prefix does not match the active provider is orphaned
+# $1 = newline-separated list of env var names present in the container.
+check_category_overrides() {
+    local names="$1"
+    local active_prefix
+    active_prefix="$(provider_env_prefix "$LLM_PROVIDER")"
+    local all_prefixes=("AZURE" "OPENAI" "BEDROCK" "VERTEXAI" "GEMINI" "NVIDIA" "OLLAMA")
+    local categories=("FAST" "LARGE" "VISION" "CODE" "REASONING")
+    local prefix cat has_model has_temp
+
+    for prefix in "${all_prefixes[@]}"; do
+        for cat in "${categories[@]}"; do
+            has_model=false; has_temp=false
+            if echo "$names" | grep -q "^${prefix}_${cat}_MODEL$"; then has_model=true; fi
+            if echo "$names" | grep -q "^${prefix}_${cat}_TEMPERATURE$"; then has_temp=true; fi
+
+            if [[ "$prefix" == "$active_prefix" ]]; then
+                if [[ "$has_model" == true && "$has_temp" == false ]]; then
+                    warn "${prefix}_${cat}_MODEL is set without ${prefix}_${cat}_TEMPERATURE — category falls back to MODEL_NAME"
+                    VALIDATION_DETAILS+=("    [WARN] ${prefix}_${cat}_MODEL set without ${prefix}_${cat}_TEMPERATURE (incomplete pair; category falls back to MODEL_NAME)")
+                    ((VALIDATION_WARNINGS++)) || true
+                elif [[ "$has_model" == false && "$has_temp" == true ]]; then
+                    warn "${prefix}_${cat}_TEMPERATURE is set without ${prefix}_${cat}_MODEL — category falls back to MODEL_NAME"
+                    VALIDATION_DETAILS+=("    [WARN] ${prefix}_${cat}_TEMPERATURE set without ${prefix}_${cat}_MODEL (incomplete pair; category falls back to MODEL_NAME)")
+                    ((VALIDATION_WARNINGS++)) || true
+                fi
+            else
+                if [[ "$has_model" == true || "$has_temp" == true ]]; then
+                    warn "${prefix}_${cat}_* override present but active provider is $LLM_PROVIDER — orphaned"
+                    VALIDATION_DETAILS+=("    [WARN] ${prefix}_${cat}_* override orphaned (active provider is $LLM_PROVIDER, expected prefix ${active_prefix:-<none>})")
+                    ((VALIDATION_WARNINGS++)) || true
+                fi
+            fi
+        done
+    done
+}
+
+##############################################################################
 # AWS ECS Validation
 ##############################################################################
 
@@ -812,6 +871,9 @@ validate_container_env() {
             fi
         done
     done
+
+    # Validate optional per-category model overrides (pair completeness + provider-prefix match)
+    check_category_overrides "$env_vars"
 }
 
 ##############################################################################
@@ -953,6 +1015,9 @@ validate_aca_container_env() {
             fi
         done
     done
+
+    # Validate optional per-category model overrides (pair completeness + provider-prefix match)
+    check_category_overrides "$env_vars"
 }
 
 ##############################################################################

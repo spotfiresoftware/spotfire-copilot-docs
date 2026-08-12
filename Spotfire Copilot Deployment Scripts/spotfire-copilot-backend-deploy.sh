@@ -1272,33 +1272,30 @@ LLM_PROVIDER=""; EMBEDDING_PROVIDER=""; VECTOR_DB_PROVIDER=""; VECTOR_WRITABLE="
 category_vars() {
   local prefix="$1" primary="$2" temp_fast="$3" temp_large="$4" temp_vision="$5" temp_code="$6" temp_reasoning="$7"
   cat <<EOM
-# OPTIONAL: Fast model/deployment for title generation, summarization, and RAG enrichment.
-${prefix}_FAST_MODEL=${primary}
-# OPTIONAL: Temperature for fast model category.
-${prefix}_FAST_TEMPERATURE=${temp_fast}
-# OPTIONAL: Large model/deployment for general chat and data analysis.
-${prefix}_LARGE_MODEL=${primary}
-# OPTIONAL: Temperature for large model category.
-${prefix}_LARGE_TEMPERATURE=${temp_large}
-# OPTIONAL: Vision model/deployment for visualization/image analysis.
-${prefix}_VISION_MODEL=${primary}
-# OPTIONAL: Temperature for vision model category.
-${prefix}_VISION_TEMPERATURE=${temp_vision}
-# OPTIONAL: Code model/deployment for SQL/code/data-function generation.
-${prefix}_CODE_MODEL=${primary}
-# OPTIONAL: Temperature for code model category.
-${prefix}_CODE_TEMPERATURE=${temp_code}
-# OPTIONAL: Reasoning model/deployment for complex multi-step analysis.
-${prefix}_REASONING_MODEL=${primary}
-# OPTIONAL: Temperature for reasoning model category.
-${prefix}_REASONING_TEMPERATURE=${temp_reasoning}
+# OPTIONAL per-category model overrides. Each category falls back to MODEL_NAME (${primary}) unless BOTH
+# the *_MODEL and *_TEMPERATURE for that category are set. Uncomment and edit to override the image defaults.
+# Fast model/deployment for title generation, summarization, and RAG enrichment.
+#${prefix}_FAST_MODEL=${primary}
+#${prefix}_FAST_TEMPERATURE=${temp_fast}
+# Large model/deployment for general chat and data analysis.
+#${prefix}_LARGE_MODEL=${primary}
+#${prefix}_LARGE_TEMPERATURE=${temp_large}
+# Vision model/deployment for visualization/image analysis.
+#${prefix}_VISION_MODEL=${primary}
+#${prefix}_VISION_TEMPERATURE=${temp_vision}
+# Code model/deployment for SQL/code/data-function generation.
+#${prefix}_CODE_MODEL=${primary}
+#${prefix}_CODE_TEMPERATURE=${temp_code}
+# Reasoning model/deployment for complex multi-step analysis.
+#${prefix}_REASONING_MODEL=${primary}
+#${prefix}_REASONING_TEMPERATURE=${temp_reasoning}
 EOM
 }
 
 configure_advanced_categories() {
-  local prefix="$1" primary="$2"
-  CATEGORY_BLOCK=""
-  info "Advanced model category overrides are not prompted by this installer. Using ${primary} as MODEL_NAME; add ${prefix}_FAST_MODEL / ${prefix}_LARGE_MODEL overrides manually after generation if needed."
+  local prefix="$1" primary="$2" temp_fast="${3:-0.3}" temp_large="${4:-0.2}" temp_vision="${5:-0.1}" temp_code="${6:-0.0}" temp_reasoning="${7:-0.2}"
+  CATEGORY_BLOCK="$(category_vars "$prefix" "$primary" "$temp_fast" "$temp_large" "$temp_vision" "$temp_code" "$temp_reasoning")"
+  info "Optional per-category model overrides for ${prefix} were written to the .env (commented out). Uncomment ${prefix}_FAST_MODEL / ${prefix}_LARGE_MODEL etc. to override the ${primary} default."
 }
 
 configure_llm_provider() {
