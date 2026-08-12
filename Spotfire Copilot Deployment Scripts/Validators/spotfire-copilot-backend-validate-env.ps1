@@ -40,6 +40,7 @@ $AdminConsoleVars = @()
 $ReportFile = ""
 $ValidationErrors = 0
 $ValidationWarnings = 0
+$ValidationDetails = @()  # per-container results captured for the report
 
 # Saved-answers file (resume support). Override with $env:VALIDATOR_ANSWERS_FILE.
 $AnswersFile = if ($env:VALIDATOR_ANSWERS_FILE) { $env:VALIDATOR_ANSWERS_FILE } else { "validator-answers.env" }
@@ -67,6 +68,16 @@ function Write-Warning {
 function Write-Error {
     param([string]$Message)
     Write-Host "[X] $Message" -ForegroundColor Red
+}
+
+# Redact values for secret-like variable names when printing them into the report.
+# Plain environment values are safe to show; anything whose NAME looks sensitive is masked.
+function Get-RedactedValue {
+    param([string]$Name, [string]$Value)
+    if ($Name -match 'KEY|SECRET|PASSWORD|PASSWD|TOKEN|HASH|CREDENTIAL|PRIVATE|DATABASE_URL|SYNC_DATABASE_URL|CONNECTION_STRING|DSN') {
+        return "********"
+    }
+    return $Value
 }
 
 function Read-Choice {
@@ -746,6 +757,26 @@ function Validate-ContainerEnv {
         $secretNames = $Container.secrets | ForEach-Object { $_.name }
     }
     
+    # Capture the variables discovered in this container.
+    # Plain environment values are shown; secret refs and sensitive-looking names are redacted.
+    $script:ValidationDetails += ""
+    $script:ValidationDetails += "Container: $ContainerName (schema: $Role)"
+    if ($Container.environment) {
+        $script:ValidationDetails += "  Environment variables found (name = value):"
+        foreach ($e in $Container.environment) {
+            $script:ValidationDetails += "    - $($e.name) = $(Get-RedactedValue -Name $e.name -Value ([string]$e.value))"
+        }
+    }
+    else {
+        $script:ValidationDetails += "  Environment variables found: (none)"
+    }
+    if ($secretNames.Count -gt 0) {
+        $script:ValidationDetails += "  Secret references found (values not shown):"
+        foreach ($s in $secretNames) {
+            $script:ValidationDetails += "    - $s"
+        }
+    }
+    
     # Determine which schema to use (bound to role, not container name)
     $varsToCheck = if ($Role -eq "admin") {
         $script:AdminConsoleVars
@@ -755,15 +786,19 @@ function Validate-ContainerEnv {
     }
     
     # Check required vars
+    $script:ValidationDetails += "  Required variables:"
     foreach ($var in $varsToCheck) {
         if ($var -in $envVarNames) {
             Write-Success "$var - present"
+            $script:ValidationDetails += "    [PASS] $var - present"
         }
         elseif ($var -in $secretNames) {
             Write-Success "$var - present (secret ref)"
+            $script:ValidationDetails += "    [PASS] $var - present (secret ref)"
         }
         else {
             Write-Error "$var - MISSING [REQUIRED]"
+            $script:ValidationDetails += "    [FAIL] $var - MISSING [REQUIRED]"
             $script:ValidationErrors++
         }
     }
@@ -785,10 +820,12 @@ function Validate-ContainerEnv {
         if ($var -in $allLLMVars) {
             if ($script:LLMProvider -ne "openai" -and $script:LLMProvider -ne "azure_openai" -and $var -eq "OPENAI_API_KEY") {
                 Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not OpenAI)"
+                $script:ValidationDetails += "    [WARN] $var - orphaned (using $($script:LLMProvider), not OpenAI)"
                 $script:ValidationWarnings++
             }
             elseif ($script:LLMProvider -ne "azure_openai" -and $var -eq "AZURE_OPENAI_ENDPOINT") {
                 Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not Azure OpenAI)"
+                $script:ValidationDetails += "    [WARN] $var - orphaned (using $($script:LLMProvider), not Azure OpenAI)"
                 $script:ValidationWarnings++
             }
         }
@@ -870,6 +907,25 @@ function Validate-ACAContainerEnv {
         $envVarNames = $Container.env | ForEach-Object { $_.name }
     }
     
+    # Capture the variables discovered in this container.
+    # Plain values are shown; secret refs and sensitive-looking names are redacted.
+    $script:ValidationDetails += ""
+    $script:ValidationDetails += "Container: $AppName / $ContainerName (schema: $Role)"
+    if ($Container.env) {
+        $script:ValidationDetails += "  Environment variables found (name = value):"
+        foreach ($e in $Container.env) {
+            if ($e.secretRef) {
+                $script:ValidationDetails += "    - $($e.name) (secret ref: $($e.secretRef))"
+            }
+            else {
+                $script:ValidationDetails += "    - $($e.name) = $(Get-RedactedValue -Name $e.name -Value ([string]$e.value))"
+            }
+        }
+    }
+    else {
+        $script:ValidationDetails += "  Environment variables found: (none)"
+    }
+    
     # Determine which schema to use (bound to role, not container name)
     $varsToCheck = if ($Role -eq "admin") {
         $script:AdminConsoleVars
@@ -879,12 +935,15 @@ function Validate-ACAContainerEnv {
     }
     
     # Check required vars
+    $script:ValidationDetails += "  Required variables:"
     foreach ($var in $varsToCheck) {
         if ($var -in $envVarNames) {
             Write-Success "$var - present"
+            $script:ValidationDetails += "    [PASS] $var - present"
         }
         else {
             Write-Error "$var - MISSING [REQUIRED]"
+            $script:ValidationDetails += "    [FAIL] $var - MISSING [REQUIRED]"
             $script:ValidationErrors++
         }
     }
@@ -906,10 +965,12 @@ function Validate-ACAContainerEnv {
         if ($var -in $allLLMVars) {
             if ($script:LLMProvider -ne "openai" -and $script:LLMProvider -ne "azure_openai" -and $var -eq "OPENAI_API_KEY") {
                 Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not OpenAI)"
+                $script:ValidationDetails += "    [WARN] $var - orphaned (using $($script:LLMProvider), not OpenAI)"
                 $script:ValidationWarnings++
             }
             elseif ($script:LLMProvider -ne "azure_openai" -and $var -eq "AZURE_OPENAI_ENDPOINT") {
                 Write-Warning "$var - orphaned (you're using $($script:LLMProvider), not Azure OpenAI)"
+                $script:ValidationDetails += "    [WARN] $var - orphaned (using $($script:LLMProvider), not Azure OpenAI)"
                 $script:ValidationWarnings++
             }
         }
@@ -955,6 +1016,12 @@ Summary:
   Warnings: $($script:ValidationWarnings)
 
 Status: $(if ($script:ValidationErrors -eq 0) { 'OK VALIDATION PASSED' } else { 'X VALIDATION FAILED' })
+
+========================================================================
+
+Validation Details (variables discovered per container):
+(Plain environment values are shown; secrets and sensitive-looking values are redacted as ********.)
+$(if ($script:ValidationDetails.Count -gt 0) { ($script:ValidationDetails -join "`n") } else { "  (no per-container details were captured)" })
 
 ========================================================================
 "@

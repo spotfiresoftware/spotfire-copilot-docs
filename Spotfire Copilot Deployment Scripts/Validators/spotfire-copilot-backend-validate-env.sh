@@ -44,6 +44,18 @@ error() {
     echo -e "${RED}[✗]${NC} $*"
 }
 
+# Redact values for secret-like variable names when printing them into the report.
+# Plain environment values are safe to show; anything whose NAME looks sensitive is masked.
+redact_value() {
+    local name="$1" value="$2"
+    case "$name" in
+        *KEY*|*SECRET*|*PASSWORD*|*PASSWD*|*TOKEN*|*HASH*|*CREDENTIAL*|*PRIVATE*|DATABASE_URL|SYNC_DATABASE_URL|*CONNECTION_STRING*|*DSN*)
+            echo "********" ;;
+        *)
+            echo "$value" ;;
+    esac
+}
+
 # Global variables
 CLOUD_PLATFORM=""
 AWS_REGION=""
@@ -64,6 +76,7 @@ ADMIN_CONSOLE_VARS=()
 REPORT_FILE=""
 VALIDATION_ERRORS=0
 VALIDATION_WARNINGS=0
+VALIDATION_DETAILS=()  # per-container results captured for the report
 
 # Saved-answers file (resume support). Override with VALIDATOR_ANSWERS_FILE=... if desired.
 ANSWERS_FILE="${VALIDATOR_ANSWERS_FILE:-validator-answers.env}"
@@ -719,6 +732,31 @@ validate_container_env() {
     local secret_refs
     secret_refs=$(echo "$task_json" | jq -r ".[] | select(.name == \"$container_name\") | .secrets // [] | map(.name) | .[]")
     
+    # name<TAB>value rows for the plain (non-secret) environment variables
+    local env_pairs
+    env_pairs=$(echo "$task_json" | jq -r ".[] | select(.name == \"$container_name\") | .environment // [] | .[] | [.name, (.value // \"\")] | @tsv")
+    
+    # Capture the variables discovered in this container.
+    # Plain environment values are shown; secret refs and sensitive-looking names are redacted.
+    local _n _v
+    VALIDATION_DETAILS+=("")
+    VALIDATION_DETAILS+=("Container: $container_name (schema: $role)")
+    if [[ -n "$env_pairs" ]]; then
+        VALIDATION_DETAILS+=("  Environment variables found (name = value):")
+        while IFS=$'\t' read -r _n _v; do
+            [[ -z "$_n" ]] && continue
+            VALIDATION_DETAILS+=("    - $_n = $(redact_value "$_n" "$_v")")
+        done <<< "$env_pairs"
+    else
+        VALIDATION_DETAILS+=("  Environment variables found: (none)")
+    fi
+    if [[ -n "$secret_refs" ]]; then
+        VALIDATION_DETAILS+=("  Secret references found (values not shown):")
+        while IFS= read -r _n; do
+            [[ -n "$_n" ]] && VALIDATION_DETAILS+=("    - $_n")
+        done <<< "$secret_refs"
+    fi
+    
     # Determine which schema to use (bound to role, not container name)
     local vars_to_check=()
     if [[ "$role" == "admin" ]]; then
@@ -728,14 +766,18 @@ validate_container_env() {
     fi
     
     # Check required vars
+    VALIDATION_DETAILS+=("  Required variables:")
     for var in "${vars_to_check[@]}"; do
         if echo "$env_vars" | grep -q "^${var}$"; then
             success "$var — present"
+            VALIDATION_DETAILS+=("    [PASS] $var — present")
         elif echo "$secret_refs" | grep -q "^${var}$"; then
             success "$var — present (secret ref)"
+            VALIDATION_DETAILS+=("    [PASS] $var — present (secret ref)")
         else
             error "$var — MISSING [REQUIRED]"
-            ((VALIDATION_ERRORS++))
+            VALIDATION_DETAILS+=("    [FAIL] $var — MISSING [REQUIRED]")
+            ((VALIDATION_ERRORS++)) || true
         fi
     done
     
@@ -760,10 +802,12 @@ validate_container_env() {
                 # Check if it's for a different provider
                 if [[ "$LLM_PROVIDER" != "openai" && "$LLM_PROVIDER" != "azure_openai" ]] && [[ "$var" == "OPENAI_API_KEY" ]]; then
                     warn "$var — orphaned (you're using $LLM_PROVIDER, not OpenAI)"
-                    ((VALIDATION_WARNINGS++))
+                    VALIDATION_DETAILS+=("    [WARN] $var — orphaned (using $LLM_PROVIDER, not OpenAI)")
+                    ((VALIDATION_WARNINGS++)) || true
                 elif [[ "$LLM_PROVIDER" != "azure_openai" ]] && [[ "$var" == "AZURE_OPENAI_ENDPOINT" ]]; then
                     warn "$var — orphaned (you're using $LLM_PROVIDER, not Azure OpenAI)"
-                    ((VALIDATION_WARNINGS++))
+                    VALIDATION_DETAILS+=("    [WARN] $var — orphaned (using $LLM_PROVIDER, not Azure OpenAI)")
+                    ((VALIDATION_WARNINGS++)) || true
                 fi
             fi
         done
@@ -837,6 +881,29 @@ validate_aca_container_env() {
     local env_vars
     env_vars=$(echo "$app_json" | jq -r ".properties.template.containers[] | select(.name == \"$container_name\") | .env[].name")
     
+    # name<TAB>value<TAB>secretRef rows for each env entry
+    local env_rows
+    env_rows=$(echo "$app_json" | jq -r ".properties.template.containers[] | select(.name == \"$container_name\") | .env // [] | .[] | [.name, (.value // \"\"), (.secretRef // \"\")] | @tsv")
+    
+    # Capture the variables discovered in this container.
+    # Plain values are shown; secret refs and sensitive-looking names are redacted.
+    local _n _v _sref
+    VALIDATION_DETAILS+=("")
+    VALIDATION_DETAILS+=("Container: $app_name / $container_name (schema: $role)")
+    if [[ -n "$env_rows" ]]; then
+        VALIDATION_DETAILS+=("  Environment variables found (name = value):")
+        while IFS=$'\t' read -r _n _v _sref; do
+            [[ -z "$_n" ]] && continue
+            if [[ -n "$_sref" ]]; then
+                VALIDATION_DETAILS+=("    - $_n (secret ref: $_sref)")
+            else
+                VALIDATION_DETAILS+=("    - $_n = $(redact_value "$_n" "$_v")")
+            fi
+        done <<< "$env_rows"
+    else
+        VALIDATION_DETAILS+=("  Environment variables found: (none)")
+    fi
+    
     # Determine which schema to use (bound to role, not container name)
     local vars_to_check=()
     if [[ "$role" == "admin" ]]; then
@@ -846,12 +913,15 @@ validate_aca_container_env() {
     fi
     
     # Check required vars
+    VALIDATION_DETAILS+=("  Required variables:")
     for var in "${vars_to_check[@]}"; do
         if echo "$env_vars" | grep -q "^${var}$"; then
             success "$var — present"
+            VALIDATION_DETAILS+=("    [PASS] $var — present")
         else
             error "$var — MISSING [REQUIRED]"
-            ((VALIDATION_ERRORS++))
+            VALIDATION_DETAILS+=("    [FAIL] $var — MISSING [REQUIRED]")
+            ((VALIDATION_ERRORS++)) || true
         fi
     done
     
@@ -873,10 +943,12 @@ validate_aca_container_env() {
             if [[ "$var" == "$llm_var" ]]; then
                 if [[ "$LLM_PROVIDER" != "openai" && "$LLM_PROVIDER" != "azure_openai" ]] && [[ "$var" == "OPENAI_API_KEY" ]]; then
                     warn "$var — orphaned (you're using $LLM_PROVIDER, not OpenAI)"
-                    ((VALIDATION_WARNINGS++))
+                    VALIDATION_DETAILS+=("    [WARN] $var — orphaned (using $LLM_PROVIDER, not OpenAI)")
+                    ((VALIDATION_WARNINGS++)) || true
                 elif [[ "$LLM_PROVIDER" != "azure_openai" ]] && [[ "$var" == "AZURE_OPENAI_ENDPOINT" ]]; then
                     warn "$var — orphaned (you're using $LLM_PROVIDER, not Azure OpenAI)"
-                    ((VALIDATION_WARNINGS++))
+                    VALIDATION_DETAILS+=("    [WARN] $var — orphaned (using $LLM_PROVIDER, not Azure OpenAI)")
+                    ((VALIDATION_WARNINGS++)) || true
                 fi
             fi
         done
@@ -939,6 +1011,16 @@ generate_report() {
             echo "Status: ✗ VALIDATION FAILED"
         fi
         
+        echo ""
+        echo "========================================================================"
+        echo ""
+        echo "Validation Details (variables discovered per container):"
+        echo "(Plain environment values are shown; secrets and sensitive-looking values are redacted as ********.)"
+        if [[ ${#VALIDATION_DETAILS[@]} -gt 0 ]]; then
+            printf '%s\n' "${VALIDATION_DETAILS[@]}"
+        else
+            echo "  (no per-container details were captured)"
+        fi
         echo ""
         echo "========================================================================"
         
