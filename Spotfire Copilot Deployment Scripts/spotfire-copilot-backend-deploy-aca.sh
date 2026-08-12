@@ -167,6 +167,24 @@ generate_credentials() {
 }
 
 # ── LLM provider collection ──────────────────────────────────────────────────
+category_block_commented() {
+  local prefix="$1" primary="$2" temp_reasoning="${3:-0.2}"
+  cat <<EOM
+# OPTIONAL per-category model overrides. Each category falls back to MODEL_NAME (${primary}) unless BOTH
+# the *_MODEL and *_TEMPERATURE for that category are set. Uncomment and edit to override the image defaults.
+#${prefix}_FAST_MODEL=${primary}
+#${prefix}_FAST_TEMPERATURE=0.3
+#${prefix}_LARGE_MODEL=${primary}
+#${prefix}_LARGE_TEMPERATURE=0.2
+#${prefix}_VISION_MODEL=${primary}
+#${prefix}_VISION_TEMPERATURE=0.1
+#${prefix}_CODE_MODEL=${primary}
+#${prefix}_CODE_TEMPERATURE=0.0
+#${prefix}_REASONING_MODEL=${primary}
+#${prefix}_REASONING_TEMPERATURE=${temp_reasoning}
+EOM
+}
+
 collect_llm_provider() {
   choose_num LLM_PROVIDER "Select LLM provider" "1" \
     "azure_openai|Azure OpenAI" \
@@ -266,6 +284,22 @@ MODEL_NAME=${PRIMARY_MODEL}"
       LLM_SECRETS_BLOCK=""
       ;;
   esac
+
+  # Append optional per-category model overrides (commented out) to the LLM env block.
+  local _cat_prefix="" _cat_reason="0.2"
+  case "$LLM_PROVIDER" in
+    azure_openai) _cat_prefix="AZURE" ;;
+    openai)       _cat_prefix="OPENAI" ;;
+    aws_bedrock)  _cat_prefix="BEDROCK";  _cat_reason="1.0" ;;
+    vertex_ai)    _cat_prefix="VERTEXAI"; _cat_reason="0.1" ;;
+    gemini)       _cat_prefix="GEMINI";   _cat_reason="0.1" ;;
+    nvidia_nim)   _cat_prefix="NVIDIA" ;;
+    ollama)       _cat_prefix="OLLAMA" ;;
+  esac
+  if [[ -n "$_cat_prefix" ]]; then
+    LLM_ENV_BLOCK="${LLM_ENV_BLOCK}
+$(category_block_commented "$_cat_prefix" "$PRIMARY_MODEL" "$_cat_reason")"
+  fi
 }
 
 # ── write cloud env checklist ─────────────────────────────────────────────────

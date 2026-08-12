@@ -180,6 +180,23 @@ function Invoke-GenerateCredentials([string]$OutFile) {
 }
 
 # ── LLM provider collection ───────────────────────────────────────────────────
+function Get-CategoryBlockCommented { param([string]$Prefix, [string]$Primary, [string]$Reason = '0.2')
+    return @"
+# OPTIONAL per-category model overrides. Each category falls back to MODEL_NAME ($Primary) unless BOTH
+# the *_MODEL and *_TEMPERATURE for that category are set. Uncomment and edit to override the image defaults.
+#${Prefix}_FAST_MODEL=$Primary
+#${Prefix}_FAST_TEMPERATURE=0.3
+#${Prefix}_LARGE_MODEL=$Primary
+#${Prefix}_LARGE_TEMPERATURE=0.2
+#${Prefix}_VISION_MODEL=$Primary
+#${Prefix}_VISION_TEMPERATURE=0.1
+#${Prefix}_CODE_MODEL=$Primary
+#${Prefix}_CODE_TEMPERATURE=0.0
+#${Prefix}_REASONING_MODEL=$Primary
+#${Prefix}_REASONING_TEMPERATURE=$Reason
+"@
+}
+
 function Invoke-CollectLlmProvider {
     $script:LlmProvider = Read-Choice "Select LLM provider" @(
         "azure_openai|Azure OpenAI"
@@ -253,6 +270,21 @@ function Invoke-CollectLlmProvider {
             $script:LlmEnvBlock         = "MODEL_PLUGIN_ENTRY_POINT=$($script:ModelPlugin)`nSECONDARY_MODEL_PLUGIN_ENTRY_POINT=$($script:ModelPlugin)`nOLLAMA_BASE_URL=$($script:OllamaBaseUrl)`nMODEL_NAME=$($script:PrimaryModel)"
             $script:LlmSecretsBlock     = ''
         }
+    }
+
+    # Append optional per-category model overrides (commented out) to the LLM env block.
+    $catPrefix = ''; $catReason = '0.2'
+    switch ($script:LlmProvider) {
+        'azure_openai' { $catPrefix = 'AZURE' }
+        'openai'       { $catPrefix = 'OPENAI' }
+        'aws_bedrock'  { $catPrefix = 'BEDROCK';  $catReason = '1.0' }
+        'vertex_ai'    { $catPrefix = 'VERTEXAI'; $catReason = '0.1' }
+        'gemini'       { $catPrefix = 'GEMINI';   $catReason = '0.1' }
+        'nvidia_nim'   { $catPrefix = 'NVIDIA' }
+        'ollama'       { $catPrefix = 'OLLAMA' }
+    }
+    if ($catPrefix) {
+        $script:LlmEnvBlock = "$($script:LlmEnvBlock)`n$(Get-CategoryBlockCommented $catPrefix $script:PrimaryModel $catReason)"
     }
 }
 

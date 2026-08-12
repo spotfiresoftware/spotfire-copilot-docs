@@ -679,6 +679,59 @@ function Build-ValidationSchemas {
 }
 
 ##############################################################################
+# Category-based model overrides
+##############################################################################
+
+# Provider -> environment prefix used for optional per-category model overrides.
+function Get-ProviderEnvPrefix {
+    param([string]$Provider)
+    switch ($Provider) {
+        "azure_openai" { "AZURE" }
+        "openai"       { "OPENAI" }
+        "aws_bedrock"  { "BEDROCK" }
+        "vertex_ai"    { "VERTEXAI" }
+        "gemini"       { "GEMINI" }
+        "nvidia_nim"   { "NVIDIA" }
+        "ollama"       { "OLLAMA" }
+        default        { "" }
+    }
+}
+
+# Validate optional per-category model overrides (<PREFIX>_<CATEGORY>_MODEL / _TEMPERATURE).
+# These are OPTIONAL, so all findings are warnings:
+#   - an incomplete pair (only _MODEL or only _TEMPERATURE) makes the category fall back to MODEL_NAME
+#   - a category override whose prefix does not match the active provider is orphaned
+function Test-CategoryOverrides {
+    param([string[]]$Names)
+    $activePrefix = Get-ProviderEnvPrefix $script:LLMProvider
+    $allPrefixes  = @("AZURE", "OPENAI", "BEDROCK", "VERTEXAI", "GEMINI", "NVIDIA", "OLLAMA")
+    $categories   = @("FAST", "LARGE", "VISION", "CODE", "REASONING")
+    foreach ($prefix in $allPrefixes) {
+        foreach ($cat in $categories) {
+            $hasModel = (("${prefix}_${cat}_MODEL") -in $Names)
+            $hasTemp  = (("${prefix}_${cat}_TEMPERATURE") -in $Names)
+            if ($prefix -eq $activePrefix) {
+                if ($hasModel -and -not $hasTemp) {
+                    Write-Warning "${prefix}_${cat}_MODEL is set without ${prefix}_${cat}_TEMPERATURE - category falls back to MODEL_NAME"
+                    $script:ValidationDetails += "    [WARN] ${prefix}_${cat}_MODEL set without ${prefix}_${cat}_TEMPERATURE (incomplete pair; category falls back to MODEL_NAME)"
+                    $script:ValidationWarnings++
+                }
+                elseif ($hasTemp -and -not $hasModel) {
+                    Write-Warning "${prefix}_${cat}_TEMPERATURE is set without ${prefix}_${cat}_MODEL - category falls back to MODEL_NAME"
+                    $script:ValidationDetails += "    [WARN] ${prefix}_${cat}_TEMPERATURE set without ${prefix}_${cat}_MODEL (incomplete pair; category falls back to MODEL_NAME)"
+                    $script:ValidationWarnings++
+                }
+            }
+            elseif ($hasModel -or $hasTemp) {
+                Write-Warning "${prefix}_${cat}_* override present but active provider is $($script:LLMProvider) - orphaned"
+                $script:ValidationDetails += "    [WARN] ${prefix}_${cat}_* override orphaned (active provider is $($script:LLMProvider), expected prefix $activePrefix)"
+                $script:ValidationWarnings++
+            }
+        }
+    }
+}
+
+##############################################################################
 # AWS ECS Validation
 ##############################################################################
 
@@ -830,6 +883,9 @@ function Validate-ContainerEnv {
             }
         }
     }
+
+    # Validate optional per-category model overrides (pair completeness + provider-prefix match)
+    Test-CategoryOverrides ($envVarNames + $secretNames)
 }
 
 ##############################################################################
@@ -975,6 +1031,9 @@ function Validate-ACAContainerEnv {
             }
         }
     }
+
+    # Validate optional per-category model overrides (pair completeness + provider-prefix match)
+    Test-CategoryOverrides $envVarNames
 }
 
 ##############################################################################
