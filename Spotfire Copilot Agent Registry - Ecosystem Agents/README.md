@@ -106,7 +106,7 @@ Each capability is delivered by an **agent** (end-user guide) backed by a dedica
 | Capability | Agent user guide | A2A agent id | Backing MCP server | MCP | Env prefix |
 |---|---|---|---|---|---|
 | OSDU | [OSDU Agent](agents/Spotfire%20Copilot%20-%20OSDU%20Agent%20User%20Guide.md) | `osdu_agent` | [OSDU MCP Server](mcp-servers/osdu/Spotfire%20Copilot%20-%20OSDU%20MCP%20Server%20User%20Guide.md) | Documented | `OSDU` |
-| Databricks | [Databricks Agent](agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md) | `databricks_agent` | [Databricks MCP Server](mcp-servers/databricks/Spotfire%20Copilot%20-%20Databricks%20MCP%20Server%20User%20Guide.md) | Documented | `DATABRICKS` |
+| Databricks | [Databricks Agent](agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md) | `databricks_agent` | Databricks-managed MCP servers (Functions, Vector Search, Genie, DBSQL) | Documented | `DATABRICKS` |
 | Databricks Genie | [Databricks Genie Agent](agents/Spotfire%20Copilot%20-%20Databricks%20Genie%20Agent%20User%20Guide.md) | `databricks_genie_agent` | `databricks-genie` | External¹ | `GENIE` |
 | Data Virtualization | [Data Virtualization (DV) Agent](agents/Spotfire%20Copilot%20-%20Data%20Virtualization%20%28DV%29%20Agent%20User%20Guide.md) | `dv_agent` | [Data Virtualization (DV) MCP Server](mcp-servers/data-virtualization-dv/Spotfire%20Copilot%20-%20Data%20Virtualization%20%28DV%29%20MCP%20Server%20User%20Guide.md) | Documented | `DV` |
 | Snowflake | [Snowflake Agent](agents/Spotfire%20Copilot%20-%20Snowflake%20Agent%20User%20Guide.md) | `snowflake_agent` | `snowflake` | External¹ | `SNOWFLAKE` |

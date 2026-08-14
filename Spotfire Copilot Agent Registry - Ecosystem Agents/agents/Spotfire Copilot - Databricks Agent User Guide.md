@@ -1,8 +1,8 @@
 # Databricks Agent — User Guide
 
-data × databricks × unity-catalog × sql
+data × databricks × functions × vector-search × genie × sql
 
-The Databricks Agent is a specialist AI agent that explores Unity Catalog metadata, traces table lineage, and runs SQL against Databricks, helping analysts and data engineers discover data and generate accurate queries without leaving the chat.
+The Databricks Agent is a specialist AI agent that connects to several **Databricks‑managed MCP servers** and helps you work with a Databricks workspace in natural language: it calls Unity Catalog **functions**, retrieves grounded passages from **Vector Search** indexes, answers data questions with **Genie**, and runs **SQL** — all from the Spotfire Copilot Panel.
 
 ## Table of Contents
 
@@ -15,10 +15,10 @@ The Databricks Agent is a specialist AI agent that explores Unity Catalog metada
 - [What the Agent Can Do](#what-the-agent-can-do)
 - [How the Workflow Operates](#how-the-workflow-operates)
   - [Stage 1: Orientation](#stage-1-orientation)
-  - [Stage 2: Catalog and Schema Discovery](#stage-2-catalog-and-schema-discovery)
-  - [Stage 3: Table Structure](#stage-3-table-structure)
-  - [Stage 4: Data Lineage and Code Discovery](#stage-4-data-lineage-and-code-discovery)
-  - [Stage 5: Query Construction and Execution](#stage-5-query-construction-and-execution)
+  - [Stage 2: Ask Data Questions with Genie](#stage-2-ask-data-questions-with-genie)
+  - [Stage 3: Grounded Retrieval with Vector Search](#stage-3-grounded-retrieval-with-vector-search)
+  - [Stage 4: Run Unity Catalog Functions](#stage-4-run-unity-catalog-functions)
+  - [Stage 5: Run SQL](#stage-5-run-sql)
   - [Stage 6: Multi-step Workflows](#stage-6-multi-step-workflows)
 - [Typical End-to-End Session](#typical-end-to-end-session)
 - [Key Benefits](#key-benefits)
@@ -29,20 +29,28 @@ The Databricks Agent is a specialist AI agent that explores Unity Catalog metada
 
 ## Introduction
 
-The Databricks Agent is a conversational analyst available inside the Spotfire Copilot Panel. It is connected to a Databricks workspace through a dedicated MCP server and is designed to answer questions in natural language — no Unity Catalog navigation, SQL boilerplate, or workspace tabs required.
+The Databricks Agent is a conversational assistant available inside the Spotfire Copilot Panel. It connects to a Databricks workspace through the workspace's **Databricks‑managed MCP servers** and answers questions in natural language — no Unity Catalog navigation, SQL boilerplate, or workspace tabs required.
 
-The agent uses a set of specialized tools to discover catalogs, schemas, and tables, inspect table columns and partitioning, trace upstream and downstream data lineage (including the notebooks and jobs that produce or consume tables), and execute SQL queries against a configured SQL warehouse. It returns Markdown-formatted results that are easy to read in chat.
+Rather than a single backend, the agent aggregates tools from up to four Databricks‑managed MCP servers, each covering a different capability:
 
-The agent works independently of the surrounding analysis or dashboard. It does not receive marked rows, table data, or column metadata from a visualization — it only acts on the questions and instructions you type into the Spotfire Copilot Panel, and all answers come from the Databricks workspace through the agent's tools.
+- **Unity Catalog Functions** — call registered UC functions (domain analysis and text/LLM helpers) as tools.
+- **Vector Search** — retrieve relevant passages from indexed documents/knowledge (Retrieval‑Augmented Generation).
+- **Genie** — ask natural‑language data questions; Genie writes and runs the SQL for you.
+- **DBSQL** — execute SQL directly against Unity Catalog (read‑only by default).
+
+Any server that is not configured is simply unavailable; the agent works with whatever capabilities are connected. It returns Markdown‑formatted results that are easy to read in chat.
+
+The agent works independently of the surrounding analysis or dashboard. It does not receive marked rows, table data, or column metadata from a visualization — it only acts on the questions you type into the Spotfire Copilot Panel, and all answers come from the Databricks workspace through the agent's tools.
 
 ## Prerequisites
 
-This agent is not deployed standalone. Before you can invoke it from the Spotfire Copilot Panel, two components must already be deployed and reachable in your environment:
+This agent is not deployed standalone. Before you can invoke it from the Spotfire Copilot Panel, the following must be in place:
 
 - **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
-- **`databricks` MCP server** — the agent's tools call this MCP server at runtime. See the [Databricks MCP server user guide](../mcp-servers/databricks/Spotfire%20Copilot%20-%20Databricks%20MCP%20Server%20User%20Guide.md) and [deployment guide](../mcp-servers/databricks/Spotfire%20Copilot%20-%20Databricks%20MCP%20Server%20Deployment%20Guide.md).
+- **Databricks‑managed MCP servers** — the relevant managed MCP endpoints must be enabled in your Databricks workspace and configured on the agent server (one URL per capability: Functions, Vector Search, Genie, DBSQL). No separate self‑hosted MCP server is required.
+- **A Databricks service principal (OAuth M2M)** — the agent authenticates to the managed servers with a service principal using OAuth (tokens are minted and refreshed automatically). The service principal must have permission to use the functions, indexes, Genie spaces, and warehouses you expect to access.
 
-If either component is missing or unreachable, the agent will not appear in the Copilot Panel, or it will fail to answer with a tool-related error.
+Configuration of these endpoints and credentials is covered in the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md#databricks-agent). If a capability's server is not configured or the service principal lacks permission, that capability's tools will be unavailable and the agent will say so.
 
 ## Getting Started
 
@@ -52,207 +60,187 @@ If either component is missing or unreachable, the agent will not appear in the 
 2. Select **Databricks Agent** (or the equivalent label configured in your environment) from the agent picker if more than one agent is available.
 3. Type your question and press Enter.
 
-No data attachment step is required. The agent always queries the live Databricks workspace.
+No data attachment step is required. The agent always works against the live Databricks workspace.
 
 ### What You Provide
 
-The agent only needs **natural-language questions**. To get focused answers, mention any of the following when they apply to your question:
+The agent only needs **natural‑language questions**. To get focused answers, mention any of the following when they apply:
 
-| Reference        | Examples                                                       |
-| ---------------- | -------------------------------------------------------------- |
-| Catalog          | `prod`, `dev`, `samples`, `system`                             |
-| Schema           | `sales`, `bi_conformed`, `accuweather`                         |
-| Table            | Fully qualified `catalog.schema.table`, e.g. `prod.sales.orders` |
-| Column           | Plain column names if they belong to a known table             |
-| SQL              | A specific SQL statement you want executed                     |
-| Lineage scope    | "upstream", "downstream", "notebooks that write to this table" |
+| Reference        | Examples                                                              |
+| ---------------- | -------------------------------------------------------------------- |
+| Data question    | "Total production by field last month", "Top 10 customers by revenue"|
+| Knowledge topic  | "What does the knowledge base say about managed pressure drilling?"  |
+| Function + input | "Diagnose this well's production: …", "Summarize this text: …"       |
+| SQL              | A specific SQL statement you want executed                           |
+| Table            | Fully qualified `catalog.schema.table` for SQL, e.g. `prod.sales.orders` |
 
-If a required reference is missing (for example, a table name without a catalog), the agent will ask a short clarifying question rather than guess.
+If a required detail is missing (for example, a vague time window), the agent will ask a short clarifying question or resolve it explicitly before acting.
 
 ### What Data Is Available
 
-The agent reads from a Databricks workspace through the Databricks MCP server. Typical content includes:
+What the agent can reach depends on which Databricks‑managed servers are configured and what the service principal is allowed to use:
 
-- **Unity Catalog metadata** — catalogs, schemas, and tables with their descriptions and ownership.
-- **Table structure** — columns, data types, comments, and partitioning information.
-- **Data lineage** — upstream and downstream tables, plus notebooks and jobs that read from or write to a table.
-- **Notebook references** — workspace paths to notebooks involved in lineage (so you can open them directly).
-- **Query results** — rows returned by SQL statements executed against the configured SQL warehouse.
+- **Unity Catalog functions** — the functions registered under the configured `{catalog}.{schema}`, exposed as callable tools.
+- **Vector Search indexes** — the configured indexes, queried for the most relevant chunks (grounded retrieval).
+- **Genie** — natural‑language answers grounded in the configured Genie Spaces and Unity Catalog, including the SQL Genie ran.
+- **SQL results** — rows returned by SQL executed against Unity Catalog via the DBSQL server.
 
-The agent does **not** ingest spreadsheet uploads, marked rows from a visualization, or external CSVs. Read/query permissions are determined by the identity and warehouse configured on the MCP server.
+The agent does **not** ingest spreadsheet uploads, marked rows from a visualization, or external CSVs. Access is governed by the identity (service principal) and the resources it is permitted to use.
 
 ## What the Agent Can Do
 
-The Databricks Agent groups its tools into the following capability areas:
+The Databricks Agent groups its tools into four capability areas (each backed by a Databricks‑managed MCP server):
 
-| Capability             | What It Does                                                                                       | Example Request                                                            |
-| ---------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Catalog Discovery      | List all accessible Unity Catalogs                                                                  | "What catalogs are available?"                                             |
-| Catalog & Schema Detail| Describe a catalog's schemas, or a schema's tables (optionally with columns)                        | "Describe the `samples` catalog" / "Describe the `accuweather` schema"     |
-| Table Structure        | Show columns, types, comments, and partitioning for a specific table                                | "Get the structure of `prod.sales.orders`"                                 |
-| Data Lineage           | Trace upstream/downstream tables plus notebooks and jobs that read or write a table                 | "Show lineage and processing notebooks for `prod.sales.orders`"            |
-| SQL Execution          | Run a SQL query against the configured Databricks SQL warehouse                                     | "Run `SELECT city, MAX(temperature) FROM ... GROUP BY city`"               |
-| Query Construction     | Combine discovery and lineage results to draft an accurate SQL query for review or execution        | "Give me the SQL to get the city with the highest temperature"             |
+| Capability             | What It Does                                                                                   | Example Request                                                            |
+| ---------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Unity Catalog Functions | Call registered UC functions as tools — domain analysis and text/LLM helpers                  | "Diagnose the production issue for this well: …"                            |
+| Vector Search (RAG)    | Retrieve and ground answers in indexed documents/knowledge                                     | "What does the petroleum knowledge base say about managed pressure drilling?" |
+| Genie                  | Answer natural‑language data questions; Genie writes and runs the SQL                          | "What was total production by field last month?"                           |
+| SQL Execution          | Run SQL directly against Unity Catalog (read‑only by default)                                  | "Run a read‑only query to preview 10 rows of `prod.sales.orders`"          |
+
+**Example Unity Catalog functions** (specific to the configured functions server; your workspace may differ):
+
+| Function                     | What It Does                                                              |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| `analyze_wellbore_trajectory`| Directional‑drilling analysis of a wellbore trajectory                   |
+| `diagnose_well_production`   | Petroleum‑engineering diagnostics for a well from its production data    |
+| `classify_topic`             | Classify text into one of the provided categories                        |
+| `extract_entities`           | Extract named entities from unstructured text as JSON                    |
+| `summarize_text`             | Summarize text (concise / detailed styles)                               |
+| `validate_data`              | Validate a value against an expected format                              |
+
+The exact function and index tools depend on what is registered in your Databricks workspace and change when the workspace's functions or indexes change.
 
 ## How the Workflow Operates
 
-The agent guides you through a natural, question-and-answer flow. There is no upload step and no session-wide data cache to manage — every question is answered by calling the appropriate tools against the live Databricks workspace.
+The agent guides you through a natural, question‑and‑answer flow. There is no upload step and no session‑wide data cache to manage — every question is answered by calling the appropriate tools against the live Databricks workspace.
 
 ### Stage 1: Orientation
 
-**When to use:** You are new to the workspace and want to see what is available before drilling in.
+**When to use:** You want to see what the agent can do before drilling in.
 
 **Example prompts:**
 - "What can you do?"
-- "List the available catalogs."
-- "What types of data are in the `samples` catalog?"
+- "help"
 
-**What you get back:** A capability summary or a Markdown list of catalogs and their descriptions.
+**What you get back:** A capability summary with starter prompts for functions, Vector Search, Genie, and SQL.
 
-### Stage 2: Catalog and Schema Discovery
+### Stage 2: Ask Data Questions with Genie
 
-**When to use:** You know roughly what you want but not the exact table.
-
-**Example prompts:**
-- "Describe the `prod` catalog."
-- "What schemas are in `samples`?"
-- "Describe the `accuweather` schema."
-- "Describe the `sales` schema and include column details."
-
-**What you get back:** A summary of the catalog's schemas (or the schema's tables). Add "include columns" to get column-level detail useful for query building.
-
-### Stage 3: Table Structure
-
-**When to use:** You have a specific table in mind and want its columns and types.
+**When to use:** You have an ad‑hoc data question and don't want to write SQL.
 
 **Example prompts:**
-- "Get the table structure for `samples.accuweather.forecast_hourly_metric`."
-- "What columns does `prod.sales.orders` have?"
-- "Show data types and partitioning for `prod.sales.orders`."
+- "What were our top 10 customers by revenue last quarter?"
+- "How many active wells reported production yesterday?"
+- (Follow‑up) "Now break that down by region."
 
-**What you get back:** A Markdown table listing columns with types, comments, and partitioning information.
+**What you get back:** Genie's grounded answer, the SQL it ran, and a result table. Follow‑ups continue the same conversation.
 
-### Stage 4: Data Lineage and Code Discovery
+### Stage 3: Grounded Retrieval with Vector Search
 
-**When to use:** You want to understand where a table's data comes from, where it goes, or which notebooks process it.
-
-**Example prompts:**
-- "Show the data lineage for `prod.sales.orders`."
-- "What notebooks write to `prod.sales.orders`?"
-- "Trace upstream and downstream tables for `samples.accuweather.forecast_hourly_metric`."
-- "Provide the structure and data lineage for `forecast_hourly_metric`."
-
-**What you get back:** Upstream and downstream tables, plus the notebooks and jobs that read from or write to the table, with workspace paths you can open to inspect the transformation logic.
-
-### Stage 5: Query Construction and Execution
-
-**When to use:** You want to ask a data question and have the agent draft and/or run the SQL.
+**When to use:** You have a conceptual or document‑grounded question best answered from indexed knowledge.
 
 **Example prompts:**
-- "Can you get the city with the highest temperatures?"
-- "Can you provide the SQL to get that information?"
-- "Run a query that returns the top 10 customers by order total in 2024."
-- "Execute: `SELECT customer_id, SUM(order_total) FROM prod.sales.orders WHERE order_date > '2024-01-01' GROUP BY customer_id ORDER BY 2 DESC LIMIT 10`."
+- "What does our petroleum knowledge base say about managed pressure drilling?"
+- "Find passages about well control in the ingested PDFs."
 
-**What you get back:** Either the SQL statement (when you ask for SQL only) or a Markdown result table (when you ask to run it). The agent will typically discover the relevant table and columns first so the SQL is grounded in real metadata.
+**What you get back:** An answer grounded in the retrieved passages, with a note about which index was used.
+
+### Stage 4: Run Unity Catalog Functions
+
+**When to use:** You want a specific computation or analysis that a registered UC function performs.
+
+**Example prompts:**
+- "Diagnose the production issue for this well: …"
+- "Analyze this wellbore trajectory: …"
+- "Summarize / classify / extract entities from this text."
+
+**What you get back:** The result of the matching function, relayed faithfully, with a brief interpretation when it helps.
+
+### Stage 5: Run SQL
+
+**When to use:** You have SQL to run, or you want exact, hand‑written queries.
+
+**Example prompts:**
+- "Run a read‑only query to preview 10 rows of `prod.sales.orders`."
+- "Execute: `SELECT customer_id, SUM(order_total) FROM prod.sales.orders GROUP BY customer_id ORDER BY 2 DESC LIMIT 10`."
+
+**What you get back:** The executed SQL and a Markdown result table. The agent defaults to read‑only and will confirm before running any statement that modifies data.
 
 ### Stage 6: Multi-step Workflows
 
-**When to use:** Your question combines discovery, lineage, and querying.
+**When to use:** Your question spans more than one capability.
 
 **Example prompts:**
-- "Find the table that stores hourly forecasts in `samples`, describe it, and show the city with the highest average temperature for July."
-- "Trace lineage for `prod.sales.orders` and write a SQL that joins it with its primary upstream table."
-- "Describe the `accuweather` schema, pick the forecast table, and return the top 5 hottest cities."
+- "Ask Genie for last month's production by field, then summarize the result with the summarize function."
+- "Retrieve what the knowledge base says about a symptom, then run a read‑only query to check the related table."
 
-**What you get back:** A consolidated answer where the agent has chained tools internally (list/describe → lineage → SQL) and reports the final result with brief notes about intermediate steps.
+**What you get back:** A consolidated answer where the agent chained capabilities internally (retrieval / Genie / function / SQL) and reports the final result with brief notes about intermediate steps.
 
 ## Typical End-to-End Session
 
 ```
 You:    What can you do?
 
-Agent:  [Returns the capability summary covering catalog discovery,
-         catalog/schema detail, table structure, lineage, SQL
-         execution, and multi-step workflows.]
+Agent:  [Returns the capability summary: UC functions, Vector Search (RAG),
+         Genie data questions, and SQL execution, with starter prompts.]
 
-You:    List available catalogs.
+You:    What does the petroleum knowledge base say about managed pressure drilling?
 
-Agent:  Found 5 catalogs:
-        - samples       Sample datasets shipped with Databricks
-        - prod          Main production catalog
-        - dev           Development catalog
-        - system        System and audit data
-        - main          Default catalog
-        ...
+Agent:  [Queries the Vector Search knowledge index and answers, grounded in the
+         retrieved passages, noting the index used.]
 
-You:    Describe the samples catalog.
+You:    Ask Genie: what was total production by field last month?
 
-Agent:  samples contains 4 schemas:
-        - accuweather   Weather forecast data
-        - tpch          TPC-H benchmark tables
-        - nyctaxi       NYC taxi trips
-        - retail        Retail sample data
+Agent:  [Submits the question to Genie, polls until complete, and returns the
+         SQL Genie ran plus the result table.]
 
-You:    Get the structure for samples.accuweather.forecast_hourly_metric.
+You:    Diagnose the production issue for well A-12 given this production data: ...
 
-Agent:  [Returns a Markdown table with columns, types, and comments.]
+Agent:  [Calls the diagnose_well_production UC function and relays its result.]
 
-You:    Provide the structure and data lineage for forecast_hourly_metric.
+You:    Run a read-only query to preview 10 rows of prod.sales.orders.
 
-Agent:  [Returns columns + upstream tables + downstream tables +
-         notebooks that read/write the table with workspace paths.]
-
-You:    Can you get the city with the highest temperatures?
-
-Agent:  Suggested SQL:
-        SELECT city, MAX(temperature) AS max_temp
-        FROM samples.accuweather.forecast_hourly_metric
-        GROUP BY city
-        ORDER BY max_temp DESC
-        LIMIT 1;
+Agent:  Executed (read-only):
+        SELECT * FROM prod.sales.orders LIMIT 10;
 
         Result:
-        city    max_temp
-        Phoenix 47.8
+        [Markdown table of 10 rows]
 
 You:    Thanks.
 ```
 
 ## Key Benefits
 
-| Benefit                              | Description                                                                                                                  |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Natural-language data discovery      | Browse catalogs, schemas, and tables in plain English without opening the Databricks UI.                                     |
-| Metadata-grounded SQL                | The agent inspects Unity Catalog descriptions and column details before drafting queries, reducing guesswork.                |
-| Comprehensive lineage                | Trace upstream/downstream tables plus the notebooks and jobs involved in producing or consuming a table.                     |
-| Code discovery                       | Lineage results include workspace paths to notebooks so you can inspect the actual transformation logic.                     |
-| One-step execution                   | Ask for SQL and the result in the same message; the agent runs the statement against the configured SQL warehouse.            |
-| Markdown output                      | All descriptions and result tables are returned as Markdown, optimized for chat reading and copy-paste.                       |
-| Works independently                  | No need to mark rows or attach tables — the agent acts on the question you type in the Spotfire Copilot Panel.                |
+| Benefit                              | Description                                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| One agent, four capabilities         | Functions, Vector Search (RAG), Genie, and SQL — all from one chat, routed automatically to the right server.       |
+| Natural‑language data answers        | Ask questions in plain English; Genie writes and runs the SQL, or the agent runs the SQL you provide.              |
+| Grounded retrieval                   | Vector Search answers are grounded in indexed documents/knowledge, reducing hallucination.                          |
+| Domain functions on tap              | Registered Unity Catalog functions (e.g. well diagnostics, text helpers) are callable directly from chat.          |
+| Read‑only by default                 | SQL execution defaults to read‑only; data‑modifying statements require explicit confirmation.                       |
+| Secure, auto‑refreshing auth         | Connects via a Databricks service principal (OAuth M2M); tokens are minted and refreshed automatically.             |
+| Markdown output                      | Descriptions and result tables are returned as Markdown, optimized for chat reading and copy‑paste.                 |
 
 ## Tips for Best Results
 
-- **Use fully qualified table names.** `catalog.schema.table` avoids ambiguity (e.g. `prod.sales.orders`).
-- **Start broad, then narrow.** List catalogs → describe a catalog → describe a schema → describe a table.
-- **Ask for columns when drafting SQL.** Add "include columns" or "with column detail" to your schema description requests so the agent can write accurate SQL.
-- **Request lineage when debugging data.** Lineage reveals the notebooks and upstream tables that explain unexpected values.
-- **Be explicit about SQL vs. results.** Say "give me the SQL" if you only want the statement, or "run this and show the result" if you want execution.
-- **Keep queries scoped.** Add `LIMIT` and `WHERE` clauses for exploratory work to avoid long-running queries.
-- **Open notebooks directly.** When the agent shows a notebook path in lineage, you can open it in your Databricks workspace to review the code.
+- **Pick the right capability by intent.** Ad‑hoc data question → Genie; document/concept question → Vector Search; a specific computation → a UC function; exact/precise query → SQL.
+- **Make questions concrete.** Resolve vague time windows ("recent") into explicit ranges so Genie and SQL return what you expect.
+- **Ground knowledge questions.** For "what does X say about Y", the agent uses Vector Search and cites the retrieved passages — ask it to name the index if you want provenance.
+- **Default to read‑only SQL.** Say "read‑only" for exploration; only ask for a write when you truly intend to change data, and confirm the change.
+- **Fully qualify table names** as `catalog.schema.table` in SQL.
+- **Follow up in the same thread** for Genie so it reuses the conversation instead of starting over.
 - **Ask for help anytime.** Typing `help` or `what can you do?` returns the capability summary.
 
 ## Glossary
 
 | Term                | Definition                                                                                                                  |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Unity Catalog (UC)  | Databricks' centralized governance layer for cataloging, securing, and discovering data assets.                             |
-| Catalog             | The top-level container in Unity Catalog (e.g. `prod`, `dev`, `samples`).                                                   |
-| Schema              | A namespace inside a catalog that groups related tables (e.g. `sales`, `accuweather`).                                      |
-| Table               | A managed or external table within a schema; the unit you query with SQL.                                                   |
-| Column              | A single field within a table, with a name, data type, and optional description.                                            |
-| Lineage             | The chain of upstream and downstream relationships between tables, plus the notebooks and jobs that read or write them.     |
-| Notebook            | A Databricks document containing code (Python, SQL, Scala) that often implements transformation logic.                      |
-| Job                 | A scheduled or triggered execution unit that runs notebooks or other tasks in Databricks.                                   |
-| SQL Warehouse       | The compute endpoint that executes SQL queries; the agent uses it for `execute_sql_query`.                                  |
-| MCP Server          | The Model Context Protocol server (`databricks`) that exposes the Databricks tools the agent calls at runtime.              |
+| Databricks‑managed MCP server | A Model Context Protocol endpoint hosted by Databricks that exposes a workspace capability (functions, vector‑search, genie, sql) as tools. |
+| Unity Catalog (UC)  | Databricks' centralized governance layer for cataloging, securing, and discovering data and AI assets.                      |
+| UC Function         | A function registered in Unity Catalog, exposed by the Functions MCP server as a callable tool.                             |
+| Vector Search       | Databricks' vector index/retrieval service; the agent queries indexes to ground answers in relevant text (RAG).            |
+| RAG                 | Retrieval‑Augmented Generation — grounding an answer in retrieved passages rather than the model's own knowledge.          |
+| Genie               | Databricks' natural‑language data experience; it generates and runs SQL over configured Genie Spaces to answer questions.  |
+| DBSQL               | The Databricks SQL execution capability; the agent runs SQL against Unity Catalog through the DBSQL MCP server.            |
+| Service principal (M2M OAuth) | A non‑human Databricks identity used with OAuth client credentials to authenticate the agent to the managed servers. |

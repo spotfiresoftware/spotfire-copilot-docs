@@ -1,5 +1,14 @@
 # Databricks MCP Server Deployment Guide
 
+> **⚠️ Deprecated.** The **Databricks Agent** now connects directly to
+> **Databricks-managed MCP servers** (Unity Catalog Functions, Vector Search,
+> Genie, and DBSQL) using a service principal (M2M OAuth) — it no longer
+> requires this self-hosted `databricks` MCP server. See the
+> [Databricks Agent User Guide](../../agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md)
+> and the **Databricks agent** section of the
+> [LangGraph DeepAgents Server (OSS) Deployment Guide](../../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md#databricks-agent).
+> This guide is retained for legacy self-hosted deployments only.
+
 ## Table of Contents
 
 - [1. Introduction](#1-introduction)

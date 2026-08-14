@@ -2,6 +2,13 @@
 
 data × databricks × unity-catalog × sql
 
+> **⚠️ Deprecated.** The **Databricks Agent** now uses **Databricks-managed MCP
+> servers** (Unity Catalog Functions, Vector Search, Genie, and DBSQL) via a
+> service principal (M2M OAuth) instead of this self-hosted `databricks` MCP
+> server. See the
+> [Databricks Agent User Guide](../../agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md).
+> This guide is retained for legacy self-hosted deployments only.
+
 The `databricks` MCP server exposes a curated set of tools for exploring Unity Catalog metadata, tracing table lineage (including notebooks and jobs), and executing SQL against a Databricks SQL warehouse, so that agents and other MCP clients can answer data questions without writing Databricks API calls.
 
 ## Table of Contents
@@ -20,7 +27,9 @@ The `databricks` MCP server exposes a curated set of tools for exploring Unity C
 
 ## Overview
 
-This MCP server is the backend for the [Databricks Agent](../../agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md). It wraps the Databricks SDK behind a small set of Markdown-returning tools focused on:
+> This self-hosted server is **legacy**. The [Databricks Agent](../../agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md) now uses Databricks-managed MCP servers (Functions, Vector Search, Genie, DBSQL) instead. The description below applies only to legacy self-hosted deployments.
+
+This MCP server wraps the Databricks SDK behind a small set of Markdown-returning tools focused on:
 
 - Catalog, schema, and table discovery.
 - Column and partitioning detail for tables.
