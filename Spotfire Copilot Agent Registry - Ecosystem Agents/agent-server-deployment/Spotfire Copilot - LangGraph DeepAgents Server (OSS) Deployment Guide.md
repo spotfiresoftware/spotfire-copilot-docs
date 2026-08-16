@@ -405,14 +405,17 @@ Quick-start minimum set:
 
 ### Databricks agent
 
-The `databricks_agent` connects to several **Databricks-managed MCP servers** at once and aggregates their tools — Unity Catalog **Functions**, **Vector Search** (RAG), **Genie**, and **DBSQL**. Configure a URL per capability (any unset server is skipped):
+The `databricks_agent` is a **domain-agnostic blueprint**: it connects to several **Databricks-managed MCP servers** and aggregates their tools — **Genie** (a *scoped* space, the primary data-retrieval path), Unity Catalog **Functions**, **Vector Search / AI Search** (RAG), and **DBSQL** (discovery + fallback). You adapt it to a domain by pointing these URLs at that domain's **Genie space**, **functions**, and **indexes** — the agent itself doesn't change. Configure a URL per capability (any unset server is skipped):
 
 ```env
+# Genie: a SCOPED space (include the space id). This is the primary data path.
+DATABRICKS_GENIE_MCP_SERVER_URL=https://<workspace-host>/api/2.0/mcp/genie/{space_id}
 DATABRICKS_FUNCTIONS_MCP_SERVER_URL=https://<workspace-host>/api/2.0/mcp/functions/{catalog}/{schema}
 DATABRICKS_VECTORSEARCH_MCP_SERVER_URL=https://<workspace-host>/api/2.0/mcp/vector-search/{catalog}/{schema}
-DATABRICKS_GENIE_MCP_SERVER_URL=https://<workspace-host>/api/2.0/mcp/genie
 DATABRICKS_DBSQL_MCP_SERVER_URL=https://<workspace-host>/api/2.0/mcp/sql
 ```
+
+> **Scoped vs. generic Genie.** Point Genie at a specific space (`/genie/{space_id}`) whose tools are scoped to your domain's tables — this is what lets the agent reliably retrieve data. The generic `/genie` server (no space id) is not recommended for this agent. To build an agent for another domain, create a new Genie space (+ functions + indexes) for that domain and set these URLs to it.
 
 **Authentication — prefer M2M OAuth.** Set a Databricks **service principal** so tokens are minted and auto-refreshed (one identity shared across all four servers):
 
@@ -423,9 +426,11 @@ DATABRICKS_OAUTH_CLIENT_SECRET=<service-principal-oauth-secret>   # store as a s
 # DATABRICKS_OAUTH_SCOPE=all-apis
 ```
 
-When OAuth is configured it takes precedence; the shared static `DATABRICKS_MCP_BEARER_TOKEN` is only a fallback (Databricks-managed tokens are short-lived, so OAuth is recommended for anything beyond a quick test). The Keycloak `aud=mcp` minter is never used for Databricks. The service principal must have permission to use the functions, indexes, Genie spaces, and warehouses you expect to access. The function/index tool names reflect what is registered in your workspace's `{catalog}.{schema}`.
+When OAuth is configured it takes precedence; the shared static `DATABRICKS_MCP_BEARER_TOKEN` is only a fallback (Databricks-managed tokens are short-lived, so OAuth is recommended for anything beyond a quick test). The Keycloak `aud=mcp` minter is never used for Databricks. The service principal must have permission (including `CAN_RUN` on the Genie space) to use the Genie space, functions, indexes, and warehouse you expect to access. The Genie/function/index tool names reflect the space and `{catalog}.{schema}` you configure.
 
-> For CI/Helm deployment, set the four `LANGGRAPH_OSS_DATABRICKS_*_MCP_SERVER_URL` and `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_ID` (+ optional token URL/scope) in a `workflow-config/*.env` file, and add `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_SECRET` as a repository secret.
+Optional per-server timeouts help with slow, LLM-backed calls (functions and Genie can exceed the 30s default on cold start): `DATABRICKS_FUNCTIONS_MCP_CALL_TIMEOUT`, `DATABRICKS_DBSQL_MCP_CALL_TIMEOUT`, `DATABRICKS_GENIE_MCP_CALL_TIMEOUT` (seconds).
+
+> For CI/Helm deployment, set the four `LANGGRAPH_OSS_DATABRICKS_*_MCP_SERVER_URL` and `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_ID` (+ optional token URL/scope and `*_MCP_CALL_TIMEOUT`) in a `workflow-config/*.env` file, and add `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_SECRET` as a repository secret.
 
 Commonly optional:
 
@@ -520,7 +525,7 @@ Use this table when you want concrete variable names instead of `<PREFIX>` patte
 | OSDU_MCP_CALL_TIMEOUT | No | OSDU per-call timeout seconds. | `60` |
 | DATABRICKS_FUNCTIONS_MCP_SERVER_URL | Conditional | Databricks-managed **Functions** MCP endpoint when `databricks_agent` is enabled. Any unset Databricks server is skipped. | `https://<workspace-host>/api/2.0/mcp/functions/{catalog}/{schema}` |
 | DATABRICKS_VECTORSEARCH_MCP_SERVER_URL | Conditional | Databricks-managed **Vector Search** MCP endpoint for `databricks_agent`. | `https://<workspace-host>/api/2.0/mcp/vector-search/{catalog}/{schema}` |
-| DATABRICKS_GENIE_MCP_SERVER_URL | Conditional | Databricks-managed **Genie** MCP endpoint for `databricks_agent` (distinct from the standalone `databricks_genie_agent`, which uses `GENIE_MCP_SERVER_URL`). | `https://<workspace-host>/api/2.0/mcp/genie` |
+| DATABRICKS_GENIE_MCP_SERVER_URL | Conditional | Databricks-managed **Genie** MCP endpoint for `databricks_agent` — use a **scoped space** (`/genie/{space_id}`), the primary data-retrieval path. Distinct from the standalone `databricks_genie_agent`, which uses `GENIE_MCP_SERVER_URL`. | `https://<workspace-host>/api/2.0/mcp/genie/{space_id}` |
 | DATABRICKS_DBSQL_MCP_SERVER_URL | Conditional | Databricks-managed **DBSQL** MCP endpoint for `databricks_agent`. | `https://<workspace-host>/api/2.0/mcp/sql` |
 | DATABRICKS_OAUTH_CLIENT_ID | Conditional | Databricks service-principal (M2M OAuth) client id. Enables auto-minted/refreshed tokens shared across all Databricks servers above (preferred over a static token). | `<application-id>` |
 | DATABRICKS_OAUTH_CLIENT_SECRET | Conditional | Service-principal OAuth secret. Store as a secret (GitHub/K8s), not in plaintext config. | `<secret>` |
