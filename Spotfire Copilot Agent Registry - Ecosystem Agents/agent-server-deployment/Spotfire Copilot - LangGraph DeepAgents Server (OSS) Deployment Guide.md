@@ -430,7 +430,34 @@ When OAuth is configured it takes precedence; the shared static `DATABRICKS_MCP_
 
 Optional per-server timeouts help with slow, LLM-backed calls (functions and Genie can exceed the 30s default on cold start): `DATABRICKS_FUNCTIONS_MCP_CALL_TIMEOUT`, `DATABRICKS_DBSQL_MCP_CALL_TIMEOUT`, `DATABRICKS_GENIE_MCP_CALL_TIMEOUT` (seconds).
 
-> For CI/Helm deployment, set the four `LANGGRAPH_OSS_DATABRICKS_*_MCP_SERVER_URL` and `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_ID` (+ optional token URL/scope and `*_MCP_CALL_TIMEOUT`) in a `workflow-config/*.env` file, and add `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_SECRET` as a repository secret.
+**Behavior pack (per-domain).** Everything domain-specific — the system prompt, domain knowledge (`AGENTS.md`), the help text, the capability skills, and the agent-card manifest (`pack.yaml`) — lives in a single **behavior pack** folder. The agent ships with a bundled `default_pack` (a petroleum reference), so it runs out of the box. To adapt it to another domain **without rebuilding the app logic**, mount your own pack and point the agent at it. Resolution order (first that exists wins):
+
+1. `DATABRICKS_AGENT_PACK_DIR` — an explicit path to your mounted pack.
+2. A conventional mount point — default `/config/databricks_agent` (override the location with `DATABRICKS_AGENT_PACK_MOUNT`). Mount a volume containing `pack.yaml` there and no env var is needed.
+3. The bundled `default_pack` (always present).
+
+```env
+# Point the agent at a mounted pack (optional; default = bundled pack)
+DATABRICKS_AGENT_PACK_DIR=/config/databricks_agent
+# DATABRICKS_AGENT_PACK_MOUNT=/config/databricks_agent   # change the default mount point
+```
+
+In Helm, mount the pack via the chart's `extraVolumes` / `extraVolumeMounts` (e.g. from a ConfigMap or PVC) at the pack path:
+
+```yaml
+extraVolumes:
+  - name: databricks-agent-pack
+    configMap:
+      name: databricks-agent-pack        # kubectl create configmap ... --from-file=...
+extraVolumeMounts:
+  - name: databricks-agent-pack
+    mountPath: /config/databricks_agent
+    readOnly: true
+```
+
+> A ConfigMap is flat (keys can't contain `/`), so a pack that includes a `skills/<id>/SKILL.md` subtree needs a **PVC** (or a baked image); a single-level pack works via ConfigMap. The bundled `default_pack` is always available regardless.
+
+> For CI/Helm deployment, set the four `LANGGRAPH_OSS_DATABRICKS_*_MCP_SERVER_URL` and `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_ID` (+ optional token URL/scope, `*_MCP_CALL_TIMEOUT`, and `LANGGRAPH_OSS_DATABRICKS_AGENT_PACK_DIR` / `_MOUNT`) in a `workflow-config/*.env` file, and add `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_SECRET` as a repository secret.
 
 Commonly optional:
 
@@ -534,6 +561,8 @@ Use this table when you want concrete variable names instead of `<PREFIX>` patte
 | DATABRICKS_MCP_BEARER_TOKEN | No | Shared **static token fallback** for the Databricks servers, used only when OAuth is not configured. | `<token>` |
 | DATABRICKS_MCP_SERVER_URL | No | Optional legacy single self-hosted Databricks MCP server (kept for backward compatibility). | `https://mcp-databricks.example.com/mcp` |
 | DATABRICKS_MCP_SERVER_TRANSPORT | No | Databricks MCP transport (applies per server). | `streamable-http` |
+| DATABRICKS_AGENT_PACK_DIR | No | Path to a mounted **behavior pack** (system prompt, `AGENTS.md`, help, skills, `pack.yaml`) that adapts `databricks_agent` to a domain. Unset = auto-use the mount point, else the bundled `default_pack`. | `/config/databricks_agent` |
+| DATABRICKS_AGENT_PACK_MOUNT | No | Conventional pack mount point checked when `DATABRICKS_AGENT_PACK_DIR` is unset (used only if it contains `pack.yaml`). | `/config/databricks_agent` |
 | DATABRICKS_MCP_CALL_TIMEOUT | No | Databricks per-call timeout seconds (per server via `<PREFIX>_MCP_CALL_TIMEOUT`). | `60` |
 | GENIE_MCP_SERVER_URL | Conditional | Databricks Genie MCP endpoint URL when `databricks_genie_agent` is enabled. | `https://mcp-databricks-genie.example.com/mcp` |
 | GENIE_MCP_BEARER_TOKEN | Conditional | Bearer token for Databricks Genie MCP. | `<token>` |

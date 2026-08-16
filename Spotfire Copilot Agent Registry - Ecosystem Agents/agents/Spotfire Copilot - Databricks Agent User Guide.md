@@ -58,7 +58,7 @@ The agent's **behavior is domain‑agnostic** — its routing, tool‑use rules,
 
 1. **Build the resources** for your domain (a Genie space, some UC functions, one or more Vector Search indexes).
 2. **Point the agent at them** by setting the four URLs in the agent server's configuration (see the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md#databricks-agent)). Only the ones you set are active.
-3. **(Optional) add domain knowledge.** The agent already knows *how* to route (data → Genie, computation → function, documents → AI Search, discovery → SQL). For sharper answers you can add a small amount of **domain context** (key terms, formulas, thresholds) to the agent's instructions so it interprets results like an expert.
+3. **(Optional) supply a behavior pack.** The agent already knows *how* to route (data → Genie, computation → function, documents → AI Search, discovery → SQL). For sharper, domain‑aware answers you can provide a **behavior pack** — a small folder holding the agent's system prompt, domain knowledge (key terms, formulas, thresholds), help text, and skills. The server ships with a built‑in default pack; to use your own, mount your pack folder and point the agent at it (no code change). See *Behavior pack (per‑domain)* in the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md#databricks-agent).
 
 That's the whole recipe. The same agent becomes a specialist for whatever domain those three resources describe — a blueprint you can replicate per domain.
 
@@ -234,6 +234,7 @@ Swap the Genie space, functions, and index for a different domain, and the same 
 | Term | Definition |
 | --- | --- |
 | Blueprint | The domain‑agnostic agent design; specialized per domain by the Databricks resources it points at. |
+| Behavior pack | A folder holding the agent's domain‑specific inputs (system prompt, domain knowledge, help text, skills, and a `pack.yaml` manifest). The server ships a default pack; mount your own to adapt the agent to a domain without code changes. |
 | Databricks‑managed MCP server | A Model Context Protocol endpoint hosted by Databricks exposing a workspace capability (genie / functions / vector‑search / sql) as tools. |
 | Genie space | A scoped Databricks Genie experience over a chosen set of tables; the agent's primary natural‑language data‑retrieval path. |
 | Unity Catalog (UC) | Databricks' centralized governance layer for cataloging, securing, and discovering data and AI assets. |
