@@ -9,6 +9,7 @@
 # 
 #  Usage:
 #    ./spotfire-copilot-backend-validate-env.sh
+#    ./spotfire-copilot-backend-validate-env.sh --logs   # download container logs only
 #
 #  Supports:
 #    - AWS ECS/Fargate (identify by ECS service name or task definition)
@@ -73,6 +74,7 @@ LLM_PROVIDER=""
 HAS_ADMIN_CONSOLE=false
 ORCHESTRATOR_VARS=()
 ADMIN_CONSOLE_VARS=()
+OPTIONAL_VARS=()
 REPORT_FILE=""
 VALIDATION_ERRORS=0
 VALIDATION_WARNINGS=0
@@ -310,6 +312,23 @@ preflight_check_azure() {
         success "Azure reachable. Resource groups visible to this account:"
         echo "$groups" | sed 's/^/    • /'
     fi
+
+    # 4) Ensure the 'az containerapp' command group is available.
+    #    Disable dynamic-install so a missing extension errors immediately instead of prompting.
+    echo ""
+    info "Checking for the 'az containerapp' command group..."
+    if ! AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no az containerapp --help &> /dev/null; then
+        error "The 'az containerapp' command group is not available."
+        echo ""
+        echo "Install/enable it, then re-run this validator:"
+        echo "  az extension add --name containerapp --upgrade"
+        echo "  az provider register --namespace Microsoft.App"
+        echo "  Docs: https://learn.microsoft.com/en-us/azure/container-apps/get-started"
+        echo ""
+        exit 1
+    fi
+    success "'az containerapp' command group available."
+
     echo ""
     success "Preflight passed — the Azure CLI can talk to your resources."
 }
@@ -595,8 +614,6 @@ phase2_build_schema_interactive() {
 build_validation_schemas() {
     # Core required vars for Orchestrator
     ORCHESTRATOR_VARS=(
-        "IMAGE_TAG"
-        "FASTAPI_APP_VERSION"
         "LOG_LEVEL"
         "SECRET_KEY"
         "HASHED_ADMIN_PASSWORD"
@@ -652,14 +669,37 @@ build_validation_schemas() {
     
     # Admin Console schema (subset of Orchestrator)
     ADMIN_CONSOLE_VARS=(
-        "IMAGE_TAG"
-        "FASTAPI_APP_VERSION"
         "LOG_LEVEL"
         "SECRET_KEY"
         "HASHED_ADMIN_PASSWORD"
         "SYNC_DATABASE_URL"
         "DB_SSLMODE"
     )
+
+    # Informational-only vars: required for Docker Compose but NOT for cloud.
+    # ECS / Container Apps carry the image tag in the image reference, so these
+    # are reported but never fail validation.
+    OPTIONAL_VARS=(
+        "IMAGE_TAG"
+        "FASTAPI_APP_VERSION"
+    )
+}
+
+# Report optional/informational vars. Present or not, these never fail validation.
+check_optional_vars() {
+    local present_names="$1"
+    [[ ${#OPTIONAL_VARS[@]} -eq 0 ]] && return 0
+    VALIDATION_DETAILS+=("  Optional variables (informational):")
+    local var
+    for var in "${OPTIONAL_VARS[@]}"; do
+        if echo "$present_names" | grep -q "^${var}$"; then
+            info "$var — present (optional)"
+            VALIDATION_DETAILS+=("    [INFO] $var — present (optional)")
+        else
+            info "$var — not set (optional; cloud carries the image tag in the image reference)"
+            VALIDATION_DETAILS+=("    [INFO] $var — not set (optional; not required for cloud)")
+        fi
+    done
 }
 
 ##############################################################################
@@ -839,6 +879,9 @@ validate_container_env() {
             ((VALIDATION_ERRORS++)) || true
         fi
     done
+
+    # Report optional/informational vars (not required for cloud deployments)
+    check_optional_vars "$(printf '%s\n%s\n' "$env_vars" "$secret_refs")"
     
     # Check for orphaned vars
     echo ""
@@ -941,7 +984,11 @@ validate_aca_container_env() {
     info "Validating Container App: $app_name, Container: $container_name (schema: $role)"
     
     local env_vars
-    env_vars=$(echo "$app_json" | jq -r ".properties.template.containers[] | select(.name == \"$container_name\") | .env[].name")
+    env_vars=$(echo "$app_json" | jq -r ".properties.template.containers[] | select(.name == \"$container_name\") | .env // [] | .[].name")
+    
+    # Names of env vars that are backed by a Container App secret reference.
+    local secret_backed
+    secret_backed=$(echo "$app_json" | jq -r ".properties.template.containers[] | select(.name == \"$container_name\") | .env // [] | .[] | select(.secretRef != null and .secretRef != \"\") | .name")
     
     # name<TAB>value<TAB>secretRef rows for each env entry
     local env_rows
@@ -978,14 +1025,22 @@ validate_aca_container_env() {
     VALIDATION_DETAILS+=("  Required variables:")
     for var in "${vars_to_check[@]}"; do
         if echo "$env_vars" | grep -q "^${var}$"; then
-            success "$var — present"
-            VALIDATION_DETAILS+=("    [PASS] $var — present")
+            if echo "$secret_backed" | grep -q "^${var}$"; then
+                success "$var — present (secret ref)"
+                VALIDATION_DETAILS+=("    [PASS] $var — present (secret ref)")
+            else
+                success "$var — present"
+                VALIDATION_DETAILS+=("    [PASS] $var — present")
+            fi
         else
             error "$var — MISSING [REQUIRED]"
             VALIDATION_DETAILS+=("    [FAIL] $var — MISSING [REQUIRED]")
             ((VALIDATION_ERRORS++)) || true
         fi
     done
+
+    # Report optional/informational vars (not required for cloud deployments)
+    check_optional_vars "$env_vars"
     
     # Check for orphaned vars
     echo ""
@@ -1095,14 +1150,250 @@ generate_report() {
 }
 
 ##############################################################################
+# Container log download (troubleshooting)
+##############################################################################
+
+# AWS/CloudWatch only: true time-bounded window for `aws logs tail --since`.
+# ACA has no time-window flag, so it uses a fixed 2000-line cap instead (see
+# download_aca_logs); LOG_SINCE does not apply to Azure Container Apps.
+LOG_SINCE="1h"
+
+print_usage() {
+    cat <<'EOF'
+Spotfire Copilot - Backend Environment Validator
+
+Usage:
+  ./spotfire-copilot-backend-validate-env.sh [options]
+
+Options:
+  --logs      Skip validation and download container logs (orchestrator / admin /
+              both) to a file in this folder for troubleshooting. Reuses saved
+              answers (validator-answers.env) if present.
+  -h, --help  Show this help and exit.
+EOF
+}
+
+# Ask which container's logs to download. Menu goes to stderr; result to stdout.
+prompt_log_target() {
+    echo ""                                                >&2
+    echo "Which container's logs do you want to download?" >&2
+    echo "  1) Orchestrator"                               >&2
+    echo "  2) Admin Console"                              >&2
+    echo "  3) Both"                                       >&2
+    local c
+    read -p "Enter choice (1-3): " c
+    case "$c" in
+        1) echo "orchestrator" ;;
+        2) echo "admin" ;;
+        3) echo "both" ;;
+        *) echo "orchestrator" ;;
+    esac
+}
+
+# Extract the awslogs config for a container: prints "driver|group|prefix|region".
+ecs_log_config() {
+    local task_json="$1" container="$2"
+    echo "$task_json" | jq -r --arg n "$container" '
+        .[] | select(.name==$n) | (.logConfiguration // {}) as $lc |
+        (($lc.logDriver) // "none") + "|" +
+        ((($lc.options // {})["awslogs-group"]) // "") + "|" +
+        ((($lc.options // {})["awslogs-stream-prefix"]) // "") + "|" +
+        ((($lc.options // {})["awslogs-region"]) // "")'
+}
+
+# Download CloudWatch logs for the $want container from a given task definition.
+download_ecs_logs_from_taskdef() {
+    local task_def="$1" want="$2"
+    local task_json
+    task_json=$(aws ecs describe-task-definition \
+        --task-definition "$task_def" \
+        --region "$AWS_REGION" \
+        --query 'taskDefinition.containerDefinitions' \
+        --output json 2>&1) || {
+        error "Failed to fetch task definition: $task_def"
+        return 1
+    }
+
+    local container
+    container=$(echo "$task_json" | jq -r --arg r "$want" '.[] | select(.name | test($r; "i")) | .name' | head -n1)
+    if [[ -z "$container" ]]; then
+        warn "No '$want' container found in task definition '$task_def'."
+        return 1
+    fi
+
+    local cfg driver group prefix region
+    cfg=$(ecs_log_config "$task_json" "$container")
+    IFS='|' read -r driver group prefix region <<< "$cfg"
+    [[ -z "$region" ]] && region="$AWS_REGION"
+
+    if [[ "$driver" != "awslogs" ]]; then
+        warn "Container '$container' uses log driver '$driver' (not awslogs) - cannot read from CloudWatch."
+        warn "Inspect your logging sink (e.g., FireLens) directly instead."
+        return 1
+    fi
+    if [[ -z "$group" ]]; then
+        warn "Container '$container' has no awslogs-group configured."
+        return 1
+    fi
+
+    local ts outfile
+    ts=$(date +"%Y%m%d-%H%M%S")
+    outfile="container-logs-${ts}-ecs-${want}.log"
+    info "Fetching CloudWatch logs for '$container' (group '$group', last ${LOG_SINCE})..."
+    {
+        echo "# Spotfire Copilot container logs"
+        echo "# Generated:       $(date)"
+        echo "# Platform:        AWS ECS/Fargate"
+        echo "# Region:          $region"
+        echo "# Cluster:         $AWS_CLUSTER"
+        echo "# Task definition: $task_def"
+        echo "# Container:       $container ($want)"
+        echo "# Log group:       $group"
+        echo "# Stream prefix:   ${prefix:-<none>}"
+        echo "# Window:          last ${LOG_SINCE}"
+        echo "# --------------------------------------------------------------"
+    } > "$outfile"
+
+    if [[ -n "$prefix" ]]; then
+        aws logs tail "$group" --since "$LOG_SINCE" --region "$region" \
+            --format short --log-stream-name-prefix "${prefix}/${container}" \
+            >> "$outfile" 2>> "$outfile" \
+            && success "Saved logs to $outfile" \
+            || warn "aws logs tail returned an error (see the end of $outfile)."
+    else
+        aws logs tail "$group" --since "$LOG_SINCE" --region "$region" --format short \
+            >> "$outfile" 2>> "$outfile" \
+            && success "Saved logs to $outfile" \
+            || warn "aws logs tail returned an error (see the end of $outfile)."
+    fi
+}
+
+# Resolve the actual container name for $want inside an Azure Container App.
+aca_container_name() {
+    local app="$1" want="$2"
+    local app_json
+    app_json=$(az containerapp show \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --name "$app" \
+        --output json 2>/dev/null) || { echo ""; return; }
+    echo "$app_json" | jq -r --arg r "$want" '.properties.template.containers[] | select(.name | test($r; "i")) | .name' | head -n1
+}
+
+# Download recent console logs for a container in an Azure Container App.
+download_aca_logs() {
+    local app="$1" container="$2" want="$3"
+    local ts outfile
+    ts=$(date +"%Y%m%d-%H%M%S")
+    outfile="container-logs-${ts}-aca-${want}.log"
+    info "Fetching Container App logs for '$app' container '$container' (recent lines)..."
+    {
+        echo "# Spotfire Copilot container logs"
+        echo "# Generated:       $(date)"
+        echo "# Platform:        Azure Container Apps"
+        echo "# Resource group:  $AZURE_RESOURCE_GROUP"
+        echo "# Container App:   $app"
+        echo "# Container:       $container ($want)"
+        echo "# Window:          most recent 2000 console log lines (ACA has no time-window flag; use Log Analytics for a strict 1h window)"
+        echo "# --------------------------------------------------------------"
+    } > "$outfile"
+
+    az containerapp logs show \
+        --name "$app" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --container "$container" \
+        --tail 2000 \
+        >> "$outfile" 2>> "$outfile" \
+        && success "Saved logs to $outfile" \
+        || warn "az containerapp logs show returned an error (see the end of $outfile)."
+}
+
+# Download logs for the selected container(s): orchestrator | admin | both.
+download_container_logs() {
+    local selection="$1"
+    local wants=()
+    if [[ "$selection" == "both" ]]; then
+        wants=("orchestrator" "admin")
+    else
+        wants=("$selection")
+    fi
+
+    local want i role found
+    for want in "${wants[@]}"; do
+        found=false
+        if [[ "$CLOUD_PLATFORM" == "aws" ]]; then
+            for i in "${!AWS_TASK_DEFINITIONS[@]}"; do
+                role="${AWS_TASK_ROLES[$i]:-both}"
+                if [[ "$role" == "both" || "$role" == "$want" ]]; then
+                    download_ecs_logs_from_taskdef "${AWS_TASK_DEFINITIONS[$i]}" "$want" || true
+                    found=true
+                    break
+                fi
+            done
+            [[ "$found" == false ]] && warn "Could not locate a task definition hosting the $want container."
+        else
+            for i in "${!AZURE_CONTAINER_APPS[@]}"; do
+                role="${AZURE_APP_ROLES[$i]:-both}"
+                if [[ "$role" == "both" || "$role" == "$want" ]]; then
+                    local app cname
+                    app="${AZURE_CONTAINER_APPS[$i]}"
+                    cname="$(aca_container_name "$app" "$want")"
+                    [[ -z "$cname" ]] && cname="$want"
+                    download_aca_logs "$app" "$cname" "$want" || true
+                    found=true
+                    break
+                fi
+            done
+            [[ "$found" == false ]] && warn "Could not locate a Container App hosting the $want container."
+        fi
+    done
+}
+
+# End-of-run offer to grab logs for troubleshooting.
+offer_log_download() {
+    echo ""
+    local dl
+    read -p "Download container logs for troubleshooting? (y/n): " dl
+    if [[ "$dl" =~ ^[Yy] ]]; then
+        local sel
+        sel="$(prompt_log_target)"
+        download_container_logs "$sel"
+    fi
+}
+
+##############################################################################
 # Main Flow
 ##############################################################################
 
 main() {
+    local logs_only=false arg
+    for arg in "$@"; do
+        case "$arg" in
+            --logs)     logs_only=true ;;
+            -h|--help)  print_usage; exit 0 ;;
+            *)          warn "Unknown option: $arg"; print_usage; exit 1 ;;
+        esac
+    done
+
     echo ""
     echo "================================================"
     echo "  Spotfire Copilot Environment Validator"
     echo "================================================"
+
+    if [[ "$logs_only" == true ]]; then
+        info "Log download mode (--logs): validation will be skipped."
+        if [[ -f "$ANSWERS_FILE" ]]; then
+            info "Using saved answers: $ANSWERS_FILE"
+            load_answers
+            preflight_check_cli
+        else
+            info "No saved answers found; let's identify your deployment first."
+            phase1_detect_platform
+        fi
+        local sel
+        sel="$(prompt_log_target)"
+        download_container_logs "$sel"
+        exit 0
+    fi
 
     # Offer to resume from previously saved answers
     if [[ -f "$ANSWERS_FILE" ]]; then
@@ -1142,6 +1433,9 @@ main() {
     echo ""
     info "Phase 4: Report Generation"
     generate_report
+
+    # Offer to download container logs for troubleshooting
+    offer_log_download
     
     echo ""
     if [[ $VALIDATION_ERRORS -eq 0 ]]; then

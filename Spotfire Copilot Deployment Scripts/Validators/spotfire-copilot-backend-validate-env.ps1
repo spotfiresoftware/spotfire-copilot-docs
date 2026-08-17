@@ -7,6 +7,7 @@
 # 
 #  Usage:
 #    .\spotfire-copilot-backend-validate-env.ps1
+#    .\spotfire-copilot-backend-validate-env.ps1 -Logs   # download container logs only
 #
 #  Supports:
 #    - AWS ECS/Fargate (identify by ECS service name or task definition)
@@ -16,7 +17,9 @@
 #    - No-CLI fallback (manual JSON import)
 #############################################################################
 
-param()
+param(
+    [switch]$Logs
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -37,6 +40,7 @@ $LLMProvider = ""
 $HasAdminConsole = $false
 $OrchestratorVars = @()
 $AdminConsoleVars = @()
+$OptionalVars = @()
 $ReportFile = ""
 $ValidationErrors = 0
 $ValidationWarnings = 0
@@ -333,6 +337,27 @@ function Preflight-CheckAzure {
             if ($g) { Write-Host ("    - " + $g) }
         }
     }
+
+    # 4) Ensure the 'az containerapp' command group is available.
+    #    Disable dynamic-install so a missing extension errors immediately instead of prompting.
+    Write-Host ""
+    Write-Info "Checking for the 'az containerapp' command group..."
+    $env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = "no"
+    az containerapp --help 2>&1 | Out-Null
+    $caRc = $LASTEXITCODE
+    Remove-Item Env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL -ErrorAction SilentlyContinue
+    if ($caRc -ne 0) {
+        Write-Error "The 'az containerapp' command group is not available."
+        Write-Host ""
+        Write-Host "Install/enable it, then re-run this validator:"
+        Write-Host "  az extension add --name containerapp --upgrade"
+        Write-Host "  az provider register --namespace Microsoft.App"
+        Write-Host "  Docs: https://learn.microsoft.com/en-us/azure/container-apps/get-started"
+        Write-Host ""
+        exit 1
+    }
+    Write-Success "'az containerapp' command group available."
+
     Write-Host ""
     Write-Success "Preflight passed - the Azure CLI can talk to your resources."
 }
@@ -611,8 +636,6 @@ function Phase2-BuildSchemaInteractive {
 function Build-ValidationSchemas {
     # Core required vars for Orchestrator
     $script:OrchestratorVars = @(
-        "IMAGE_TAG",
-        "FASTAPI_APP_VERSION",
         "LOG_LEVEL",
         "SECRET_KEY",
         "HASHED_ADMIN_PASSWORD",
@@ -668,14 +691,37 @@ function Build-ValidationSchemas {
     
     # Admin Console schema
     $script:AdminConsoleVars = @(
-        "IMAGE_TAG",
-        "FASTAPI_APP_VERSION",
         "LOG_LEVEL",
         "SECRET_KEY",
         "HASHED_ADMIN_PASSWORD",
         "SYNC_DATABASE_URL",
         "DB_SSLMODE"
     )
+
+    # Informational-only vars: required for Docker Compose but NOT for cloud.
+    # ECS / Container Apps carry the image tag in the image reference, so these
+    # are reported but never fail validation.
+    $script:OptionalVars = @(
+        "IMAGE_TAG",
+        "FASTAPI_APP_VERSION"
+    )
+}
+
+# Report optional/informational vars. Present or not, these never fail validation.
+function Test-OptionalVars {
+    param([string[]]$PresentNames)
+    if (-not $script:OptionalVars -or $script:OptionalVars.Count -eq 0) { return }
+    $script:ValidationDetails += "  Optional variables (informational):"
+    foreach ($var in $script:OptionalVars) {
+        if ($var -in $PresentNames) {
+            Write-Info "$var - present (optional)"
+            $script:ValidationDetails += "    [INFO] $var - present (optional)"
+        }
+        else {
+            Write-Info "$var - not set (optional; cloud carries the image tag in the image reference)"
+            $script:ValidationDetails += "    [INFO] $var - not set (optional; not required for cloud)"
+        }
+    }
 }
 
 ##############################################################################
@@ -856,6 +902,9 @@ function Validate-ContainerEnv {
         }
     }
     
+    # Report optional/informational vars (not required for cloud deployments)
+    Test-OptionalVars (@($envVarNames) + @($secretNames))
+    
     # Check for orphaned vars
     Write-Host ""
     Write-Info "Checking for orphaned variables..."
@@ -959,8 +1008,10 @@ function Validate-ACAContainerEnv {
     Write-Info "Validating Container App: $AppName, Container: $ContainerName (schema: $Role)"
     
     $envVarNames = @()
+    $secretBackedNames = @()
     if ($Container.env) {
         $envVarNames = $Container.env | ForEach-Object { $_.name }
+        $secretBackedNames = $Container.env | Where-Object { $_.secretRef } | ForEach-Object { $_.name }
     }
     
     # Capture the variables discovered in this container.
@@ -994,8 +1045,14 @@ function Validate-ACAContainerEnv {
     $script:ValidationDetails += "  Required variables:"
     foreach ($var in $varsToCheck) {
         if ($var -in $envVarNames) {
-            Write-Success "$var - present"
-            $script:ValidationDetails += "    [PASS] $var - present"
+            if ($var -in $secretBackedNames) {
+                Write-Success "$var - present (secret ref)"
+                $script:ValidationDetails += "    [PASS] $var - present (secret ref)"
+            }
+            else {
+                Write-Success "$var - present"
+                $script:ValidationDetails += "    [PASS] $var - present"
+            }
         }
         else {
             Write-Error "$var - MISSING [REQUIRED]"
@@ -1003,6 +1060,9 @@ function Validate-ACAContainerEnv {
             $script:ValidationErrors++
         }
     }
+    
+    # Report optional/informational vars (not required for cloud deployments)
+    Test-OptionalVars $envVarNames
     
     # Check for orphaned vars
     Write-Host ""
@@ -1090,6 +1150,193 @@ $(if ($script:ValidationDetails.Count -gt 0) { ($script:ValidationDetails -join 
 }
 
 ##############################################################################
+# Container log download (troubleshooting)
+##############################################################################
+
+# Ask which container's logs to download. Returns orchestrator|admin|both.
+function Prompt-LogTarget {
+    Write-Host ""
+    Write-Host "Which container's logs do you want to download?"
+    Write-Host "  1) Orchestrator"
+    Write-Host "  2) Admin Console"
+    Write-Host "  3) Both"
+    $c = Read-Host "Enter choice (1-3)"
+    switch ($c) {
+        '1' { return 'orchestrator' }
+        '2' { return 'admin' }
+        '3' { return 'both' }
+        default { return 'orchestrator' }
+    }
+}
+
+# Download CloudWatch logs for the $Want container from a given task definition.
+function Download-EcsLogsFromTaskDef {
+    param([string]$TaskDef, [string]$Want)
+
+    try {
+        $containers = aws ecs describe-task-definition `
+            --task-definition $TaskDef `
+            --region $script:AWSRegion `
+            --query 'taskDefinition.containerDefinitions' `
+            --output json | ConvertFrom-Json
+    }
+    catch {
+        Write-Error "Failed to fetch task definition: $TaskDef"
+        return
+    }
+
+    $c = $containers | Where-Object { $_.name -match $Want } | Select-Object -First 1
+    if (-not $c) {
+        Write-Warning "No '$Want' container found in task definition '$TaskDef'."
+        return
+    }
+
+    $lc = $c.logConfiguration
+    $driver = if ($lc -and $lc.logDriver) { $lc.logDriver } else { 'none' }
+    if ($driver -ne 'awslogs') {
+        Write-Warning "Container '$($c.name)' uses log driver '$driver' (not awslogs) - cannot read from CloudWatch."
+        Write-Warning "Inspect your logging sink (e.g., FireLens) directly instead."
+        return
+    }
+
+    $group  = $lc.options.'awslogs-group'
+    $prefix = $lc.options.'awslogs-stream-prefix'
+    $region = $lc.options.'awslogs-region'
+    if (-not $region) { $region = $script:AWSRegion }
+    if (-not $group) {
+        Write-Warning "Container '$($c.name)' has no awslogs-group configured."
+        return
+    }
+
+    $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+    $outfile = "container-logs-$ts-ecs-$Want.log"
+    Write-Info "Fetching CloudWatch logs for '$($c.name)' (group '$group', last 1h)..."
+
+    $header = @(
+        "# Spotfire Copilot container logs"
+        "# Generated:       $(Get-Date)"
+        "# Platform:        AWS ECS/Fargate"
+        "# Region:          $region"
+        "# Cluster:         $($script:AWSCluster)"
+        "# Task definition: $TaskDef"
+        "# Container:       $($c.name) ($Want)"
+        "# Log group:       $group"
+        "# Stream prefix:   $(if ($prefix) { $prefix } else { '<none>' })"
+        "# Window:          last 1h"
+        "# --------------------------------------------------------------"
+    )
+    $header | Set-Content -Path $outfile -Encoding UTF8
+
+    if ($prefix) {
+        $logs = aws logs tail $group --since 1h --region $region --format short --log-stream-name-prefix "$prefix/$($c.name)" 2>&1
+    }
+    else {
+        $logs = aws logs tail $group --since 1h --region $region --format short 2>&1
+    }
+    $logs | Add-Content -Path $outfile -Encoding UTF8
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Saved logs to $outfile"
+    }
+    else {
+        Write-Warning "aws logs tail returned an error (see the end of $outfile)."
+    }
+}
+
+# Resolve the actual container name for $Want inside an Azure Container App.
+function Get-AcaContainerName {
+    param([string]$App, [string]$Want)
+    try {
+        $appJson = az containerapp show `
+            --resource-group $script:AzureResourceGroup `
+            --name $App `
+            --output json | ConvertFrom-Json
+    }
+    catch { return "" }
+    $c = $appJson.properties.template.containers | Where-Object { $_.name -match $Want } | Select-Object -First 1
+    if ($c) { return $c.name } else { return "" }
+}
+
+# Download recent console logs for a container in an Azure Container App.
+function Download-AcaLogs {
+    param([string]$App, [string]$Container, [string]$Want)
+    $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+    $outfile = "container-logs-$ts-aca-$Want.log"
+    Write-Info "Fetching Container App logs for '$App' container '$Container' (recent lines)..."
+
+    $header = @(
+        "# Spotfire Copilot container logs"
+        "# Generated:       $(Get-Date)"
+        "# Platform:        Azure Container Apps"
+        "# Resource group:  $($script:AzureResourceGroup)"
+        "# Container App:   $App"
+        "# Container:       $Container ($Want)"
+        "# Window:          most recent 2000 console log lines (ACA has no time-window flag; use Log Analytics for a strict 1h window)"
+        "# --------------------------------------------------------------"
+    )
+    $header | Set-Content -Path $outfile -Encoding UTF8
+
+    $logs = az containerapp logs show `
+        --name $App `
+        --resource-group $script:AzureResourceGroup `
+        --container $Container `
+        --tail 2000 2>&1
+    $logs | Add-Content -Path $outfile -Encoding UTF8
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Saved logs to $outfile"
+    }
+    else {
+        Write-Warning "az containerapp logs show returned an error (see the end of $outfile)."
+    }
+}
+
+# Download logs for the selected container(s): orchestrator | admin | both.
+function Download-ContainerLogs {
+    param([string]$Selection)
+    $wants = if ($Selection -eq 'both') { @('orchestrator', 'admin') } else { @($Selection) }
+
+    foreach ($want in $wants) {
+        $found = $false
+        if ($script:CloudPlatform -eq 'aws') {
+            for ($i = 0; $i -lt $script:AWSTaskDefinitions.Count; $i++) {
+                $role = if ($i -lt $script:AWSTaskRoles.Count) { $script:AWSTaskRoles[$i] } else { 'both' }
+                if ($role -eq 'both' -or $role -eq $want) {
+                    Download-EcsLogsFromTaskDef -TaskDef $script:AWSTaskDefinitions[$i] -Want $want
+                    $found = $true
+                    break
+                }
+            }
+            if (-not $found) { Write-Warning "Could not locate a task definition hosting the $want container." }
+        }
+        else {
+            for ($i = 0; $i -lt $script:AzureContainerApps.Count; $i++) {
+                $role = if ($i -lt $script:AzureAppRoles.Count) { $script:AzureAppRoles[$i] } else { 'both' }
+                if ($role -eq 'both' -or $role -eq $want) {
+                    $app = $script:AzureContainerApps[$i]
+                    $cname = Get-AcaContainerName -App $app -Want $want
+                    if (-not $cname) { $cname = $want }
+                    Download-AcaLogs -App $app -Container $cname -Want $want
+                    $found = $true
+                    break
+                }
+            }
+            if (-not $found) { Write-Warning "Could not locate a Container App hosting the $want container." }
+        }
+    }
+}
+
+# End-of-run offer to grab logs for troubleshooting.
+function Invoke-LogDownloadOffer {
+    Write-Host ""
+    $dl = Read-Host "Download container logs for troubleshooting? (y/n)"
+    if ($dl -match '^(?i)y') {
+        $sel = Prompt-LogTarget
+        Download-ContainerLogs -Selection $sel
+    }
+}
+
+##############################################################################
 # Main Flow
 ##############################################################################
 
@@ -1098,6 +1345,22 @@ function Main {
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Host "  Spotfire Copilot Environment Validator" -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
+
+    if ($Logs) {
+        Write-Info "Log download mode (-Logs): validation will be skipped."
+        if (Test-Path $script:AnswersFile) {
+            Write-Info "Using saved answers: $($script:AnswersFile)"
+            Load-Answers
+            Preflight-CheckCli
+        }
+        else {
+            Write-Info "No saved answers found; let's identify your deployment first."
+            Phase1-DetectPlatform
+        }
+        $sel = Prompt-LogTarget
+        Download-ContainerLogs -Selection $sel
+        exit 0
+    }
 
     # Offer to resume from previously saved answers
     if (Test-Path $script:AnswersFile) {
@@ -1141,6 +1404,9 @@ function Main {
     Write-Host ""
     Write-Info "Phase 4: Report Generation"
     Generate-Report
+
+    # Offer to download container logs for troubleshooting
+    Invoke-LogDownloadOffer
     
     Write-Host ""
     if ($script:ValidationErrors -eq 0) {
