@@ -2788,7 +2788,7 @@ function Get-K8sRetrieverPlugin { param([string]$Key)
 # generate the files; the operator runs helm-install.sh from a machine with helm
 # and kubectl configured against the target cluster.
 function Invoke-KubernetesMode {
-    $chartVersion = '0.3.1'
+    $chartVersion = ''
     $k8sDir = Join-Path $script:OUT_DIR 'k8s'
 
     Write-Section 'Kubernetes (Helm) mode'
@@ -2810,6 +2810,7 @@ function Invoke-KubernetesMode {
     $k8sOauthHash     = Get-FromCredentialsFile 'OAUTH2_CLIENT_SECRET_HASH' $script:CREDENTIALS_FILE
 
     $k8sNamespace = Read-Prompt 'Kubernetes namespace to deploy into' 'copilot'
+    $chartVersion = Read-RequiredPrompt 'Approved orchestrator-stack Helm chart version (--version)' '0.3.4'
     $imageTag = Read-ImageTag 'Copilot orchestrator image tag' $script:DEFAULT_IMAGE_TAG 'copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator'
     if ([string]::IsNullOrEmpty($imageTag)) { $imageTag = $script:DEFAULT_IMAGE_TAG }
     $pullSecret = Read-Prompt 'Name of the Kubernetes image pull Secret for the ACR registry' 'orchestrator-acr-pull'

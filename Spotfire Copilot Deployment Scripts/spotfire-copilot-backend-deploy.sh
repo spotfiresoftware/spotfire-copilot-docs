@@ -2687,7 +2687,7 @@ k8s_retriever_plugin() {
 # generate the files; the operator runs helm-install.sh from a machine with helm
 # and kubectl configured against the target cluster.
 run_kubernetes_mode() {
-  local K8S_CHART_VERSION="0.3.1"
+  local K8S_CHART_VERSION=""
   local k8s_dir="$OUT_DIR/k8s"
 
   section "Kubernetes (Helm) mode"
@@ -2710,6 +2710,7 @@ run_kubernetes_mode() {
   K8S_OAUTH_HASH="$(get_from_credentials_file OAUTH2_CLIENT_SECRET_HASH "$CREDENTIALS_FILE")"
 
   prompt K8S_NAMESPACE "Kubernetes namespace to deploy into" "copilot"
+  prompt_required K8S_CHART_VERSION "Approved orchestrator-stack Helm chart version (--version)" "0.3.4"
   prompt_image_tag IMAGE_TAG "Copilot orchestrator image tag" "${DEFAULT_IMAGE_TAG}" "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator"
   [[ -n "$IMAGE_TAG" ]] || IMAGE_TAG="${DEFAULT_IMAGE_TAG}"
   prompt K8S_PULL_SECRET "Name of the Kubernetes image pull Secret for the ACR registry" "orchestrator-acr-pull"
