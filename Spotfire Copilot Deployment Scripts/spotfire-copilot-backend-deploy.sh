@@ -3571,18 +3571,10 @@ else
 fi
 
 section "Deployment platform"
-echo ""
-echo "Where do you want to deploy Spotfire Copilot?"
-echo "  1) Docker Compose (single-host, includes docker-compose.yml)"
-echo "  2) AWS ECS / Fargate"
-echo "  3) Azure Container Apps"
-echo ""
-prompt_num DEPLOYMENT_PLATFORM "Enter choice (1-3)" "1" 1 3
-case "$DEPLOYMENT_PLATFORM" in
-  1) DEPLOYMENT_PLATFORM="docker-compose" ;;
-  2) DEPLOYMENT_PLATFORM="aws-ecs" ;;
-  3) DEPLOYMENT_PLATFORM="azure-aca" ;;
-esac
+choose_num DEPLOYMENT_PLATFORM "Where do you want to deploy Spotfire Copilot?" "1" \
+  "docker-compose|Docker Compose (single-host, includes docker-compose.yml)" \
+  "aws-ecs|AWS ECS / Fargate" \
+  "azure-aca|Azure Container Apps"
 ok "Selected deployment platform: $DEPLOYMENT_PLATFORM"
 
 # For cloud platforms, we'll generate cloud-env-checklist.txt instead of docker-compose.yml
