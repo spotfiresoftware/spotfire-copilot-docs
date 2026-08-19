@@ -762,6 +762,110 @@ check_category_overrides() {
 }
 
 ##############################################################################
+# Retriever credentials, GPT-5 flag, and value-sanity checks
+##############################################################################
+
+# Extract a plain env value by name from a "name<TAB>value" stream.
+# Prints nothing if the name is not present (e.g. secret-backed values).
+get_tsv_value() {
+    local target="$1" tsv="$2"
+    awk -F'\t' -v n="$target" '$1==n {print $2; exit}' <<< "$tsv"
+}
+
+# Case-insensitive test for a GPT-5.x / o-series model name.
+is_gpt5_model() {
+    local m
+    m="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    case "$m" in
+        gpt-5*|gpt5*|o1|o1-*|o3|o3-*|o4|o4-*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Non-fatal WARN checks that the fixed required-var schema cannot express:
+#   1. retriever plugin set without its backing credentials
+#   2. GPT-5.x / o-series MODEL_NAME without OPENAI_GPT5_COMPATIBLE=true
+#   3. malformed/whitespace values (bare-name and URL sanity)
+# Only meaningful for the orchestrator schema. All findings are warnings.
+#   $1 = role, $2 = newline-separated present var names (plain + secret),
+#   $3 = "name<TAB>value" stream of plain (non-secret) values
+check_runtime_config() {
+    local role="$1" present="$2" nv="$3"
+    [[ "$role" == "admin" ]] && return 0
+
+    local var_present  # helper closure via function
+    _present() { echo "$present" | grep -q "^${1}$"; }
+
+    local retriever model gpt5
+    retriever="$(get_tsv_value "RETRIEVER_PLUGIN_ENTRY_POINT" "$nv")"
+    model="$(get_tsv_value "MODEL_NAME" "$nv")"
+    gpt5="$(get_tsv_value "OPENAI_GPT5_COMPATIBLE" "$nv")"
+
+    # --- 1. Retriever credential completeness (keyed off the plugin entry point) ---
+    case "$retriever" in
+        *az_cog_search*)
+            local req
+            for req in AZURE_COGNITIVE_SEARCH_SERVICE_NAME AZURE_COGNITIVE_SEARCH_API_KEY; do
+                if ! _present "$req"; then
+                    warn "RETRIEVER_PLUGIN_ENTRY_POINT is Azure AI Search but $req is not set — RAG warmup will fail"
+                    VALIDATION_DETAILS+=("    [WARN] $req missing while RETRIEVER_PLUGIN_ENTRY_POINT is Azure AI Search")
+                    ((VALIDATION_WARNINGS++)) || true
+                fi
+            done
+            local svc
+            svc="$(get_tsv_value "AZURE_COGNITIVE_SEARCH_SERVICE_NAME" "$nv")"
+            if [[ -n "$svc" ]] && { [[ "$svc" == *"://"* ]] || [[ "$svc" == *".search.windows.net"* ]] || [[ "$svc" =~ [[:space:]] ]]; }; then
+                warn "AZURE_COGNITIVE_SEARCH_SERVICE_NAME='$svc' looks malformed — use the BARE service name (no https://, no .search.windows.net, no spaces)"
+                VALIDATION_DETAILS+=("    [WARN] AZURE_COGNITIVE_SEARCH_SERVICE_NAME malformed (expected bare service name, got '$svc')")
+                ((VALIDATION_WARNINGS++)) || true
+            fi
+            ;;
+        *milvus*)
+            if ! _present "VECTORDB_URI"; then
+                warn "RETRIEVER_PLUGIN_ENTRY_POINT is Milvus but VECTORDB_URI is not set — RAG warmup will fail"
+                VALIDATION_DETAILS+=("    [WARN] VECTORDB_URI missing while RETRIEVER_PLUGIN_ENTRY_POINT is Milvus")
+                ((VALIDATION_WARNINGS++)) || true
+            fi
+            ;;
+        *redis*)
+            if ! _present "VECTORDB_URI"; then
+                warn "RETRIEVER_PLUGIN_ENTRY_POINT is Redis but VECTORDB_URI is not set — RAG warmup will fail"
+                VALIDATION_DETAILS+=("    [WARN] VECTORDB_URI missing while RETRIEVER_PLUGIN_ENTRY_POINT is Redis")
+                ((VALIDATION_WARNINGS++)) || true
+            fi
+            ;;
+    esac
+
+    # --- 2. GPT-5.x / o-series compatibility flag ---
+    if is_gpt5_model "$model"; then
+        local gpt5_lc
+        gpt5_lc="$(printf '%s' "$gpt5" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+        if [[ "$gpt5_lc" != "true" ]]; then
+            warn "MODEL_NAME='$model' is a GPT-5.x / o-series model but OPENAI_GPT5_COMPATIBLE is not 'true' — chat completions will fail (temperature/max_tokens mismatch)"
+            VALIDATION_DETAILS+=("    [WARN] MODEL_NAME='$model' requires OPENAI_GPT5_COMPATIBLE=true (currently '${gpt5:-<unset>}')")
+            ((VALIDATION_WARNINGS++)) || true
+        fi
+    fi
+
+    # --- 3. Value sanity: leading/trailing whitespace in URL/endpoint values ---
+    local _n _v
+    while IFS=$'\t' read -r _n _v; do
+        [[ -z "$_n" ]] && continue
+        case "$_n" in
+            *URL*|*ENDPOINT*|*_EP|AZSEARCH_EP)
+                if [[ "$_v" =~ ^[[:space:]] ]] || [[ "$_v" =~ [[:space:]]$ ]]; then
+                    warn "$_n has leading/trailing whitespace — trim it or the value will be malformed"
+                    VALIDATION_DETAILS+=("    [WARN] $_n has leading/trailing whitespace (trim required)")
+                    ((VALIDATION_WARNINGS++)) || true
+                fi
+                ;;
+        esac
+    done <<< "$nv"
+
+    unset -f _present 2>/dev/null || true
+}
+
+##############################################################################
 # AWS ECS Validation
 ##############################################################################
 
@@ -882,6 +986,9 @@ validate_container_env() {
 
     # Report optional/informational vars (not required for cloud deployments)
     check_optional_vars "$(printf '%s\n%s\n' "$env_vars" "$secret_refs")"
+
+    # Retriever-credential, GPT-5-flag, and value-sanity checks (non-fatal warnings)
+    check_runtime_config "$role" "$(printf '%s\n%s\n' "$env_vars" "$secret_refs")" "$env_pairs"
     
     # Check for orphaned vars
     echo ""
@@ -1041,6 +1148,10 @@ validate_aca_container_env() {
 
     # Report optional/informational vars (not required for cloud deployments)
     check_optional_vars "$env_vars"
+
+    # Retriever-credential, GPT-5-flag, and value-sanity checks (non-fatal warnings).
+    # Only plain (non-secret) env entries carry inspectable values.
+    check_runtime_config "$role" "$env_vars" "$(awk -F'\t' '$3=="" {print $1"\t"$2}' <<< "$env_rows")"
     
     # Check for orphaned vars
     echo ""

@@ -778,6 +778,89 @@ function Test-CategoryOverrides {
 }
 
 ##############################################################################
+# Retriever credentials, GPT-5 flag, and value-sanity checks
+##############################################################################
+
+# Case-insensitive test for a GPT-5.x / o-series model name.
+function Test-IsGpt5Model {
+    param([string]$ModelName)
+    if ($null -eq $ModelName) { return $false }
+    return ($ModelName.ToLowerInvariant() -match '^(gpt-5|gpt5|o1|o3|o4)')
+}
+
+# Non-fatal WARN checks that the fixed required-var schema cannot express:
+#   1. retriever plugin set without its backing credentials
+#   2. GPT-5.x / o-series MODEL_NAME without OPENAI_GPT5_COMPATIBLE=true
+#   3. malformed/whitespace values (bare-name and URL sanity)
+# Only meaningful for the orchestrator schema. All findings are warnings.
+function Test-RuntimeConfig {
+    param(
+        [string]$Role,
+        [string[]]$Present,
+        [hashtable]$Values
+    )
+    if ($Role -eq 'admin') { return }
+
+    $retriever = [string]$Values['RETRIEVER_PLUGIN_ENTRY_POINT']
+    $model     = [string]$Values['MODEL_NAME']
+    $gpt5      = [string]$Values['OPENAI_GPT5_COMPATIBLE']
+
+    # --- 1. Retriever credential completeness (keyed off the plugin entry point) ---
+    if ($retriever -like '*az_cog_search*') {
+        foreach ($req in @('AZURE_COGNITIVE_SEARCH_SERVICE_NAME', 'AZURE_COGNITIVE_SEARCH_API_KEY')) {
+            if ($req -notin $Present) {
+                Write-Warning "RETRIEVER_PLUGIN_ENTRY_POINT is Azure AI Search but $req is not set - RAG warmup will fail"
+                $script:ValidationDetails += "    [WARN] $req missing while RETRIEVER_PLUGIN_ENTRY_POINT is Azure AI Search"
+                $script:ValidationWarnings++
+            }
+        }
+        $svc = [string]$Values['AZURE_COGNITIVE_SEARCH_SERVICE_NAME']
+        if ($svc -and ($svc -match '://' -or $svc -match '\.search\.windows\.net' -or $svc -match '\s')) {
+            Write-Warning "AZURE_COGNITIVE_SEARCH_SERVICE_NAME='$svc' looks malformed - use the BARE service name (no https://, no .search.windows.net, no spaces)"
+            $script:ValidationDetails += "    [WARN] AZURE_COGNITIVE_SEARCH_SERVICE_NAME malformed (expected bare service name, got '$svc')"
+            $script:ValidationWarnings++
+        }
+    }
+    elseif ($retriever -like '*milvus*') {
+        if ('VECTORDB_URI' -notin $Present) {
+            Write-Warning "RETRIEVER_PLUGIN_ENTRY_POINT is Milvus but VECTORDB_URI is not set - RAG warmup will fail"
+            $script:ValidationDetails += "    [WARN] VECTORDB_URI missing while RETRIEVER_PLUGIN_ENTRY_POINT is Milvus"
+            $script:ValidationWarnings++
+        }
+    }
+    elseif ($retriever -like '*redis*') {
+        if ('VECTORDB_URI' -notin $Present) {
+            Write-Warning "RETRIEVER_PLUGIN_ENTRY_POINT is Redis but VECTORDB_URI is not set - RAG warmup will fail"
+            $script:ValidationDetails += "    [WARN] VECTORDB_URI missing while RETRIEVER_PLUGIN_ENTRY_POINT is Redis"
+            $script:ValidationWarnings++
+        }
+    }
+
+    # --- 2. GPT-5.x / o-series compatibility flag ---
+    if (Test-IsGpt5Model $model) {
+        $gpt5Norm = ($gpt5 -replace '\s', '').ToLowerInvariant()
+        if ($gpt5Norm -ne 'true') {
+            $shown = if ([string]::IsNullOrEmpty($gpt5)) { '<unset>' } else { $gpt5 }
+            Write-Warning "MODEL_NAME='$model' is a GPT-5.x / o-series model but OPENAI_GPT5_COMPATIBLE is not 'true' - chat completions will fail (temperature/max_tokens mismatch)"
+            $script:ValidationDetails += "    [WARN] MODEL_NAME='$model' requires OPENAI_GPT5_COMPATIBLE=true (currently '$shown')"
+            $script:ValidationWarnings++
+        }
+    }
+
+    # --- 3. Value sanity: leading/trailing whitespace in URL/endpoint values ---
+    foreach ($name in $Values.Keys) {
+        if ($name -match 'URL|ENDPOINT|_EP$' -or $name -eq 'AZSEARCH_EP') {
+            $val = [string]$Values[$name]
+            if ($val -ne $val.Trim()) {
+                Write-Warning "$name has leading/trailing whitespace - trim it or the value will be malformed"
+                $script:ValidationDetails += "    [WARN] $name has leading/trailing whitespace (trim required)"
+                $script:ValidationWarnings++
+            }
+        }
+    }
+}
+
+##############################################################################
 # AWS ECS Validation
 ##############################################################################
 
@@ -904,6 +987,13 @@ function Validate-ContainerEnv {
     
     # Report optional/informational vars (not required for cloud deployments)
     Test-OptionalVars (@($envVarNames) + @($secretNames))
+
+    # Retriever-credential, GPT-5-flag, and value-sanity checks (non-fatal warnings)
+    $plainValues = @{}
+    if ($Container.environment) {
+        foreach ($e in $Container.environment) { $plainValues[$e.name] = [string]$e.value }
+    }
+    Test-RuntimeConfig -Role $Role -Present (@($envVarNames) + @($secretNames)) -Values $plainValues
     
     # Check for orphaned vars
     Write-Host ""
@@ -1063,6 +1153,14 @@ function Validate-ACAContainerEnv {
     
     # Report optional/informational vars (not required for cloud deployments)
     Test-OptionalVars $envVarNames
+
+    # Retriever-credential, GPT-5-flag, and value-sanity checks (non-fatal warnings).
+    # Only plain (non-secret) env entries carry inspectable values.
+    $plainValues = @{}
+    if ($Container.env) {
+        foreach ($e in $Container.env) { if (-not $e.secretRef) { $plainValues[$e.name] = [string]$e.value } }
+    }
+    Test-RuntimeConfig -Role $Role -Present $envVarNames -Values $plainValues
     
     # Check for orphaned vars
     Write-Host ""

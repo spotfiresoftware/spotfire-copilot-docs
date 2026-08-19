@@ -1474,6 +1474,20 @@ function Set-AdvancedCategories { param([string]$Prefix, [string]$Primary)
     Write-Info "Optional per-category model overrides for $Prefix were written to the generated env (commented out). Uncomment ${Prefix}_FAST_MODEL / ${Prefix}_LARGE_MODEL etc. to override the $Primary default."
 }
 
+# Returns the GPT-5 flag block for a model name. GPT-5.x and o-series models
+# require OPENAI_GPT5_COMPATIBLE=true so the orchestrator binds
+# max_completion_tokens and omits temperature. Non-matching models return ''.
+function Get-Gpt5FlagBlock {
+    param([string]$ModelName)
+    if ($null -eq $ModelName) { $ModelName = '' }
+    $m = $ModelName.ToLowerInvariant()
+    if ($m -match '^(gpt-5|gpt5|o1|o3|o4)') {
+        Write-Info "Detected a GPT-5.x / o-series model ('$ModelName') - setting OPENAI_GPT5_COMPATIBLE=true."
+        return "# REQUIRED for GPT-5.x / o-series models: orchestrator binds max_completion_tokens and omits temperature.`nOPENAI_GPT5_COMPATIBLE=true"
+    }
+    return ''
+}
+
 function Configure-LlmProvider {
     Write-Section 'LLM provider'
     Write-Info 'The LLM provider is independent from the Vector DB. For example, Azure OpenAI can use Milvus, Zilliz, or Azure AI Search for RAG.'
@@ -1493,7 +1507,7 @@ function Configure-LlmProvider {
             $script:AZURE_OPENAI_ENDPOINT = Read-Prompt 'Azure OpenAI endpoint' (Get-ExistingOr 'AZURE_OPENAI_ENDPOINT' 'https://your-resource.openai.azure.com/')
             $script:OPENAI_API_VERSION = Read-Prompt 'Azure OpenAI API version' (Get-ExistingOr 'OPENAI_API_VERSION' '2024-02-15-preview')
             $script:PRIMARY_MODEL = Read-Prompt 'Primary Azure deployment name' (Get-ExistingOr 'MODEL_NAME' 'gpt-4o')
-            $script:GPT5_FLAG_BLOCK = ''
+            $script:GPT5_FLAG_BLOCK = Get-Gpt5FlagBlock $script:PRIMARY_MODEL
             Set-AdvancedCategories 'AZURE' $script:PRIMARY_MODEL
             $script:MODEL_BLOCK_ORCH = @"
 # REQUIRED: Orchestrator model plugin for Azure OpenAI.
@@ -1534,7 +1548,7 @@ MODEL_NAME=$($script:PRIMARY_MODEL)
             $script:OPENAI_API_KEY = Read-Prompt 'OpenAI API key' (Get-ExistingOr 'OPENAI_API_KEY' '') -Secret
             $script:OPENAI_API_BASE = Read-Prompt 'OPENAI_API_BASE (optional; leave blank for default OpenAI)' (Get-ExistingOr 'OPENAI_API_BASE' '')
             $script:PRIMARY_MODEL = Read-Prompt 'Primary OpenAI model name' (Get-ExistingOr 'MODEL_NAME' 'gpt-4o')
-            $script:GPT5_FLAG_BLOCK = ''
+            $script:GPT5_FLAG_BLOCK = Get-Gpt5FlagBlock $script:PRIMARY_MODEL
             Set-AdvancedCategories 'OPENAI' $script:PRIMARY_MODEL
             $openaiBaseLine = ''
             if (-not [string]::IsNullOrEmpty($script:OPENAI_API_BASE)) {
@@ -3555,6 +3569,7 @@ Write-Section 'Optional RAG / Knowledge Base'
 Write-Info 'RAG is required for Help, HowTo, Spotfire documentation answers, and custom document Q&A.'
 $script:ENABLE_RAG = Read-YesNo 'Enable RAG / Knowledge Base?' 'no'
 $script:ENABLE_DATA_LOADER = 'no'
+$script:DOCS_DIR = Get-ExistingOr 'DOCS_DIR' '/root/spotfire-copilot/pdf_docs_folder'
 if ($script:ENABLE_RAG -eq 'no') {
     Write-Warn 'Skipping RAG: Orchestrator and LLM smoke tests can work, but Help, HowTo, docs answers, and custom document Q&A will not work.'
     $script:EMBED_BLOCK_ORCH = '# OPTIONAL: RAG disabled by installer choice; configure an embeddings plugin when enabling RAG.'
@@ -3590,6 +3605,7 @@ DEFAULT_RAG_RETRIEVER_TYPE=vector-store
             Write-Warn 'Skipping Data Loader: populate the knowledge base through native tools or an existing ingestion process.'
         } else {
             $script:LOADER_HOST_PORT = Read-Prompt 'Data Loader host port (container port stays 8080)' '8090'
+            $script:DOCS_DIR = Read-Prompt "Host folder for the Data Loader's PDF documents (mounted to /docs in the container)" $script:DOCS_DIR
         }
  } else {
         $script:ENABLE_DATA_LOADER = 'no'
@@ -3739,6 +3755,9 @@ AGENT_CONTAINER_TAG=$($script:AGENT_CONTAINER_TAG)
 COMPOSE_PROJECT_NAME=$($script:COMPOSE_PROJECT_NAME)
 LOG_LEVEL=$($script:LOG_LEVEL)
 ACCESS_TOKEN_EXPIRE_DAYS=$($script:ACCESS_TOKEN_EXPIRE_DAYS)
+# Host folder for the Data Loader PDF documents. docker-compose interpolates this
+# into the data-loader volume mapping (DOCS_DIR:/docs). Edit here to change the mount.
+DOCS_DIR=$($script:DOCS_DIR)
 
 # ------------------------------
 # Installer selections
@@ -3856,9 +3875,9 @@ $($script:VECTOR_BLOCK_DL)
 
 # ------------------------------
 # Local PDF document folder
-# Host folder mounted to /docs inside the container
+# The host folder is configured via DOCS_DIR in .env and mounted to /docs by docker-compose.
 # ------------------------------
-DOCS_DIR=/root/spotfire-copilot/pdf_docs_folder
+DOCS_DIR=$($script:DOCS_DIR)
 "@
 
 $BASE_ENV_CONTENT = Compress-EnvContent $BASE_ENV_CONTENT
@@ -3986,7 +4005,7 @@ if ($script:GENERATE_COMPOSE -eq 'yes') {
             '    extra_hosts:'
             '      - "host.docker.internal:host-gateway"'
             '    volumes:'
-            '      - /root/spotfire-copilot/pdf_docs_folder:/docs'
+            '      - ${DOCS_DIR}:/docs'
  ) | ForEach-Object { $composeLines.Add($_) }
  }
 

@@ -1298,6 +1298,21 @@ configure_advanced_categories() {
   info "Optional per-category model overrides for ${prefix} were written to the .env (commented out). Uncomment ${prefix}_FAST_MODEL / ${prefix}_LARGE_MODEL etc. to override the ${primary} default."
 }
 
+# Sets the global GPT5_FLAG_BLOCK based on the model name. GPT-5.x and o-series
+# models require OPENAI_GPT5_COMPATIBLE=true so the orchestrator binds
+# max_completion_tokens and omits temperature. Non-matching models leave it empty.
+set_gpt5_flag_block() {
+  local model
+  model="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  GPT5_FLAG_BLOCK=""
+  case "$model" in
+    gpt-5*|gpt5*|o1|o1-*|o3|o3-*|o4|o4-*)
+      GPT5_FLAG_BLOCK=$'# REQUIRED for GPT-5.x / o-series models: orchestrator binds max_completion_tokens and omits temperature.\nOPENAI_GPT5_COMPATIBLE=true'
+      info "Detected a GPT-5.x / o-series model ('${1:-}') - setting OPENAI_GPT5_COMPATIBLE=true."
+      ;;
+  esac
+}
+
 configure_llm_provider() {
   section "LLM provider"
   info "The LLM provider is independent from the Vector DB. For example, Azure OpenAI can use Milvus, Zilliz, or Azure AI Search for RAG."
@@ -1316,7 +1331,7 @@ configure_llm_provider() {
       prompt AZURE_OPENAI_ENDPOINT "Azure OpenAI endpoint" "$(get_existing AZURE_OPENAI_ENDPOINT "${EXISTING_FILES[@]}" || echo https://your-resource.openai.azure.com/)"
       prompt OPENAI_API_VERSION "Azure OpenAI API version" "$(get_existing OPENAI_API_VERSION "${EXISTING_FILES[@]}" || echo 2024-02-15-preview)"
       prompt PRIMARY_MODEL "Primary Azure deployment name" "$(get_existing MODEL_NAME "${EXISTING_FILES[@]}" || echo gpt-4o)"
-      GPT5_FLAG_BLOCK=""
+      set_gpt5_flag_block "$PRIMARY_MODEL"
       configure_advanced_categories AZURE "$PRIMARY_MODEL" 0.3 0.2 0.1 0.0 0.2
       MODEL_BLOCK_ORCH=$(cat <<EOM
 # REQUIRED: Orchestrator model plugin for Azure OpenAI.
@@ -1359,7 +1374,7 @@ EOM
       prompt OPENAI_API_KEY "OpenAI API key" "$(get_existing OPENAI_API_KEY "${EXISTING_FILES[@]}" || true)" true
       prompt OPENAI_API_BASE "OPENAI_API_BASE (optional; leave blank for default OpenAI)" "$(get_existing OPENAI_API_BASE "${EXISTING_FILES[@]}" || true)"
       prompt PRIMARY_MODEL "Primary OpenAI model name" "$(get_existing MODEL_NAME "${EXISTING_FILES[@]}" || echo gpt-4o)"
-      GPT5_FLAG_BLOCK=""
+      set_gpt5_flag_block "$PRIMARY_MODEL"
       configure_advanced_categories OPENAI "$PRIMARY_MODEL" 0.3 0.2 0.1 0.0 0.2
       OPENAI_BASE_LINE=""; [[ -n "$OPENAI_API_BASE" ]] && OPENAI_BASE_LINE="# OPTIONAL: Custom OpenAI-compatible base URL.\nOPENAI_API_BASE=${OPENAI_API_BASE}"
       MODEL_BLOCK_ORCH=$(cat <<EOM
@@ -3393,6 +3408,7 @@ section "Optional RAG / Knowledge Base"
 info "RAG is required for Help, HowTo, Spotfire documentation answers, and custom document Q&A."
 yes_no_num ENABLE_RAG "Enable RAG / Knowledge Base?" "no"
 ENABLE_DATA_LOADER="no"
+DOCS_DIR="$(get_existing DOCS_DIR "${EXISTING_FILES[@]}" || echo /root/spotfire-copilot/pdf_docs_folder)"
 if [[ "$ENABLE_RAG" == "no" ]]; then
   warn "Skipping RAG: Orchestrator and LLM smoke tests can work, but Help, HowTo, docs answers, and custom document Q&A will not work."
   EMBED_BLOCK_ORCH="# OPTIONAL: RAG disabled by installer choice; configure an embeddings plugin when enabling RAG."
@@ -3428,6 +3444,7 @@ EOM
       warn "Skipping Data Loader: populate the knowledge base through native tools or an existing ingestion process."
     else
       prompt LOADER_HOST_PORT "Data Loader host port (container port stays 8080)" "8090"
+      prompt DOCS_DIR "Host folder for the Data Loader's PDF documents (mounted to /docs in the container)" "$DOCS_DIR"
     fi
   else
     ENABLE_DATA_LOADER="no"
@@ -3613,6 +3630,9 @@ AGENT_CONTAINER_TAG=${AGENT_CONTAINER_TAG}
 COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
 LOG_LEVEL=${LOG_LEVEL}
 ACCESS_TOKEN_EXPIRE_DAYS=${ACCESS_TOKEN_EXPIRE_DAYS}
+# Host folder for the Data Loader PDF documents. docker-compose interpolates this
+# into the data-loader volume mapping (DOCS_DIR:/docs). Edit here to change the mount.
+DOCS_DIR=${DOCS_DIR}
 
 # ------------------------------
 # Installer selections
@@ -3729,9 +3749,9 @@ ${VECTOR_BLOCK_DL}
 
 # ------------------------------
 # Local PDF document folder
-# Host folder mounted to /docs inside the container
+# The host folder is configured via DOCS_DIR in .env and mounted to /docs by docker-compose.
 # ------------------------------
-DOCS_DIR=/root/spotfire-copilot/pdf_docs_folder
+DOCS_DIR=${DOCS_DIR}
 EOM
 )
 
@@ -3847,7 +3867,7 @@ if [[ "$GENERATE_COMPOSE" == "yes" ]]; then
       '    extra_hosts:'
       '      - "host.docker.internal:host-gateway"'
       '    volumes:'
-      '      - /root/spotfire-copilot/pdf_docs_folder:/docs'
+      '      - ${DOCS_DIR}:/docs'
  )
   fi
 
