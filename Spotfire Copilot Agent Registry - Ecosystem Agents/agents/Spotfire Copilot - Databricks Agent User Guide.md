@@ -98,7 +98,7 @@ For the full step‑by‑step — including the Databricks Assistant shortcuts a
 
 This agent is not deployed standalone. Before you can invoke it from the Spotfire Copilot Panel:
 
-- **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
+- **LangGraph DeepAgents server** — the agent ships as part of the LangGraph DeepAgents server. See the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
 - **Databricks resources for your domain** — a Genie space, UC functions, and/or Vector Search indexes (see [A Blueprint for Any Domain](#a-blueprint-for-any-domain)), each exposed as a Databricks‑managed MCP endpoint and configured on the agent server. No separate self‑hosted MCP server is required.
 - **A Databricks service principal (OAuth M2M)** — the agent authenticates with a service principal using OAuth (tokens minted and refreshed automatically). The principal must have permission to use the Genie space, functions, indexes, and warehouse you expect to access.
 

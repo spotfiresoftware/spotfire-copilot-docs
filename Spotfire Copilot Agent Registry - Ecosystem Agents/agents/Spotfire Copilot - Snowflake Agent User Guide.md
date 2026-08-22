@@ -61,7 +61,7 @@ For background on Cortex Analyst and semantic views, see the upstream documentat
 
 This agent is not deployed standalone. Before you can invoke it from the Spotfire Copilot Panel, two components must already be deployed and reachable in your environment:
 
-- **LangGraph agent server** — the agent ships as part of the LangGraph agent server. See the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
+- **LangGraph DeepAgents server** — the agent ships as part of the LangGraph DeepAgents server. See the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md) or the [licensed deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28Licensed%29%20Deployment%20Guide.md).
 - **`snowflake` MCP server** — the agent's only tools (`VOLVE_SURVEYS`, `SQL_Execution_Tool`) call this MCP server at runtime. The MCP server is configured with the Snowflake account, warehouse, role, and semantic view it is allowed to address.
 
 In addition, on the Snowflake side you need:
@@ -123,7 +123,7 @@ For the example above that is `https://<account_url>/api/v2/databases/DASH_MCP_D
 
 ### Point the agent at it
 
-Set these on the LangGraph agent server (see the deployment guides for where env values are supplied). Snowflake recommends **OAuth over hardcoded tokens**; use a Programmatic Access Token (PAT) with a least-privileged role only where a static bearer token is required.
+Set these on the LangGraph DeepAgents server (see the deployment guides for where env values are supplied). Snowflake recommends **OAuth over hardcoded tokens**; use a Programmatic Access Token (PAT) with a least-privileged role only where a static bearer token is required.
 
 | Setting                          | Value                                                                 |
 | -------------------------------- | --------------------------------------------------------------------- |
