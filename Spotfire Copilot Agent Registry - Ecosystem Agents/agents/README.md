@@ -18,5 +18,6 @@ The **Backing MCP server** column links to that server's user guide (its deploym
 
 ## See also
 
+- [Databricks MCP Server Blueprint](databricks-mcp-server-blueprint/Spotfire%20Copilot%20-%20Databricks%20MCP%20Server%20Blueprint%20Guide.md) — a Databricks notebook that builds the four Databricks-managed MCP servers and a starter behavior pack for a new [Databricks Agent](Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md) domain.
 - [Agent Server Deployment](../agent-server-deployment/README.md) — deploy the server that hosts these agents.
 - [MCP Servers](../mcp-servers/README.md) — consume or deploy the MCP backends each agent requires.

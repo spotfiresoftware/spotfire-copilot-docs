@@ -8,6 +8,7 @@ The Databricks Agent is a **template** for building a domain expert on top of Da
 
 - [Introduction](#introduction)
 - [A Blueprint for Any Domain](#a-blueprint-for-any-domain)
+- [Build Your Domain Resources (Guided Path)](#build-your-domain-resources-guided-path)
 - [Prerequisites](#prerequisites)
 - [Getting Started](#getting-started)
   - [Invoking the Agent](#invoking-the-agent)
@@ -58,9 +59,40 @@ The agent's **behavior is domain‑agnostic** — its routing, tool‑use rules,
 
 1. **Build the resources** for your domain (a Genie space, some UC functions, one or more Vector Search indexes).
 2. **Point the agent at them** by setting the four URLs in the agent server's configuration (see the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md#databricks-agent)). Only the ones you set are active.
-3. **(Optional) supply a behavior pack.** The agent already knows *how* to route (data → Genie, computation → function, documents → AI Search, discovery → SQL). For sharper, domain‑aware answers you can provide a **behavior pack** — a small folder holding the agent's system prompt, domain knowledge (key terms, formulas, thresholds), help text, and skills. The server ships with a built‑in default pack; to use your own, mount your pack folder and point the agent at it (no code change). See *Behavior pack (per‑domain)* in the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md#databricks-agent).
+3. **(Optional) supply a behavior pack.** The agent already knows *how* to route (data → Genie, computation → function, documents → AI Search, discovery → SQL). For sharper, domain‑aware answers you can provide a **behavior pack** — a small folder holding the agent's system prompt, domain knowledge (key terms, formulas, thresholds), help text, and skills. The server ships with a built‑in default pack; to use your own, mount your pack folder and point the agent at it (no code change). See *Behavior pack (per‑domain)* in the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md#databricks-agent), and the [Databricks Agent Behavior Pack Authoring Guide](databricks-mcp-server-blueprint/Spotfire%20Copilot%20-%20Databricks%20Agent%20Behavior%20Pack%20Authoring%20Guide.md) for the exact folder structure and skill format.
 
 That's the whole recipe. The same agent becomes a specialist for whatever domain those three resources describe — a blueprint you can replicate per domain.
+
+**Prefer a guided, automated path?** Rather than building the resources by hand, run the **MCP Server Blueprint** notebook — it provisions all four MCP servers *and* generates a starter behavior pack for you. See [Build Your Domain Resources (Guided Path)](#build-your-domain-resources-guided-path).
+
+## Build Your Domain Resources (Guided Path)
+
+The blueprint above lists *what* to build. The **MCP Server Blueprint** notebook builds it *for you* — a self‑contained Databricks notebook (runs on serverless compute, no cluster setup) that provisions all four Databricks‑managed MCP servers **and** generates a starter behavior pack. It turns the manual “build the resources” step into a guided, roughly 1–2‑hour workflow.
+
+**What the notebook produces**
+
+- The four **capability endpoint URLs** (Genie space, UC functions, AI Search, DBSQL) — printed at the end, ready to paste into the agent server configuration.
+- A **service principal** granted the access each capability needs.
+- A **starter behavior pack** — the folder you hand to deployment (`pack.yaml`, `system_prompt.md`, `AGENTS.md`, `help.md`, and the four capability skills), pre‑filled for your domain.
+
+**What you do (high level)**
+
+1. **Configure** — set your catalog, schema, domain tables, and domain name.
+2. **Verify prerequisites** — the notebook confirms the catalog, schema, and tables are reachable.
+3. **Create UC functions** — your domain computations (diagnosis, scoring, forecasting), with SQL templates and Databricks Assistant prompts.
+4. **Create a Genie space** — natural‑language access over your tables.
+5. **Generate & index reference documents** — build an AI Search index for grounded document answers.
+6. **Grant permissions** — SQL grants plus Genie `CAN_RUN` for the service principal.
+7. **Generate the behavior pack** — the notebook writes the pack files for your domain.
+8. **Test connectivity & collect URLs** — validates all four servers and prints your endpoints.
+
+For the full step‑by‑step — including the Databricks Assistant shortcuts and troubleshooting — see the [**MCP Server Blueprint** guide](databricks-mcp-server-blueprint/Spotfire%20Copilot%20-%20Databricks%20MCP%20Server%20Blueprint%20Guide.md) and its [notebook](databricks-mcp-server-blueprint/mcp_server_blueprint.ipynb).
+
+**Customize the generated pack.** The notebook produces a *starter* pack; refine it so the agent speaks your domain fluently — real thresholds and formulas in `AGENTS.md`, accurate table schemas in the Genie skill, and every function listed in the UC‑functions skill. For the exact folder structure, the `SKILL.md` format (YAML frontmatter, the rule that a skill's folder name must match its `name`, and space‑separated `allowed-tools`), and authoring tips, follow the [Databricks Agent Behavior Pack Authoring Guide](databricks-mcp-server-blueprint/Spotfire%20Copilot%20-%20Databricks%20Agent%20Behavior%20Pack%20Authoring%20Guide.md).
+
+**Hand off to deployment.** The notebook writes the pack into a Databricks UC Volume, so first **export it** from the volume (the [MCP Server Blueprint guide](databricks-mcp-server-blueprint/Spotfire%20Copilot%20-%20Databricks%20MCP%20Server%20Blueprint%20Guide.md#2-export-the-pack-from-databricks) shows the CLI/UI/API options). Then give the deployment team the exported pack folder plus the endpoint URLs and service‑principal credentials. They mount the pack (`DATABRICKS_AGENT_PACK_DIR`) and set the four `*_MCP_SERVER_URL` values and the OAuth variables. See the [OSS deployment guide](../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md#databricks-agent).
+
+> Building by hand instead? The same three building blocks in [A Blueprint for Any Domain](#a-blueprint-for-any-domain) still apply — the notebook simply automates them and gives you a pack to start from.
 
 ## Prerequisites
 
@@ -235,6 +267,8 @@ Swap the Genie space, functions, and index for a different domain, and the same 
 | --- | --- |
 | Blueprint | The domain‑agnostic agent design; specialized per domain by the Databricks resources it points at. |
 | Behavior pack | A folder holding the agent's domain‑specific inputs (system prompt, domain knowledge, help text, skills, and a `pack.yaml` manifest). The server ships a default pack; mount your own to adapt the agent to a domain without code changes. |
+| MCP Server Blueprint | A Databricks notebook that provisions the four Databricks‑managed MCP servers for a domain and generates a starter behavior pack — the guided alternative to building the resources by hand. |
+| Behavior Pack Authoring Guide | The reference for the behavior pack's folder structure and `SKILL.md` format ([Databricks Agent Behavior Pack Authoring Guide](databricks-mcp-server-blueprint/Spotfire%20Copilot%20-%20Databricks%20Agent%20Behavior%20Pack%20Authoring%20Guide.md)), used to customize the pack the blueprint generates. |
 | Databricks‑managed MCP server | A Model Context Protocol endpoint hosted by Databricks exposing a workspace capability (genie / functions / vector‑search / sql) as tools. |
 | Genie space | A scoped Databricks Genie experience over a chosen set of tables; the agent's primary natural‑language data‑retrieval path. |
 | Unity Catalog (UC) | Databricks' centralized governance layer for cataloging, securing, and discovering data and AI assets. |
