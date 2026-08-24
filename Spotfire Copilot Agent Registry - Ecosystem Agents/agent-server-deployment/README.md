@@ -9,6 +9,12 @@ Two deployment variants are published. Choose the one that matches your licensin
 
 Both variants expose the same set of A2A agents and connect to the same [MCP servers](../mcp-servers/README.md) for tools and data access.
 
+### Adding your own domain agents
+
+Beyond the baked-in agents, you can add **your own domain / data-source agents at deploy time** — no image rebuild — using an agent overlay bundle:
+
+- **[Spotfire Copilot — Adding Domain Agents via Overlay Guide](Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md)** — author a bundle (`agents.yaml` + behavior packs) and layer it over the running server via Docker Compose, Helm, or GitHub Actions. This is now the single, generic way to add any domain agent (including the Databricks domain agents).
+
 ## See also
 
 - [Artifact Sources and Access](../Spotfire%20Copilot%20-%20Artifact%20Sources%20and%20Access.md) — OCI login and version policy shared by these guides.

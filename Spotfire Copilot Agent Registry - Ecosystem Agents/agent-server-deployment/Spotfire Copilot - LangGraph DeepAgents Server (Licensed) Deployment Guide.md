@@ -153,7 +153,6 @@ docker pull copilotoci.azurecr.io/spotfirecopilot/copilot-deepagents-server:<ima
 Licensed runtime graph exposure is based on configured graphs. Current set:
 
 - `osdu_agent`
-- `databricks_agent`
 - `databricks_genie_agent`
 - `snowflake_agent`
 - `dv_agent`
@@ -162,6 +161,7 @@ Licensed runtime graph exposure is based on configured graphs. Current set:
 - `tavily_agent`
 - `milvus_agent`
 - `ddr_agent`
+- `support_agent`
 
 ### 4.2 Notes
 
@@ -310,7 +310,7 @@ Commonly optional:
 | MCP_EXCHANGE_AUDIENCE | No | Target client id for the exchanged token; leave empty (the `aud=mcp` claim comes from the client's audience mapper). | *(empty)* |
 | OSDU_MCP_SERVER_URL | Conditional | OSDU MCP endpoint for `osdu_agent`. | `https://mcp-osdu.example.com/mcp` |
 | OSDU_MCP_BEARER_TOKEN | Conditional | Per-server bearer token for OSDU MCP; falls back to `MCP_BEARER_TOKEN` if unset. | `<osdu-token>` |
-| DATABRICKS_MCP_SERVER_URL | Conditional | Databricks MCP endpoint for `databricks_agent`. | `https://mcp-databricks.example.com/mcp` |
+| DATABRICKS_MCP_SERVER_URL | Conditional | Databricks MCP endpoint for a Databricks overlay agent (per its prefix). | `https://mcp-databricks.example.com/mcp` |
 | DATABRICKS_MCP_BEARER_TOKEN | Conditional | Per-server bearer token for Databricks MCP; falls back to `MCP_BEARER_TOKEN` if unset. | `<databricks-token>` |
 | GENIE_MCP_SERVER_URL | Conditional | Databricks Genie MCP endpoint for `databricks_genie_agent`. | `https://mcp-databricks-genie.example.com/mcp` |
 | GENIE_MCP_BEARER_TOKEN | Conditional | Per-server bearer token for Databricks Genie MCP; falls back to `MCP_BEARER_TOKEN` if unset. | `<genie-token>` |

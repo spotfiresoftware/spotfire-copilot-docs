@@ -7,7 +7,6 @@ The **Backing MCP server** column links to that server's user guide (its deploym
 | Agent | What it does | Backing MCP server |
 |-------|--------------|--------------------|
 | [OSDU Agent](Spotfire%20Copilot%20-%20OSDU%20Agent%20User%20Guide.md) | Explores wells, wellbores, datasets, schemas, and lineage on an OSDU data platform. | [OSDU MCP Server](../mcp-servers/osdu/Spotfire%20Copilot%20-%20OSDU%20MCP%20Server%20User%20Guide.md) |
-| [Databricks Agent](Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md) | Calls Unity Catalog functions, retrieves from Vector Search (RAG), answers data questions with Genie, and runs SQL. | Databricks-managed MCP servers (Functions, Vector Search, Genie, DBSQL) |
 | [Databricks Genie Agent](Spotfire%20Copilot%20-%20Databricks%20Genie%20Agent%20User%20Guide.md) | Answers natural-language data questions through a Databricks Genie space. | `databricks-genie` — External |
 | [Data Virtualization (DV) Agent](Spotfire%20Copilot%20-%20Data%20Virtualization%20%28DV%29%20Agent%20User%20Guide.md) | Discovers data sources, tables, and columns via Data Virtualization and runs OData v4 queries. | [Data Virtualization (DV) MCP Server](../mcp-servers/data-virtualization-dv/Spotfire%20Copilot%20-%20Data%20Virtualization%20%28DV%29%20MCP%20Server%20User%20Guide.md) |
 | [Snowflake Agent](Spotfire%20Copilot%20-%20Snowflake%20Agent%20User%20Guide.md) | Answers natural-language questions about oil & gas well directional surveys (Volve field) via Cortex Analyst, and runs read-only SQL against Snowflake. | `snowflake` — External |
@@ -18,6 +17,6 @@ The **Backing MCP server** column links to that server's user guide (its deploym
 
 ## See also
 
-- [Databricks MCP Server Blueprint](databricks-mcp-server-blueprint/Spotfire%20Copilot%20-%20Databricks%20MCP%20Server%20Blueprint%20Guide.md) — a Databricks notebook that builds the four Databricks-managed MCP servers and a starter behavior pack for a new [Databricks Agent](Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md) domain.
+- [Databricks MCP Server Blueprint](databricks-mcp-server-blueprint/Spotfire%20Copilot%20-%20Databricks%20MCP%20Server%20Blueprint%20Guide.md) — a Databricks notebook that builds the four Databricks-managed MCP servers and a starter behavior pack for a Databricks overlay agent (see [Adding Domain Agents via Overlay](../agent-server-deployment/Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md)).
 - [Agent Server Deployment](../agent-server-deployment/README.md) — deploy the server that hosts these agents.
 - [MCP Servers](../mcp-servers/README.md) — consume or deploy the MCP backends each agent requires.

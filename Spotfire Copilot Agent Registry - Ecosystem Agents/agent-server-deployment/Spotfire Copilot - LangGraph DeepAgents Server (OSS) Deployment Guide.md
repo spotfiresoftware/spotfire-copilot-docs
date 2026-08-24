@@ -174,10 +174,9 @@ This guide uses operator-selected versions.
 
 ### 3.1 Available Agents
 
-This server image currently exposes these agent IDs at runtime:
+This server image currently exposes these baked-in agent IDs at runtime:
 
 - `osdu_agent`
-- `databricks_agent`
 - `databricks_genie_agent`
 - `snowflake_agent`
 - `dv_agent`
@@ -186,6 +185,13 @@ This server image currently exposes these agent IDs at runtime:
 - `tavily_agent`
 - `milvus_agent`
 - `ddr_agent`
+- `support_agent`
+
+> **Adding your own domain agents.** Beyond these baked-in agents, you can add
+> domain / data-source agents (including Databricks domain agents) **at deploy
+> time without rebuilding the image**, using an agent overlay bundle. See the
+> [Adding Domain Agents via Overlay Guide](Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md).
+> Overlay agents auto-enable — you do not list them in `AGENTS_ENABLED`.
 
 ### 3.2 Selection Notes and Precedence
 
@@ -403,9 +409,9 @@ Quick-start minimum set:
 - Set per-server `*_MCP_BEARER_TOKEN` values as required by your MCP backends, or set `MCP_BEARER_TOKEN` as a shared fallback.
 - Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored. To keep one agent on its own static token while the minter is active — for example an **external SaaS MCP** such as Databricks Genie or Snowflake that authenticates with its own token rather than a Keycloak `aud=mcp` JWT — set `<PREFIX>_MCP_STATIC_TOKEN_ONLY=true` for that agent.
 
-### Databricks agent
+### Databricks domain agents
 
-The `databricks_agent` is a **domain-agnostic blueprint**: it connects to several **Databricks-managed MCP servers** and aggregates their tools — **Genie** (a *scoped* space, the primary data-retrieval path), Unity Catalog **Functions**, **Vector Search / AI Search** (RAG), and **DBSQL** (discovery + fallback). You adapt it to a domain by pointing these URLs at that domain's **Genie space**, **functions**, and **indexes** — the agent itself doesn't change. Configure a URL per capability (any unset server is skipped):
+Databricks agents are added as **overlay agents** — see the **[Adding Domain Agents via Overlay Guide](Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md)** for authoring and deploying them. Each Databricks agent connects to several **Databricks-managed MCP servers** and aggregates their tools — **Genie** (a *scoped* space, the primary data-retrieval path), Unity Catalog **Functions**, **Vector Search / AI Search** (RAG), and **DBSQL** (discovery + fallback). Point these URLs at the agent's **Genie space**, **functions**, and **indexes**, supplied per overlay-agent **prefix** (e.g. `DATABRICKS_PETRO_*`). Configure a URL per capability (any unset server is skipped):
 
 ```env
 # Genie: a SCOPED space (include the space id). This is the primary data path.
@@ -430,34 +436,7 @@ When OAuth is configured it takes precedence; the shared static `DATABRICKS_MCP_
 
 Optional per-server timeouts help with slow, LLM-backed calls (functions and Genie can exceed the 30s default on cold start): `DATABRICKS_FUNCTIONS_MCP_CALL_TIMEOUT`, `DATABRICKS_DBSQL_MCP_CALL_TIMEOUT`, `DATABRICKS_GENIE_MCP_CALL_TIMEOUT` (seconds).
 
-**Behavior pack (per-domain).** Everything domain-specific — the system prompt, domain knowledge (`AGENTS.md`), the help text, the capability skills, and the agent-card manifest (`pack.yaml`) — lives in a single **behavior pack** folder. The agent ships with a bundled `default_pack` (a petroleum reference), so it runs out of the box. To adapt it to another domain **without rebuilding the app logic**, mount your own pack and point the agent at it. Resolution order (first that exists wins):
-
-1. `DATABRICKS_AGENT_PACK_DIR` — an explicit path to your mounted pack.
-2. A conventional mount point — default `/config/databricks_agent` (override the location with `DATABRICKS_AGENT_PACK_MOUNT`). Mount a volume containing `pack.yaml` there and no env var is needed.
-3. The bundled `default_pack` (always present).
-
-```env
-# Point the agent at a mounted pack (optional; default = bundled pack)
-DATABRICKS_AGENT_PACK_DIR=/config/databricks_agent
-# DATABRICKS_AGENT_PACK_MOUNT=/config/databricks_agent   # change the default mount point
-```
-
-In Helm, mount the pack via the chart's `extraVolumes` / `extraVolumeMounts` (e.g. from a ConfigMap or PVC) at the pack path:
-
-```yaml
-extraVolumes:
-  - name: databricks-agent-pack
-    configMap:
-      name: databricks-agent-pack        # kubectl create configmap ... --from-file=...
-extraVolumeMounts:
-  - name: databricks-agent-pack
-    mountPath: /config/databricks_agent
-    readOnly: true
-```
-
-> A ConfigMap is flat (keys can't contain `/`), so a pack that includes a `skills/<id>/SKILL.md` subtree needs a **PVC** (or a baked image); a single-level pack works via ConfigMap. The bundled `default_pack` is always available regardless.
-
-> For CI/Helm deployment, set the four `LANGGRAPH_OSS_DATABRICKS_*_MCP_SERVER_URL` and `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_ID` (+ optional token URL/scope, `*_MCP_CALL_TIMEOUT`, and `LANGGRAPH_OSS_DATABRICKS_AGENT_PACK_DIR` / `_MOUNT`) in a `workflow-config/*.env` file, and add `LANGGRAPH_OSS_DATABRICKS_OAUTH_CLIENT_SECRET` as a repository secret.
+The agent's **behavior pack** (system prompt, `AGENTS.md`, help, skills, `pack.yaml`) travels inside the overlay bundle, not a separately mounted volume — see the [Adding Domain Agents via Overlay Guide](Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md).
 
 Commonly optional:
 
@@ -550,10 +529,10 @@ Use this table when you want concrete variable names instead of `<PREFIX>` patte
 | OSDU_MCP_BEARER_TOKEN | Conditional | Bearer token for OSDU MCP. | `<token>` |
 | OSDU_MCP_SERVER_TRANSPORT | No | OSDU MCP transport. | `streamable-http` |
 | OSDU_MCP_CALL_TIMEOUT | No | OSDU per-call timeout seconds. | `60` |
-| DATABRICKS_FUNCTIONS_MCP_SERVER_URL | Conditional | Databricks-managed **Functions** MCP endpoint when `databricks_agent` is enabled. Any unset Databricks server is skipped. | `https://<workspace-host>/api/2.0/mcp/functions/{catalog}/{schema}` |
-| DATABRICKS_VECTORSEARCH_MCP_SERVER_URL | Conditional | Databricks-managed **Vector Search** MCP endpoint for `databricks_agent`. | `https://<workspace-host>/api/2.0/mcp/vector-search/{catalog}/{schema}` |
-| DATABRICKS_GENIE_MCP_SERVER_URL | Conditional | Databricks-managed **Genie** MCP endpoint for `databricks_agent` — use a **scoped space** (`/genie/{space_id}`), the primary data-retrieval path. Distinct from the standalone `databricks_genie_agent`, which uses `GENIE_MCP_SERVER_URL`. | `https://<workspace-host>/api/2.0/mcp/genie/{space_id}` |
-| DATABRICKS_DBSQL_MCP_SERVER_URL | Conditional | Databricks-managed **DBSQL** MCP endpoint for `databricks_agent`. | `https://<workspace-host>/api/2.0/mcp/sql` |
+| DATABRICKS_FUNCTIONS_MCP_SERVER_URL | Conditional | Databricks-managed **Functions** MCP endpoint for a Databricks overlay agent (per its prefix). Any unset Databricks server is skipped. | `https://<workspace-host>/api/2.0/mcp/functions/{catalog}/{schema}` |
+| DATABRICKS_VECTORSEARCH_MCP_SERVER_URL | Conditional | Databricks-managed **Vector Search** MCP endpoint for a Databricks overlay agent (per its prefix). | `https://<workspace-host>/api/2.0/mcp/vector-search/{catalog}/{schema}` |
+| DATABRICKS_GENIE_MCP_SERVER_URL | Conditional | Databricks-managed **Genie** MCP endpoint for a Databricks overlay agent (per its prefix) — use a **scoped space** (`/genie/{space_id}`), the primary data-retrieval path. Distinct from the standalone `databricks_genie_agent`, which uses `GENIE_MCP_SERVER_URL`. | `https://<workspace-host>/api/2.0/mcp/genie/{space_id}` |
+| DATABRICKS_DBSQL_MCP_SERVER_URL | Conditional | Databricks-managed **DBSQL** MCP endpoint for a Databricks overlay agent (per its prefix). | `https://<workspace-host>/api/2.0/mcp/sql` |
 | DATABRICKS_OAUTH_CLIENT_ID | Conditional | Databricks service-principal (M2M OAuth) client id. Enables auto-minted/refreshed tokens shared across all Databricks servers above (preferred over a static token). | `<application-id>` |
 | DATABRICKS_OAUTH_CLIENT_SECRET | Conditional | Service-principal OAuth secret. Store as a secret (GitHub/K8s), not in plaintext config. | `<secret>` |
 | DATABRICKS_OAUTH_TOKEN_URL | No | Override the OAuth token URL (otherwise derived as `https://<workspace-host>/oidc/v1/token`). | `https://<host>/oidc/v1/token` |
@@ -561,8 +540,6 @@ Use this table when you want concrete variable names instead of `<PREFIX>` patte
 | DATABRICKS_MCP_BEARER_TOKEN | No | Shared **static token fallback** for the Databricks servers, used only when OAuth is not configured. | `<token>` |
 | DATABRICKS_MCP_SERVER_URL | No | Optional legacy single self-hosted Databricks MCP server (kept for backward compatibility). | `https://mcp-databricks.example.com/mcp` |
 | DATABRICKS_MCP_SERVER_TRANSPORT | No | Databricks MCP transport (applies per server). | `streamable-http` |
-| DATABRICKS_AGENT_PACK_DIR | No | Path to a mounted **behavior pack** (system prompt, `AGENTS.md`, help, skills, `pack.yaml`) that adapts `databricks_agent` to a domain. Unset = auto-use the mount point, else the bundled `default_pack`. | `/config/databricks_agent` |
-| DATABRICKS_AGENT_PACK_MOUNT | No | Conventional pack mount point checked when `DATABRICKS_AGENT_PACK_DIR` is unset (used only if it contains `pack.yaml`). | `/config/databricks_agent` |
 | DATABRICKS_MCP_CALL_TIMEOUT | No | Databricks per-call timeout seconds (per server via `<PREFIX>_MCP_CALL_TIMEOUT`). | `60` |
 | GENIE_MCP_SERVER_URL | Conditional | Databricks Genie MCP endpoint URL when `databricks_genie_agent` is enabled. | `https://mcp-databricks-genie.example.com/mcp` |
 | GENIE_MCP_BEARER_TOKEN | Conditional | Bearer token for Databricks Genie MCP. | `<token>` |

@@ -10,7 +10,7 @@ The agents are built on the [LangChain](https://www.langchain.com/) ecosystem an
 
 There are three layers. You deploy the bottom two and wire them together with URLs and tokens:
 
-1. **Agents** *(capabilities)* — each agent (for example `osdu_agent`, `databricks_agent`, `snowflake_agent`) is a domain-targeted capability you invoke from the Spotfire Copilot Panel. Agents are **not deployed individually** — see layer 2.
+1. **Agents** *(capabilities)* — each agent (for example `osdu_agent`, `dv_agent`, `snowflake_agent`) is a domain-targeted capability you invoke from the Spotfire Copilot Panel. Agents are **not deployed individually** — see layer 2.
 2. **Agent server** *(the deployment vehicle)* — a single **LangGraph DeepAgents server** hosts one or more A2A agents on one endpoint. One server deployment can host **all** agents or any **subset** you enable. Two variants are available: **OSS** (open-source LangGraph libraries) and **Licensed** (LangGraph Platform runtime). You register each hosted agent with the Spotfire Copilot orchestrator so the Copilot Panel can invoke it — and because each agent speaks the open **A2A protocol**, its endpoint is equally reachable by any other A2A-capable client or orchestrator you choose to connect.
 3. **MCP servers** *(prerequisites)* — each agent reaches its underlying system (OSDU, Databricks, Data Virtualization, spotfire-library/License, Tavily, and others) through an MCP server that exposes tools over `streamable-http`. Most agents use an MCP server **documented here** (with a user guide and a deployment guide); a few use an **external** MCP server whose docs are not provided in this section. Deploy the MCP servers an agent needs, then point the agent at them with `*_MCP_SERVER_URL` settings.
 
@@ -31,7 +31,7 @@ flowchart TB
 
     subgraph AS["Agent Server — one deployment<br/>LangGraph DeepAgents (OSS or Licensed)"]
         A1[osdu_agent]
-        A2[databricks_agent]
+        A2["domain agent (overlay)"]
         A3[dv_agent]
         A4[tavily_agent]
         A5["... subset you enable"]
@@ -106,7 +106,6 @@ Each capability is delivered by an **agent** (end-user guide) backed by a dedica
 | Capability | Agent user guide | A2A agent id | Backing MCP server | MCP | Env prefix |
 |---|---|---|---|---|---|
 | OSDU | [OSDU Agent](agents/Spotfire%20Copilot%20-%20OSDU%20Agent%20User%20Guide.md) | `osdu_agent` | [OSDU MCP Server](mcp-servers/osdu/Spotfire%20Copilot%20-%20OSDU%20MCP%20Server%20User%20Guide.md) | Documented | `OSDU` |
-| Databricks | [Databricks Agent](agents/Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md) | `databricks_agent` | Databricks-managed MCP servers (Functions, Vector Search, Genie, DBSQL) | Documented | `DATABRICKS` |
 | Databricks Genie | [Databricks Genie Agent](agents/Spotfire%20Copilot%20-%20Databricks%20Genie%20Agent%20User%20Guide.md) | `databricks_genie_agent` | `databricks-genie` | External¹ | `GENIE` |
 | Data Virtualization | [Data Virtualization (DV) Agent](agents/Spotfire%20Copilot%20-%20Data%20Virtualization%20%28DV%29%20Agent%20User%20Guide.md) | `dv_agent` | [Data Virtualization (DV) MCP Server](mcp-servers/data-virtualization-dv/Spotfire%20Copilot%20-%20Data%20Virtualization%20%28DV%29%20MCP%20Server%20User%20Guide.md) | Documented | `DV` |
 | Snowflake | [Snowflake Agent](agents/Spotfire%20Copilot%20-%20Snowflake%20Agent%20User%20Guide.md) | `snowflake_agent` | `snowflake` | External¹ | `SNOWFLAKE` |

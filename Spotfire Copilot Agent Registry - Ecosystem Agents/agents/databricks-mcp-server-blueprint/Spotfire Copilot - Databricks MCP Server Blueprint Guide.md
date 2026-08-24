@@ -235,26 +235,52 @@ curl -H "Authorization: Bearer $TOKEN" \
   -o ./<filename>
 ```
 
-Once exported, the deployment team mounts it into the agent container (as a PVC, ConfigMap, or baked into the image) at the path specified by `DATABRICKS_AGENT_PACK_DIR`.
+Once exported, this pack becomes one agent's behavior pack **inside an overlay bundle** — the folder the DeepAgents server layers over its baked agents at deploy time (no image rebuild). Put the exported pack under `packs/<your_agent>/` and add a one-row `agents.yaml` manifest beside it:
+
+```
+my-overlays/
+  agents.yaml                    # overlay manifest (one row for your agent)
+  packs/
+    <your_agent>/                # the pack you exported above (pack.yaml, system_prompt.md, AGENTS.md, help.md, skills/…)
+```
+
+```yaml
+# agents.yaml
+agents:
+  <your_agent>:                  # e.g. reservoir_agent
+    template: mcp
+    prefix: <PREFIX>             # e.g. RESERVOIR — the env namespace for this agent's vars (see below)
+    auth: oauth                  # Databricks M2M service principal
+    capabilities: databricks     # expands to the 4 managed servers (Functions / Vector Search / Genie / DBSQL)
+    pack: packs/<your_agent>
+```
+
+Deliver the bundle (tarball or values) as described in the **[Adding Domain Agents via Overlay Guide](../../agent-server-deployment/Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md)** — the pack travels **inside** the bundle; there is no separate pack-mount volume.
 
 ### 3. Environment Variables
 
-```bash
-# Pack location (inside the container)
-DATABRICKS_AGENT_PACK_DIR=/config/databricks_agent
+Supply these per agent, named by the **`prefix`** you chose in `agents.yaml`. The
+examples use `<PREFIX>` — for `prefix: RESERVOIR` they become
+`RESERVOIR_GENIE_MCP_SERVER_URL`, etc. (No pack-location variable is needed — the
+pack travels inside the overlay bundle.)
 
+```bash
 # MCP Server URLs
-DATABRICKS_GENIE_MCP_SERVER_URL=https://<host>/api/2.0/mcp/genie/<space_id>
-DATABRICKS_FUNCTIONS_MCP_SERVER_URL=https://<host>/api/2.0/mcp/functions/<catalog>/<schema>
-DATABRICKS_VECTORSEARCH_MCP_SERVER_URL=https://<host>/api/2.0/mcp/ai-search/<catalog>/<schema>
+<PREFIX>_GENIE_MCP_SERVER_URL=https://<host>/api/2.0/mcp/genie/<space_id>
+<PREFIX>_FUNCTIONS_MCP_SERVER_URL=https://<host>/api/2.0/mcp/functions/<catalog>/<schema>
+<PREFIX>_VECTORSEARCH_MCP_SERVER_URL=https://<host>/api/2.0/mcp/ai-search/<catalog>/<schema>
 # ^ Schema-scoped: auto-discovers all indexes in the schema.
 #   Tool name still includes the index: {catalog}__{schema}__{index_name}
-DATABRICKS_DBSQL_MCP_SERVER_URL=https://<host>/api/2.0/mcp/sql
+<PREFIX>_DBSQL_MCP_SERVER_URL=https://<host>/api/2.0/mcp/sql
 
-# Authentication (OAuth M2M)
-DATABRICKS_OAUTH_CLIENT_ID=<service-principal-app-id>
-DATABRICKS_OAUTH_CLIENT_SECRET=<secret>
+# Authentication (OAuth M2M) — secret goes in your secret store, not plain config
+<PREFIX>_OAUTH_CLIENT_ID=<service-principal-app-id>
+<PREFIX>_OAUTH_CLIENT_SECRET=<secret>
 ```
+
+Non-secret vars go in the chart's `config.extraEnv`; `<PREFIX>_OAUTH_CLIENT_SECRET`
+(and any bearer token) go in `secret.extraSecretEnv`. The overlay guide shows the
+Docker Compose and GitHub Actions equivalents.
 
 ### 4. Service Principal Credentials
 
@@ -299,3 +325,168 @@ For questions about:
 - **Databricks MCP servers**: See [Databricks documentation](https://docs.databricks.com)
 - **Spotfire Agent integration**: Contact the Spotfire Agent team
 - **UC Function design**: The Databricks Assistant can help you design and create functions interactively
+
+---
+
+## Appendix: What the Notebook Must Generate (Overlay Bundle Spec)
+
+This is the precise contract for the artifacts the notebook produces. The output is
+a **self-contained overlay bundle** — a directory of plain-text files — that adds
+**one** Databricks domain agent to the DeepAgents OSS server at deploy time (no image
+rebuild). The **same** bundle is used two ways, unchanged: mounted as a folder for
+Docker Compose, or packaged as a base64 `tar.gz` for Helm. There is **no** pack-mount
+volume and **no** `DATABRICKS_AGENT_PACK_DIR` — the pack lives inside the bundle.
+
+### Inputs the notebook collects
+
+| Variable | Meaning | Example |
+|---|---|---|
+| `AGENT_ID` | snake_case, ends in `_agent` | `reservoir_agent` |
+| `PREFIX` | UPPERCASE env namespace for this agent's vars | `RESERVOIR` |
+| `DOMAIN_NAME` | Human-readable name | `Reservoir Engineering` |
+| `WORKSPACE_HOST` | Databricks workspace host | `adb-123….azuredatabricks.net` |
+| `CATALOG`, `SCHEMA` | Unity Catalog location | `main`, `reservoir` |
+| `GENIE_SPACE_ID` | Scoped Genie space id | `01f1…` |
+| `SP_CLIENT_ID` | Service-principal (OAuth M2M) application id | `<app-id>` |
+
+### Directory structure (the deliverable)
+
+```
+<AGENT_ID>-overlay/
+  agents.yaml                         # overlay manifest — ONE agent row
+  packs/
+    <AGENT_ID>/
+      pack.yaml                       # agent-card: name, description, version, skills[]
+      system_prompt.md                # routing rules + guardrails
+      AGENTS.md                       # domain knowledge (entities, formulas, thresholds)
+      help.md                         # "what can you do" text + starter prompts
+      skills/
+        genie-data-questions/SKILL.md
+        uc-functions/SKILL.md
+        vector-search-retrieval/SKILL.md
+        sql-execution/SKILL.md
+```
+
+`pack:` in `agents.yaml` is resolved **relative to `agents.yaml`**, so keep them
+together. Skill folder ids are **lowercase-hyphen** only. `help-and-capabilities` is
+provided by middleware — list it in `pack.yaml` `skills[]` but do **not** create a
+`SKILL.md` for it.
+
+### `agents.yaml`
+
+```yaml
+agents:
+  <AGENT_ID>:
+    template: mcp
+    prefix: <PREFIX>
+    auth: oauth                 # Databricks M2M service principal
+    capabilities: databricks    # expands to 4 managed servers for this prefix:
+                                #   <PREFIX>_FUNCTIONS / _VECTORSEARCH / _GENIE / _DBSQL _MCP_SERVER_URL
+    pack: packs/<AGENT_ID>
+```
+
+### `packs/<AGENT_ID>/pack.yaml`
+
+```yaml
+name: "<DOMAIN_NAME> Agent"
+description: >-
+  <2–3 sentences: what this agent does over Databricks>.
+version: "0.1.0"
+skills:
+  - id: uc-functions
+    name: Unity Catalog functions
+    description: <domain-keyword-rich description of the UC functions it calls>
+    tags: [databricks, unity-catalog, functions]
+  - id: vector-search-retrieval
+    name: AI Search retrieval
+    description: <what documents/indexes it semantically searches>
+    tags: [databricks, vector-search, ai-search, rag]
+  - id: genie-data-questions
+    name: Genie data questions
+    description: <what the scoped Genie space answers; primary data path>
+    tags: [databricks, genie, nl2sql, data]
+  - id: sql-execution
+    name: SQL discovery & fallback
+    description: Catalog/schema/table discovery and read-only SQL fallback.
+    tags: [databricks, sql, dbsql, discovery]
+  - id: help-and-capabilities
+    name: Help and capabilities
+    description: Onboarding and meta questions like "help" / "what can you do".
+```
+
+Every `skills[].id` **except** `help-and-capabilities` MUST have a matching
+`skills/<id>/SKILL.md` whose frontmatter `name:` **equals** `<id>`.
+
+### `packs/<AGENT_ID>/skills/<id>/SKILL.md`
+
+```markdown
+---
+name: <id>                      # MUST equal the folder name (lowercase-hyphen)
+description: <rich, domain-keyword description so the router selects this skill>
+allowed-tools: <tool1> <tool2>  # SPACE-separated, never commas
+---
+<Body: when to use this skill, how to call the tools, examples.>
+```
+
+### `system_prompt.md`, `AGENTS.md`, `help.md`
+
+- `system_prompt.md` — routing rules, tone, and guardrails. MUST include: (1) a
+  "retrieve real data first; never invent inputs/numbers" rule, (2) a
+  read-only-by-default rule for SQL, (3) a no-ellipsis table policy (never truncate
+  rows/columns with "…").
+- `AGENTS.md` — domain knowledge the model needs (entities/tables, formulas,
+  thresholds, units, conventions). No invented data.
+- `help.md` — a short "what I can do" summary plus 4–6 concrete starter prompts.
+
+### Validation the notebook runs before declaring success
+
+- `agents.yaml` and every `pack.yaml` / `SKILL.md` parse as valid YAML.
+- Every `skills[].id` (except `help-and-capabilities`) has `skills/<id>/SKILL.md`.
+- Each `SKILL.md` frontmatter `name:` equals its folder name; ids are lowercase-hyphen.
+- `allowed-tools` values are space-separated (no commas).
+- The pack contains `pack.yaml`, `system_prompt.md`, `AGENTS.md`, `help.md`, `skills/`.
+
+### Packaging output A — Docker Compose (folder mount)
+
+The bundle folder is used as-is. The notebook prints these `.env` lines:
+
+```env
+OVERLAY_DIR=./<AGENT_ID>-overlay
+AGENTS_OVERLAY_MANIFEST=/config/overlay/agents.yaml
+```
+
+### Packaging output B — Helm (tarball)
+
+The notebook base64-encodes a `tar.gz` of the bundle and prints the commands.
+Exclude macOS/AppleDouble junk so the in-cluster (busybox) extraction stays clean:
+
+```bash
+COPYFILE_DISABLE=1 tar --exclude='._*' --exclude='.DS_Store' \
+  -czf bundle.tgz -C <AGENT_ID>-overlay .
+base64 < bundle.tgz > bundle.b64
+
+# App chart:
+helm upgrade --install <release> <chart> -n <ns> \
+  --set overlays.enabled=true \
+  --set-file overlays.archiveBase64=bundle.b64
+# -stack chart: prefix the two keys with copilot-deepagents-server-oss.
+```
+
+### Operator env handoff — the notebook prints this (fill real values)
+
+Keep the secret **out** of the bundle and git.
+
+```bash
+# non-secret -> chart config.extraEnv (or .env for compose)
+<PREFIX>_GENIE_MCP_SERVER_URL=https://<WORKSPACE_HOST>/api/2.0/mcp/genie/<GENIE_SPACE_ID>
+<PREFIX>_FUNCTIONS_MCP_SERVER_URL=https://<WORKSPACE_HOST>/api/2.0/mcp/functions/<CATALOG>/<SCHEMA>
+<PREFIX>_VECTORSEARCH_MCP_SERVER_URL=https://<WORKSPACE_HOST>/api/2.0/mcp/ai-search/<CATALOG>/<SCHEMA>
+<PREFIX>_DBSQL_MCP_SERVER_URL=https://<WORKSPACE_HOST>/api/2.0/mcp/sql
+<PREFIX>_OAUTH_CLIENT_ID=<SP_CLIENT_ID>
+# secret -> chart secret.extraSecretEnv (NEVER in the bundle)
+<PREFIX>_OAUTH_CLIENT_SECRET=<service-principal-secret>
+# OAuth token URL auto-derives as https://<WORKSPACE_HOST>/oidc/v1/token
+```
+
+For end-to-end delivery of this bundle on Docker Compose, Helm, and GitHub Actions,
+see the [Adding Domain Agents via Overlay Guide](../../agent-server-deployment/Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md).

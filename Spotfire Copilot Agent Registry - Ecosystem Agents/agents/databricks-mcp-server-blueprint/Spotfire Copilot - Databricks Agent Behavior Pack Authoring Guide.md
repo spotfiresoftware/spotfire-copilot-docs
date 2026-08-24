@@ -350,8 +350,7 @@ workspace:
 
 You don’t have to configure all four — the agent works with whatever is
 connected — but Genie + SQL are the practical minimum. For how these map to the
-agent and how to create/point them, see the [Databricks Agent User Guide](../Spotfire%20Copilot%20-%20Databricks%20Agent%20User%20Guide.md) and
-the [LangGraph DeepAgents Server (OSS) Deployment Guide](../../agent-server-deployment/Spotfire%20Copilot%20-%20LangGraph%20DeepAgents%20Server%20%28OSS%29%20Deployment%20Guide.md#databricks-agent).
+agent and how to deploy it, see the [Adding Domain Agents via Overlay Guide](../../agent-server-deployment/Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md).
 
 ---
 
@@ -380,35 +379,49 @@ the [LangGraph DeepAgents Server (OSS) Deployment Guide](../../agent-server-depl
 ## 9. Deploy hand-off (what the platform team needs)
 
 Give the operator **two things**: your **pack folder** and the **connection
-details**. They do the rest.
+details**. They assemble an overlay bundle and deploy it.
 
-**1. The pack folder** — mounted into the server and selected via one env var:
-
-```
-DATABRICKS_AGENT_PACK_DIR=/config/databricks_agent      # path to your mounted pack
-# (or just mount the pack at /config/databricks_agent and omit the var)
-```
-
-> Mounting note: a pack with a nested `skills/<id>/SKILL.md` subtree must be
-> mounted from a **volume/PVC** (or baked into an image). A Kubernetes ConfigMap
-> is flat and **cannot** hold the `skills/` subtree, so ConfigMap‑only works
-> just for a single‑level pack. Use a volume for a full pack.
-
-**2. The connection details** — the operator sets these (names shown for the
-shared `databricks_agent`; a per‑domain deployment may use a prefixed form):
+**1. The pack folder** — it goes **inside an overlay bundle**, not a mounted
+volume. The operator places your pack at `packs/<your_agent>/` next to a one-row
+`agents.yaml` manifest; the pack (nested `skills/` and all) travels inside the
+bundle:
 
 ```
-DATABRICKS_GENIE_MCP_SERVER_URL=https://<host>/api/2.0/mcp/genie/<SPACE_ID>
-DATABRICKS_FUNCTIONS_MCP_SERVER_URL=https://<host>/api/2.0/mcp/functions/<catalog>/<schema>
-DATABRICKS_VECTORSEARCH_MCP_SERVER_URL=https://<host>/api/2.0/mcp/ai-search/<catalog>/<schema>
-DATABRICKS_DBSQL_MCP_SERVER_URL=https://<host>/api/2.0/mcp/sql
-DATABRICKS_OAUTH_CLIENT_ID=<service-principal-app-id>
-DATABRICKS_OAUTH_CLIENT_SECRET=<secret>     # kept as a secret, never in the pack
+my-overlays/
+  agents.yaml                 # overlay manifest (one row for your agent)
+  packs/
+    <your_agent>/             # your pack (pack.yaml, system_prompt.md, AGENTS.md, help.md, skills/…)
+```
+
+```yaml
+# agents.yaml
+agents:
+  <your_agent>:               # e.g. reservoir_agent
+    template: mcp
+    prefix: <PREFIX>          # e.g. RESERVOIR — the env namespace for the vars below
+    auth: oauth
+    capabilities: databricks  # the 4 managed servers (Functions / Vector Search / Genie / DBSQL)
+    pack: packs/<your_agent>
+```
+
+See the [Adding Domain Agents via Overlay Guide](../../agent-server-deployment/Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md)
+for the exact delivery (tarball or values) on Docker Compose, Helm, and GitHub Actions.
+
+**2. The connection details** — the operator sets these per agent, named by the
+`prefix` you chose above (for `prefix: RESERVOIR` → `RESERVOIR_GENIE_MCP_SERVER_URL`, …):
+
+```
+<PREFIX>_GENIE_MCP_SERVER_URL=https://<host>/api/2.0/mcp/genie/<SPACE_ID>
+<PREFIX>_FUNCTIONS_MCP_SERVER_URL=https://<host>/api/2.0/mcp/functions/<catalog>/<schema>
+<PREFIX>_VECTORSEARCH_MCP_SERVER_URL=https://<host>/api/2.0/mcp/ai-search/<catalog>/<schema>
+<PREFIX>_DBSQL_MCP_SERVER_URL=https://<host>/api/2.0/mcp/sql
+<PREFIX>_OAUTH_CLIENT_ID=<service-principal-app-id>
+<PREFIX>_OAUTH_CLIENT_SECRET=<secret>     # kept as a secret (secret.extraSecretEnv), never in the pack
 ```
 
 **Verify after deploy:**
 
-- The agent card at `…/a2a/databricks_agent/.well-known/agent-card.json` shows
+- The agent card at `…/a2a/<your_agent>/.well-known/agent-card.json` shows
   **your** `name`/`description` (from `pack.yaml`).
 - Typing **“help”** returns **your** `help.md` text.
 - A data question triggers a Genie call; a computation triggers a UC function.
@@ -423,8 +436,8 @@ DATABRICKS_OAUTH_CLIENT_SECRET=<secret>     # kept as a secret, never in the pac
 | A skill is ignored | `SKILL.md` has no `---` YAML frontmatter, or it isn’t valid YAML. |
 | `allowed-tools` seems wrong | You used commas. Use **spaces**: `allowed-tools: a b c`. |
 | Agent never picks a skill | The `description` is vague. Add concrete domain keywords and trigger intents. |
-| Card shows the default (petroleum) name | Your pack wasn’t mounted/selected. Check `DATABRICKS_AGENT_PACK_DIR` / the mount. |
-| `skills/` missing after mount | Mounted via a flat ConfigMap. Use a volume/PVC for the nested subtree. |
+| Card shows the default (petroleum) name | Your pack wasn’t included in the overlay bundle, or `AGENTS_OVERLAY_MANIFEST` isn’t loaded. Check the bundle contains `packs/<your_agent>/` and the `agents.yaml` row. |
+| `skills/` missing after deploy | The nested `skills/` subtree didn’t make it into the bundle. Prefer the tarball (`overlays.archiveBase64`) path, which preserves nested paths. |
 | Tables come back truncated with “…” | Add the no‑ellipsis table policy to `system_prompt.md` (see example). |
 | Function called with made‑up numbers | Strengthen the “retrieve real data first; never invent inputs” rule in `system_prompt.md` and the `uc-functions` skill. |
 | Genie tools don’t match | The `<SPACE_ID>` in `allowed-tools` doesn’t match the deployed Genie URL. Align them. |
