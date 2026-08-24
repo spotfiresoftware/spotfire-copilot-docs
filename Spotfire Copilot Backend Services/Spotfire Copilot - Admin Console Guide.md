@@ -309,7 +309,7 @@ Lists every agent registered with the orchestrator's A2A (agent-to-agent) regist
 
 *[Screenshot: A2A Agents tab with a list of registered agents and "Test", "Refresh", and "Dev Token" buttons]*
 
-For the deeper architecture (when to register an agent here vs. running it inside the Domain Agents or Platform Integrations containers), see the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/).
+For the deeper architecture (when to register an agent here vs. running it inside the Domain Agents or Ecosystem Agent Server containers), see the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/).
 
 ### 10.2 Tunnels tab
 
