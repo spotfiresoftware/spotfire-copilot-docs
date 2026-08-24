@@ -7,7 +7,7 @@ The registry is delivered as two containers:
 | Container | What it hosts |
 |-----------|---------------|
 | **Domain Agents Container** | Industry-vertical agents (including Well Recompletions) **and** the Agent Registry Toolkit for building and serving your own agents |
-| **Platform Integrations Container** | The full suite of ecosystem integration agents (Databricks, Snowflake, OSDU, and more) |
+| **Ecosystem Agent Server** | The full suite of ecosystem integration agents (Databricks, Snowflake, OSDU, and more) |
 
 Deploy either or both, depending on which agents you need.
 
@@ -15,7 +15,7 @@ Deploy either or both, depending on which agents you need.
 
 - [Agent Registry Containers](#agent-registry-containers)
   - [Domain Agents Container](#domain-agents-container)
-  - [Platform Integrations Container](#platform-integrations-container)
+  - [Ecosystem Agent Server](#ecosystem-agent-server)
 - [Agent Registry Toolkit](#agent-registry-toolkit)
 - [MCP Enabled Agents](#mcp-enabled-agents)
 
@@ -39,9 +39,9 @@ This is the container to deploy if you need the Well Recompletions Agent, want t
 *Energy:*
 - [Agent for Well Recompletions](Spotfire%20Copilot%20Agent%20Registry%20-%20Domain%20Agents/Agents/Spotfire%20Copilot%20-%20Well%20Recompletions%20Agent%20User%20Guide.md)
 
-### Platform Integrations Container
+### Ecosystem Agent Server
 
-The Platform Integrations Container comes pre-packaged with the full set of ecosystem integration agents and is designed for platform operators who want a production-ready rollout with minimal configuration. It supports Docker Compose for local and dev environments, and Kubernetes via Helm for production deployments.
+The Ecosystem Agent Server comes pre-packaged with the full set of ecosystem integration agents and is designed for platform operators who want a production-ready rollout with minimal configuration. It supports Docker Compose for local and dev environments, and Kubernetes via Helm for production deployments.
 
 Two deployment paths are available depending on your licensing model:
 
