@@ -330,12 +330,17 @@ For questions about:
 
 ## Appendix: What the Notebook Must Generate (Overlay Bundle Spec)
 
-This is the precise contract for the artifacts the notebook produces. The output is
-a **self-contained overlay bundle** — a directory of plain-text files — that adds
-**one** Databricks domain agent to the DeepAgents OSS server at deploy time (no image
-rebuild). The **same** bundle is used two ways, unchanged: mounted as a folder for
-Docker Compose, or packaged as a base64 `tar.gz` for Helm. There is **no** pack-mount
-volume and **no** `DATABRICKS_AGENT_PACK_DIR` — the pack lives inside the bundle.
+This is the precise contract for the artifacts the notebook produces. The notebook
+runs **once per agent** and writes that agent's artifacts into a **shared overlay
+bundle** — a single directory of plain-text files that can hold **one or more**
+agents. The server loads exactly **one** manifest (`agents.yaml`), so several agents
+run together only when they share **one** bundle. There is **no** pack-mount volume
+and **no** `DATABRICKS_AGENT_PACK_DIR` — packs live inside the bundle.
+
+> **Scope of the notebook: generate/merge, don't package.** The notebook STOPS after
+> writing this agent's row + pack into the shared bundle folder. **Packaging** (tar for
+> Helm, or pointing Compose at the folder) is a **separate, one-time step** run over the
+> whole bundle **after all agents are added** — never per agent (see the last section).
 
 ### Inputs the notebook collects
 
@@ -349,40 +354,56 @@ volume and **no** `DATABRICKS_AGENT_PACK_DIR` — the pack lives inside the bund
 | `GENIE_SPACE_ID` | Scoped Genie space id | `01f1…` |
 | `SP_CLIENT_ID` | Service-principal (OAuth M2M) application id | `<app-id>` |
 
-### Directory structure (the deliverable)
+### Directory structure (the shared bundle)
+
+One bundle folder holds **every** agent. Each notebook run adds one `agents.yaml` row
+and one `packs/<AGENT_ID>/` folder, leaving existing entries intact:
 
 ```
-<AGENT_ID>-overlay/
-  agents.yaml                         # overlay manifest — ONE agent row
+overlays/                              # THE shared bundle (all agents live here)
+  agents.yaml                          # ONE manifest, one row PER agent
   packs/
-    <AGENT_ID>/
-      pack.yaml                       # agent-card: name, description, version, skills[]
-      system_prompt.md                # routing rules + guardrails
-      AGENTS.md                       # domain knowledge (entities, formulas, thresholds)
-      help.md                         # "what can you do" text + starter prompts
+    <AGENT_ID>/                        # this run's agent
+      pack.yaml                        # agent-card: name, description, version, skills[]
+      system_prompt.md                 # routing rules + guardrails
+      AGENTS.md                        # domain knowledge (entities, formulas, thresholds)
+      help.md                          # "what can you do" text + starter prompts
       skills/
         genie-data-questions/SKILL.md
         uc-functions/SKILL.md
         vector-search-retrieval/SKILL.md
         sql-execution/SKILL.md
+    <other_agent_id>/                  # added by a previous/other notebook run
+      …
 ```
 
 `pack:` in `agents.yaml` is resolved **relative to `agents.yaml`**, so keep them
 together. Skill folder ids are **lowercase-hyphen** only. `help-and-capabilities` is
 provided by middleware — list it in `pack.yaml` `skills[]` but do **not** create a
-`SKILL.md` for it.
+`SKILL.md` for it. **Uniqueness across the bundle:** the agent id, the `prefix`, and
+the `packs/<AGENT_ID>/` folder name must each be unique among all agents in the bundle.
 
-### `agents.yaml`
+### `agents.yaml` (merge — one row per agent)
+
+The notebook **reads the existing `agents.yaml` if present and appends this agent's
+row** under the top-level `agents:` map (fail if the id already exists). It must NOT
+overwrite or drop other agents. A bundle with two agents looks like:
 
 ```yaml
 agents:
-  <AGENT_ID>:
+  <AGENT_ID>:                   # this run
     template: mcp
     prefix: <PREFIX>
     auth: oauth                 # Databricks M2M service principal
     capabilities: databricks    # expands to 4 managed servers for this prefix:
                                 #   <PREFIX>_FUNCTIONS / _VECTORSEARCH / _GENIE / _DBSQL _MCP_SERVER_URL
     pack: packs/<AGENT_ID>
+  <other_agent_id>:             # added by a previous run — leave intact
+    template: mcp
+    prefix: <OTHER_PREFIX>
+    auth: oauth
+    capabilities: databricks
+    pack: packs/<other_agent_id>
 ```
 
 ### `packs/<AGENT_ID>/pack.yaml`
@@ -445,24 +466,27 @@ allowed-tools: <tool1> <tool2>  # SPACE-separated, never commas
 - Each `SKILL.md` frontmatter `name:` equals its folder name; ids are lowercase-hyphen.
 - `allowed-tools` values are space-separated (no commas).
 - The pack contains `pack.yaml`, `system_prompt.md`, `AGENTS.md`, `help.md`, `skills/`.
+- This agent's id, `prefix`, and `packs/<AGENT_ID>/` name are **unique** among all
+  agents already in the bundle (the merge must not clobber an existing agent).
 
-### Packaging output A — Docker Compose (folder mount)
+### Packaging the bundle — do this ONCE, after ALL agents are added (not per agent)
 
-The bundle folder is used as-is. The notebook prints these `.env` lines:
+Packaging operates on the **whole** `overlays/` folder (every agent) and is **not**
+part of the per-agent notebook run. Do it once when the bundle is complete.
+
+**Docker Compose (folder mount)** — use the folder as-is; set in `.env`:
 
 ```env
-OVERLAY_DIR=./<AGENT_ID>-overlay
+OVERLAY_DIR=./overlays
 AGENTS_OVERLAY_MANIFEST=/config/overlay/agents.yaml
 ```
 
-### Packaging output B — Helm (tarball)
-
-The notebook base64-encodes a `tar.gz` of the bundle and prints the commands.
-Exclude macOS/AppleDouble junk so the in-cluster (busybox) extraction stays clean:
+**Helm (tarball)** — base64-encode a `tar.gz` of the whole folder. Exclude
+macOS/AppleDouble junk so the in-cluster (busybox) extraction stays clean:
 
 ```bash
 COPYFILE_DISABLE=1 tar --exclude='._*' --exclude='.DS_Store' \
-  -czf bundle.tgz -C <AGENT_ID>-overlay .
+  -czf bundle.tgz -C overlays .
 base64 < bundle.tgz > bundle.b64
 
 # App chart:
