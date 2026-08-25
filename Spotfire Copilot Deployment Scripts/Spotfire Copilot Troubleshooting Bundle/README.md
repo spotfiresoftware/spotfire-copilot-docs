@@ -1,6 +1,6 @@
-# Spotfire Copilot Environment Validators
+# Spotfire Copilot Troubleshooting Bundle
 
-Post-deployment validation scripts for Spotfire Copilot environments. Use these to audit and validate environment variables across deployed services.
+Post-deployment troubleshooting toolkit for Spotfire Copilot environments. Use it to **validate environment variables** across deployed services, and to **collect container logs** into a single zipped **Troubleshooting Bundle** you can attach to a Spotfire support case.
 
 ---
 
@@ -10,14 +10,15 @@ Post-deployment validation scripts for Spotfire Copilot environments. Use these 
 - [When to use](#when-to-use)
 - [Scripts](#scripts)
 - [Quick start](#quick-start)
-- [How validators work](#how-validators-work)
+- [Collecting logs into a bundle](#collecting-logs-into-a-bundle)
+- [How it works](#how-it-works)
 - [Requirements](#requirements)
 
 ---
 
 ## Overview
 
-After deploying Spotfire Copilot to AWS ECS/Fargate or Azure Container Apps, operators often need to verify that:
+After deploying Spotfire Copilot to AWS ECS/Fargate, Azure Container Apps, on-prem Docker Compose, or Kubernetes (EKS/AKS/GKE), operators often need to verify that:
 
 - ✅ All required environment variables are present
 - ✅ Secret references are correctly configured
@@ -25,7 +26,9 @@ After deploying Spotfire Copilot to AWS ECS/Fargate or Azure Container Apps, ope
 - ✅ Database connection strings use correct formats
 - ✅ No typos or misconfigurations are present
 
-The validators in this folder provide an **interactive, multi-phase audit** without resolving actual secret values (for security).
+… or simply to **collect container logs** quickly when something is failing.
+
+This toolkit provides an **interactive, multi-phase audit** (for AWS ECS and Azure Container Apps) without resolving actual secret values (for security), plus **one-command log collection** on all four platforms that packages everything into a single **Troubleshooting Bundle** zip.
 
 ---
 
@@ -36,7 +39,7 @@ The validators in this folder provide an **interactive, multi-phase audit** with
 **Typical workflow:**
 1. Run deployment script (`spotfire-copilot-backend-deploy*.sh/ps1`)
 2. Deploy to cloud platform (AWS ECS / Azure ACA)
-3. **Run validator** to catch configuration errors
+3. **Run the troubleshooting bundle** to catch configuration errors (or collect logs)
 4. Fix issues if needed
 5. Start the application services
 
@@ -50,13 +53,17 @@ The validators in this folder provide an **interactive, multi-phase audit** with
 
 ## Scripts
 
-### `spotfire-copilot-backend-validate-env.sh` / `.ps1`
+### `spotfire-copilot-troubleshooting-bundle.sh` / `.ps1`
 
-Validates environment variables for **Spotfire Copilot Orchestrator** and **Admin Console** on AWS ECS/Fargate or Azure Container Apps.
+Validates environment variables for **Spotfire Copilot Orchestrator** and **Admin Console** (on AWS ECS/Fargate or Azure Container Apps), and collects container logs into a **Troubleshooting Bundle** zip on any supported platform.
 
 **Supported platforms:**
 - AWS ECS/Fargate — identify by ECS **service name** (resolves the running task definition) or task definition name; single or separate deployments
 - Azure Container Apps (single or multiple Container Apps)
+- Docker Compose (on-prem) — *log collection*
+- Kubernetes / EKS / AKS / GKE — *log collection*
+
+> **Validation** (env-variable auditing) applies to AWS ECS and Azure Container Apps. **Log collection** (the bundle) works on all four platforms. On Docker Compose and Kubernetes the tool runs in log-collection mode only.
 
 **What it checks:**
 - Required core variables (IMAGE_TAG, DATABASE_URL, credentials, etc.)
@@ -75,21 +82,21 @@ Validates environment variables for **Spotfire Copilot Orchestrator** and **Admi
 **Linux / macOS**
 
 ```bash
-cd Validators
-chmod +x spotfire-copilot-backend-validate-env.sh
-./spotfire-copilot-backend-validate-env.sh
+cd "Spotfire Copilot Troubleshooting Bundle"
+chmod +x spotfire-copilot-troubleshooting-bundle.sh
+./spotfire-copilot-troubleshooting-bundle.sh
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-cd Validators
-.\spotfire-copilot-backend-validate-env.ps1
+cd "Spotfire Copilot Troubleshooting Bundle"
+.\spotfire-copilot-troubleshooting-bundle.ps1
 ```
 
 Then answer the interactive prompts:
 
-1. **Platform:** AWS ECS or Azure Container Apps?
+1. **Platform:** AWS ECS, Azure Container Apps, Docker Compose (on-prem), or Kubernetes (EKS/AKS/GKE)? *(Compose and Kubernetes run in log-collection mode only.)*
 2. **Preflight (Phase 0):** The validator first checks local prerequisites (`jq` for the Bash script; PowerShell needs none), then confirms the matching CLI (AWS or Azure) is **installed**, **authenticated**, and can **reach your resources** — it lists your ECS clusters / Azure resource groups to prove connectivity. If any check fails, it prints the exact install/configure command **for your OS** and stops.
 3. **Topology:** On AWS, identify what to validate by **ECS service name** (recommended — the validator resolves the task definition each service is actually running) or by **task definition name** directly. Then choose all-in-one or separate (orchestrator + admin-console). On Azure, enter the Container App name(s).
 4. **Schema:** Do you have a config template from our deploy script?
@@ -98,11 +105,52 @@ Then answer the interactive prompts:
 5. **Validation:** Fetch env vars from live services and check against schema
 6. **Report:** Write timestamped report file to current directory
 
-> **Your answers are saved.** After you finish entering the prompts, the validator writes them to `validator-answers.env` in the current directory. On the next run it offers to **resume** with those answers so you don't have to re-enter everything if you need to re-run (for example after fixing a misconfiguration). Delete the file to start fresh, or set `VALIDATOR_ANSWERS_FILE` (Bash) / `$env:VALIDATOR_ANSWERS_FILE` (PowerShell) to change its location.
+> **Your answers are saved.** After you finish entering the prompts, the tool writes them to `troubleshooting-bundle-answers.env` in the current directory. On the next run it offers to **resume** with those answers so you don't have to re-enter everything if you need to re-run (for example after fixing a misconfiguration). Delete the file to start fresh, or set `TROUBLESHOOTING_ANSWERS_FILE` (Bash) / `$env:TROUBLESHOOTING_ANSWERS_FILE` (PowerShell) to change its location.
 
 ---
 
-## How validators work
+## Collecting logs into a bundle
+
+Run with `--logs` (Bash) / `-Logs` (PowerShell) to **skip validation** and go straight to log collection. On **Docker Compose** and **Kubernetes** the tool is always in this mode (there is no env-variable validation for those platforms).
+
+```bash
+# Linux / macOS
+./spotfire-copilot-troubleshooting-bundle.sh --logs
+
+# Windows
+.\spotfire-copilot-troubleshooting-bundle.ps1 -Logs
+```
+
+The tool asks which container's logs you want (**Orchestrator / Admin Console / Both**), collects them, and packages everything — one log file per container plus a `manifest.txt` — into a single zip named:
+
+```
+Spotfire Copilot Troubleshooting Bundle <YYYYMMDD-HHMMSS>.zip
+```
+
+Attach that file to your Spotfire support case.
+
+**How logs are collected per platform:**
+
+| Platform | Command | Notes |
+| --- | --- | --- |
+| AWS ECS/Fargate | `aws logs tail <group> --since <window>` | Requires the `awslogs` log driver and CloudWatch read access |
+| Azure Container Apps | `az containerapp logs show --tail 2000` | ACA has no time-window flag; a 2000-line cap is used |
+| Docker Compose (on-prem) | `docker compose -f <file> logs --since <window> <service>` | Needs only Docker — no cloud CLI/auth |
+| Kubernetes (EKS/AKS/GKE) | `kubectl -n <ns> logs deployment/<name> --since=<window>` | Adds `--previous` to also grab crashed/restarted pod logs |
+
+**Docker Compose prompts:** whether you deployed with the Spotfire Copilot deployment scripts (if yes, standard service names `orchestrator` / `admin-console` are used automatically), the compose file path, and an optional project name.
+
+**Kubernetes prompts:** kubectl context (blank = current), namespace (default `copilot`), whether you used the deployment scripts (standard deployments `orchestrator` / `admin-console`), and whether to include previous (crashed) pod logs.
+
+**Log window:** defaults to `1h`. Override with the `LOG_SINCE` environment variable (applies to AWS ECS, Docker Compose, and Kubernetes — not Azure ACA):
+
+```bash
+LOG_SINCE=6h ./spotfire-copilot-troubleshooting-bundle.sh --logs
+```
+
+---
+
+## How it works
 
 ### Phase 0: Prerequisites & CLI Preflight
 
@@ -151,12 +199,12 @@ Azure Container Apps are already the deployable/running unit, so on Azure you si
 
 ### Resume: saved answers
 
-After you complete the prompts (Phase 1 + Phase 2), the validator writes your answers to `validator-answers.env` in the current directory (`KEY=VALUE`, `chmod 600` on Bash). On the next run it shows a summary of the saved answers and asks **"Resume with these saved answers? (y/n)"**:
+After you complete the prompts (Phase 1 + Phase 2), the tool writes your answers to `troubleshooting-bundle-answers.env` in the current directory (`KEY=VALUE`, `chmod 600` on Bash). On the next run it shows a summary of the saved answers and asks **"Resume with these saved answers? (y/n)"**:
 
 - **Yes** — it loads every answer, re-runs the Phase 0 CLI preflight (so connectivity is always re-checked), and goes straight to validation. Nothing is re-typed.
 - **No** — it walks the prompts normally and overwrites the file with your new answers.
 
-This means an interrupted or failed run (or one where you fixed a misconfiguration and want to re-check) never forces you to start over. The file is shared by both the Bash and PowerShell validators. Delete it to start fresh, or point `VALIDATOR_ANSWERS_FILE` / `$env:VALIDATOR_ANSWERS_FILE` elsewhere.
+This means an interrupted or failed run (or one where you fixed a misconfiguration and want to re-check) never forces you to start over. The file is shared by both the Bash and PowerShell scripts. Delete it to start fresh, or point `TROUBLESHOOTING_ANSWERS_FILE` / `$env:TROUBLESHOOTING_ANSWERS_FILE` elsewhere.
 
 ### Phase 2: Configuration Schema
 
@@ -233,18 +281,23 @@ Before running the validator against AWS, make sure the CLI is **installed** and
    ```
 4. **Permissions required:** `Reader` on the resource group (or `Microsoft.App/containerApps/read`).
 
-### Linux / macOS (`spotfire-copilot-backend-validate-env.sh`)
+### Linux / macOS (`spotfire-copilot-troubleshooting-bundle.sh`)
 
 - Bash 4 or newer
-- `jq` (JSON parsing — the script prints the install command for your OS if it's missing)
+- `jq` (JSON parsing for AWS/Azure validation — the script prints the install command for your OS if it's missing; **not needed for Docker Compose or Kubernetes log collection**)
 - AWS CLI (for AWS ECS validation) — or manually export env vars to JSON for offline validation
 - Azure CLI (for Azure Container Apps validation) — or manually export env vars to JSON for offline validation
+- Docker Engine 20.10+ with Compose V2 (for Docker Compose log collection)
+- `kubectl` with a working context (for Kubernetes log collection; for EKS run `aws eks update-kubeconfig` first)
+- `zip` (optional — the Bash script falls back to `python3 -m zipfile`, then `tar`, to build the bundle)
 
-### Windows (`spotfire-copilot-backend-validate-env.ps1`)
+### Windows (`spotfire-copilot-troubleshooting-bundle.ps1`)
 
-- PowerShell 5.1 or newer (parses JSON natively — **no `jq` required**)
+- PowerShell 5.1 or newer (parses JSON natively — **no `jq` required**; `Compress-Archive` builds the bundle)
 - AWS CLI (for AWS ECS validation) — install via `winget install -e --id Amazon.AWSCLI`, or manually export env vars to JSON for offline validation
 - Azure CLI (for Azure Container Apps validation) — install via `winget install -e --id Microsoft.AzureCLI`, or manually export env vars to JSON for offline validation
+- Docker Desktop with Compose V2 (for Docker Compose log collection)
+- `kubectl` with a working context (for Kubernetes log collection)
 
 ### No-CLI scenario
 
@@ -257,7 +310,7 @@ aws ecs describe-task-definition --cluster CLUSTER_NAME --task-definition TASK_N
   --query taskDefinition.containerDefinitions[0].[environment,secrets] > export.json
 
 # Download export.json locally, then:
-./spotfire-copilot-backend-validate-env.sh --import export.json
+./spotfire-copilot-troubleshooting-bundle.sh --import export.json
 ```
 
 **Option 2: Manual checklist**
@@ -321,7 +374,7 @@ Status: ✗ VALIDATION FAILED
 | `HASHED_ADMIN_PASSWORD — MISSING` | Ensure SECRET_KEY and HASHED_ADMIN_PASSWORD are stored in AWS Secrets Manager or Azure Key Vault, and task definition references them. |
 | `OPENAI_API_KEY — orphaned` | You selected provider X but have keys for provider Y. Remove the orphaned key or update the LLM provider. |
 | `Invalid DATABASE_URL format` | Use `postgresql://user:pass@host:port/db?sslmode=require` for sync, or `postgresql+asyncpg://...` for async. |
-| `PowerShell execution policy` | Run `powershell -ExecutionPolicy Bypass -File .\spotfire-copilot-backend-validate-env.ps1` to bypass. |
+| `PowerShell execution policy` | Run `powershell -ExecutionPolicy Bypass -File .\spotfire-copilot-troubleshooting-bundle.ps1` to bypass. |
 
 ---
 

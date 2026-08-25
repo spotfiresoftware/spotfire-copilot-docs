@@ -1,19 +1,24 @@
 ﻿#############################################################################
-#  Spotfire Copilot - Backend Environment Validation Script
+#  Spotfire Copilot - Troubleshooting Bundle
 #  Version: 2.3.x
 #
-#  Purpose: Validates environment variables for Orchestrator and Admin Console
-#           deployed on AWS ECS/Fargate or Azure Container Apps
-# 
+#  Purpose: Validates environment variables for Orchestrator and Admin Console,
+#           and collects container logs into a single zipped troubleshooting
+#           bundle. Supports AWS ECS/Fargate, Azure Container Apps, on-prem
+#           Docker Compose, and Kubernetes (EKS/AKS/GKE).
+#
 #  Usage:
-#    .\spotfire-copilot-backend-validate-env.ps1
-#    .\spotfire-copilot-backend-validate-env.ps1 -Logs   # download container logs only
+#    .\spotfire-copilot-troubleshooting-bundle.ps1
+#    .\spotfire-copilot-troubleshooting-bundle.ps1 -Logs   # collect logs into a bundle only
 #
 #  Supports:
 #    - AWS ECS/Fargate (identify by ECS service name or task definition)
 #    - Azure Container Apps (single or multiple apps)
+#    - Docker Compose (on-prem)
+#    - Kubernetes (EKS / AKS / GKE)
 #    - Template-based validation or interactive schema builder
-#    - Saved answers with resume (validator-answers.env)
+#    - Saved answers with resume (troubleshooting-bundle-answers.env)
+#    - Log collection zipped as "Spotfire Copilot Troubleshooting Bundle <date>.zip"
 #    - No-CLI fallback (manual JSON import)
 #############################################################################
 
@@ -34,6 +39,21 @@ $AzureResourceGroup = ""
 $AzureLocation = ""
 $AzureContainerApps = @()
 $AzureAppRoles = @()
+# Docker Compose (on-prem)
+$ComposeFile = ""
+$ComposeProject = ""
+$ComposeServices = @()
+$ComposeServiceRoles = @()
+# Kubernetes (EKS/AKS/GKE)
+$K8sContext = ""
+$K8sNamespace = ""
+$K8sWorkloads = @()
+$K8sWorkloadRoles = @()
+$K8sIncludePrevious = $false
+# Log time window (default 1h). Override with $env:LOG_SINCE.
+$LogSince = if ($env:LOG_SINCE) { $env:LOG_SINCE } else { "1h" }
+# Directory logs are written to before bundling (set by Bundle-ContainerLogs)
+$LogOutputDir = "."
 $HasTemplate = $false
 $TemplateFile = ""
 $LLMProvider = ""
@@ -46,8 +66,8 @@ $ValidationErrors = 0
 $ValidationWarnings = 0
 $ValidationDetails = @()  # per-container results captured for the report
 
-# Saved-answers file (resume support). Override with $env:VALIDATOR_ANSWERS_FILE.
-$AnswersFile = if ($env:VALIDATOR_ANSWERS_FILE) { $env:VALIDATOR_ANSWERS_FILE } else { "validator-answers.env" }
+# Saved-answers file (resume support). Override with $env:TROUBLESHOOTING_ANSWERS_FILE.
+$AnswersFile = if ($env:TROUBLESHOOTING_ANSWERS_FILE) { $env:TROUBLESHOOTING_ANSWERS_FILE } else { "troubleshooting-bundle-answers.env" }
 $Resumed = $false
 
 ##############################################################################
@@ -105,7 +125,7 @@ function Read-Choice {
 
 function Save-Answers {
     $lines = @(
-        "# Spotfire Copilot validator - saved answers"
+        "# Spotfire Copilot Troubleshooting Bundle - saved answers"
         "# Generated: $(Get-Date)"
         "# Delete this file to start fresh, or re-run and choose 'resume' to reuse it."
         "CLOUD_PLATFORM=$($script:CloudPlatform)"
@@ -118,6 +138,15 @@ function Save-Answers {
         "AZURE_LOCATION=$($script:AzureLocation)"
         "AZURE_CONTAINER_APPS=$($script:AzureContainerApps -join ' ')"
         "AZURE_APP_ROLES=$($script:AzureAppRoles -join ' ')"
+        "COMPOSE_FILE=$($script:ComposeFile)"
+        "COMPOSE_PROJECT=$($script:ComposeProject)"
+        "COMPOSE_SERVICES=$($script:ComposeServices -join ' ')"
+        "COMPOSE_SERVICE_ROLES=$($script:ComposeServiceRoles -join ' ')"
+        "K8S_CONTEXT=$($script:K8sContext)"
+        "K8S_NAMESPACE=$($script:K8sNamespace)"
+        "K8S_WORKLOADS=$($script:K8sWorkloads -join ' ')"
+        "K8S_WORKLOAD_ROLES=$($script:K8sWorkloadRoles -join ' ')"
+        "K8S_INCLUDE_PREVIOUS=$(if ($script:K8sIncludePrevious) { 'true' } else { 'false' })"
         "LLM_PROVIDER=$($script:LLMProvider)"
         "HAS_ADMIN_CONSOLE=$(if ($script:HasAdminConsole) { 'true' } else { 'false' })"
         "HAS_TEMPLATE=$(if ($script:HasTemplate) { 'true' } else { 'false' })"
@@ -126,7 +155,7 @@ function Save-Answers {
     $lines | Set-Content -Path $script:AnswersFile -Encoding UTF8
     Write-Host ""
     Write-Success "Answers saved to $($script:AnswersFile)"
-    Write-Info "Next time, re-run the validator and choose 'resume' to skip re-entering these."
+    Write-Info "Next time, re-run this tool and choose 'resume' to skip re-entering these."
 }
 
 function Load-Answers {
@@ -147,6 +176,15 @@ function Load-Answers {
             'AZURE_LOCATION'       { $script:AzureLocation = $value }
             'AZURE_CONTAINER_APPS' { $script:AzureContainerApps = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
             'AZURE_APP_ROLES'      { $script:AzureAppRoles = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'COMPOSE_FILE'         { $script:ComposeFile = $value }
+            'COMPOSE_PROJECT'      { $script:ComposeProject = $value }
+            'COMPOSE_SERVICES'     { $script:ComposeServices = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'COMPOSE_SERVICE_ROLES' { $script:ComposeServiceRoles = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'K8S_CONTEXT'          { $script:K8sContext = $value }
+            'K8S_NAMESPACE'        { $script:K8sNamespace = $value }
+            'K8S_WORKLOADS'        { $script:K8sWorkloads = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'K8S_WORKLOAD_ROLES'   { $script:K8sWorkloadRoles = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'K8S_INCLUDE_PREVIOUS' { $script:K8sIncludePrevious = ($value -match '^(?i)(true|1|yes)$') }
             'LLM_PROVIDER'         { $script:LLMProvider = $value }
             'HAS_ADMIN_CONSOLE'    { $script:HasAdminConsole = ($value -match '^(?i)(true|1|yes)$') }
             'HAS_TEMPLATE'         { $script:HasTemplate = ($value -match '^(?i)(true|1|yes)$') }
@@ -205,12 +243,11 @@ function Preflight-CheckCli {
     Write-Info "Phase 0: CLI Preflight Check"
     Write-Host ""
 
-    Preflight-CheckPrereqs
-
-    if ($script:CloudPlatform -eq "aws") {
-        Preflight-CheckAws
-    } else {
-        Preflight-CheckAzure
+    switch ($script:CloudPlatform) {
+        'aws'     { Preflight-CheckPrereqs; Preflight-CheckAws }
+        'azure'   { Preflight-CheckPrereqs; Preflight-CheckAzure }
+        'compose' { Preflight-CheckDocker }
+        'k8s'     { Preflight-CheckKubectl }
     }
 }
 
@@ -230,7 +267,7 @@ function Preflight-CheckAws {
         }
         Write-Host "  Docs: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
         Write-Host ""
-        Write-Host "No local CLI? Use the AWS CloudShell export fallback (see Validators/README.md)."
+        Write-Host "No local CLI? Use the AWS CloudShell export fallback (see README.md)."
         exit 1
     }
     $awsVersion = (aws --version 2>&1 | Select-Object -First 1)
@@ -293,7 +330,7 @@ function Preflight-CheckAzure {
         }
         Write-Host "  Docs: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli"
         Write-Host ""
-        Write-Host "No local CLI? Use the Azure Cloud Shell export fallback (see Validators/README.md)."
+        Write-Host "No local CLI? Use the Azure Cloud Shell export fallback (see README.md)."
         exit 1
     }
     $azVersion = az version --query '\"azure-cli\"' -o tsv 2>$null
@@ -362,6 +399,59 @@ function Preflight-CheckAzure {
     Write-Success "Preflight passed - the Azure CLI can talk to your resources."
 }
 
+function Preflight-CheckDocker {
+    # Docker Compose (on-prem): only the local Docker engine is needed - no cloud CLI/auth.
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        Write-Error "Docker is not installed (required to read Docker Compose logs)."
+        Write-Host ""
+        Write-Host "Install Docker Engine 20.10+ with Compose V2, then re-run this tool."
+        Write-Host "  Docs: https://docs.docker.com/engine/install/"
+        exit 1
+    }
+    Write-Success "Docker found: $((docker --version) 2>&1 | Select-Object -First 1)"
+
+    Write-Host ""
+    Write-Info "Checking Docker engine connectivity (docker info)..."
+    docker info *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "The Docker CLI is installed but cannot reach the Docker engine."
+        Write-Host "Start Docker Desktop / the Docker daemon, then re-run this tool."
+        exit 1
+    }
+    docker compose version *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "'docker compose' (Compose V2) was not detected - log collection needs Compose V2."
+    }
+    Write-Host ""
+    Write-Success "Preflight passed - the Docker engine is reachable."
+}
+
+function Preflight-CheckKubectl {
+    # Kubernetes (EKS/AKS/GKE): a working kubectl context is all that is needed.
+    if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) {
+        Write-Error "kubectl is not installed (required to read Kubernetes logs)."
+        Write-Host ""
+        Write-Host "Install kubectl, then re-run this tool:"
+        Write-Host "  https://kubernetes.io/docs/tasks/tools/"
+        Write-Host "  For EKS, first run: aws eks update-kubeconfig --name <cluster> --region <region>"
+        exit 1
+    }
+    Write-Success "kubectl found."
+
+    Write-Host ""
+    Write-Info "Checking cluster connectivity (kubectl cluster-info)..."
+    kubectl cluster-info *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "kubectl is installed but cannot reach a cluster."
+        Write-Host "Configure your kubeconfig/context, then re-run this tool:"
+        Write-Host "  aws eks update-kubeconfig --name <cluster> --region <region>"
+        Write-Host "  kubectl config current-context"
+        exit 1
+    }
+    Write-Host ""
+    Write-Success "Preflight passed - kubectl can reach your cluster."
+}
+
 ##############################################################################
 # Phase 1: Platform & Topology Detection
 ##############################################################################
@@ -370,12 +460,14 @@ function Phase1-DetectPlatform {
     Write-Host ""
     Write-Info "Phase 1: Platform Detection"
     Write-Host ""
-    Write-Host "Which cloud platform are you using?"
+    Write-Host "Where is the backend deployed?"
     Write-Host "  1) AWS ECS/Fargate"
     Write-Host "  2) Azure Container Apps"
+    Write-Host "  3) Docker Compose (on-prem)"
+    Write-Host "  4) Kubernetes (EKS / AKS / GKE)"
     Write-Host ""
     
-    $platformChoice = Read-Choice -Prompt "Enter choice (1 or 2)" -MaxChoice 2
+    $platformChoice = Read-Choice -Prompt "Enter choice (1-4)" -MaxChoice 4
     
     switch ($platformChoice) {
         1 {
@@ -387,6 +479,16 @@ function Phase1-DetectPlatform {
             $script:CloudPlatform = "azure"
             Preflight-CheckCli
             Phase1-DetectAzureTopology
+        }
+        3 {
+            $script:CloudPlatform = "compose"
+            Preflight-CheckCli
+            Phase1-DetectComposeTopology
+        }
+        4 {
+            $script:CloudPlatform = "k8s"
+            Preflight-CheckCli
+            Phase1-DetectK8sTopology
         }
     }
 }
@@ -478,6 +580,95 @@ function Phase1-DetectAzureTopology {
             Write-Info "Container Apps: $appOrch (orchestrator), $appAdmin (admin-console)"
         }
     }
+}
+
+function Phase1-DetectComposeTopology {
+    Write-Host ""
+    $used = Read-Host "Did you deploy with the Spotfire Copilot deployment scripts? (y/n) [y]"
+    if (-not $used) { $used = "y" }
+
+    $script:ComposeFile = Read-Host "Path to your docker-compose file [docker-compose.yml]"
+    if (-not $script:ComposeFile) { $script:ComposeFile = "docker-compose.yml" }
+    $script:ComposeProject = Read-Host "Compose project name (press Enter to use the folder name)"
+
+    if ($used -match '^(?i)y') {
+        # Standard service names emitted by the deploy scripts
+        $script:ComposeServices = @("orchestrator", "admin-console")
+        $script:ComposeServiceRoles = @("orchestrator", "admin")
+        Write-Info "Using standard service names: orchestrator, admin-console"
+    }
+    else {
+        Write-Host ""
+        Write-Host "How are your services deployed?"
+        Write-Host "  1) Both services in one compose file (default)"
+        Write-Host "  2) Orchestrator only"
+        Write-Host ""
+        $topo = Read-Choice -Prompt "Enter choice (1 or 2)" -MaxChoice 2
+        $svcOrch = Read-Host "Orchestrator service name [orchestrator]"
+        if (-not $svcOrch) { $svcOrch = "orchestrator" }
+        if ($topo -eq 1) {
+            $svcAdmin = Read-Host "Admin Console service name [admin-console]"
+            if (-not $svcAdmin) { $svcAdmin = "admin-console" }
+            $script:ComposeServices = @($svcOrch, $svcAdmin)
+            $script:ComposeServiceRoles = @("orchestrator", "admin")
+        }
+        else {
+            $script:ComposeServices = @($svcOrch)
+            $script:ComposeServiceRoles = @("orchestrator")
+        }
+    }
+    Write-Info "Compose file: $($script:ComposeFile)"
+}
+
+function Phase1-DetectK8sTopology {
+    Write-Host ""
+    $script:K8sContext = Read-Host "kubectl context (press Enter for the current context)"
+    $script:K8sNamespace = Read-Host "Kubernetes namespace [copilot]"
+    if (-not $script:K8sNamespace) { $script:K8sNamespace = "copilot" }
+
+    $used = Read-Host "Did you deploy with the Spotfire Copilot deployment scripts? (y/n) [y]"
+    if (-not $used) { $used = "y" }
+
+    if ($used -match '^(?i)y') {
+        # Standard deployment names emitted by the deploy scripts / manifests
+        $script:K8sWorkloads = @("deployment/orchestrator", "deployment/admin-console")
+        $script:K8sWorkloadRoles = @("orchestrator", "admin")
+        Write-Info "Using standard deployments: orchestrator, admin-console"
+    }
+    else {
+        Write-Host ""
+        Write-Host "How do you want to identify the workloads?"
+        Write-Host "  1) Deployment names (recommended)"
+        Write-Host "  2) Label selectors"
+        Write-Host ""
+        $idc = Read-Choice -Prompt "Enter choice (1 or 2)" -MaxChoice 2
+        if ($idc -eq 2) {
+            $orch = Read-Host "Orchestrator label selector [app=orchestrator]"
+            if (-not $orch) { $orch = "app=orchestrator" }
+            $admin = Read-Host "Admin Console label selector (blank if not deployed)"
+            $script:K8sWorkloads = @("-l|$orch")
+            $script:K8sWorkloadRoles = @("orchestrator")
+            if ($admin) {
+                $script:K8sWorkloads += "-l|$admin"
+                $script:K8sWorkloadRoles += "admin"
+            }
+        }
+        else {
+            $orch = Read-Host "Orchestrator deployment name [orchestrator]"
+            if (-not $orch) { $orch = "orchestrator" }
+            $admin = Read-Host "Admin Console deployment name (blank if not deployed)"
+            $script:K8sWorkloads = @("deployment/$orch")
+            $script:K8sWorkloadRoles = @("orchestrator")
+            if ($admin) {
+                $script:K8sWorkloads += "deployment/$admin"
+                $script:K8sWorkloadRoles += "admin"
+            }
+        }
+    }
+
+    $prev = Read-Host "Also fetch logs from previous (crashed/restarted) pods? (y/n) [y]"
+    if (-not $prev) { $prev = "y" }
+    $script:K8sIncludePrevious = ($prev -match '^(?i)y')
 }
 
 ##############################################################################
@@ -1307,8 +1498,8 @@ function Download-EcsLogsFromTaskDef {
     }
 
     $ts = Get-Date -Format "yyyyMMdd-HHmmss"
-    $outfile = "container-logs-$ts-ecs-$Want.log"
-    Write-Info "Fetching CloudWatch logs for '$($c.name)' (group '$group', last 1h)..."
+    $outfile = Join-Path $script:LogOutputDir "container-logs-$ts-ecs-$Want.log"
+    Write-Info "Fetching CloudWatch logs for '$($c.name)' (group '$group', last $($script:LogSince))..."
 
     $header = @(
         "# Spotfire Copilot container logs"
@@ -1320,16 +1511,16 @@ function Download-EcsLogsFromTaskDef {
         "# Container:       $($c.name) ($Want)"
         "# Log group:       $group"
         "# Stream prefix:   $(if ($prefix) { $prefix } else { '<none>' })"
-        "# Window:          last 1h"
+        "# Window:          last $($script:LogSince)"
         "# --------------------------------------------------------------"
     )
     $header | Set-Content -Path $outfile -Encoding UTF8
 
     if ($prefix) {
-        $logs = aws logs tail $group --since 1h --region $region --format short --log-stream-name-prefix "$prefix/$($c.name)" 2>&1
+        $logs = aws logs tail $group --since $script:LogSince --region $region --format short --log-stream-name-prefix "$prefix/$($c.name)" 2>&1
     }
     else {
-        $logs = aws logs tail $group --since 1h --region $region --format short 2>&1
+        $logs = aws logs tail $group --since $script:LogSince --region $region --format short 2>&1
     }
     $logs | Add-Content -Path $outfile -Encoding UTF8
 
@@ -1359,7 +1550,7 @@ function Get-AcaContainerName {
 function Download-AcaLogs {
     param([string]$App, [string]$Container, [string]$Want)
     $ts = Get-Date -Format "yyyyMMdd-HHmmss"
-    $outfile = "container-logs-$ts-aca-$Want.log"
+    $outfile = Join-Path $script:LogOutputDir "container-logs-$ts-aca-$Want.log"
     Write-Info "Fetching Container App logs for '$App' container '$Container' (recent lines)..."
 
     $header = @(
@@ -1389,6 +1580,90 @@ function Download-AcaLogs {
     }
 }
 
+# Download recent logs for a Docker Compose service (on-prem). Needs only Docker.
+function Download-ComposeLogs {
+    param([string]$Service, [string]$Want)
+    $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+    $outfile = Join-Path $script:LogOutputDir "container-logs-$ts-compose-$Want.log"
+    Write-Info "Fetching Docker Compose logs for service '$Service' (last $($script:LogSince))..."
+    $header = @(
+        "# Spotfire Copilot container logs"
+        "# Generated:       $(Get-Date)"
+        "# Platform:        Docker Compose (on-prem)"
+        "# Compose file:    $($script:ComposeFile)"
+        "# Project:         $(if ($script:ComposeProject) { $script:ComposeProject } else { '<directory default>' })"
+        "# Service:         $Service ($Want)"
+        "# Window:          last $($script:LogSince)"
+        "# --------------------------------------------------------------"
+    )
+    $header | Set-Content -Path $outfile -Encoding UTF8
+
+    $composeArgs = @('compose', '-f', $script:ComposeFile)
+    if ($script:ComposeProject) { $composeArgs += @('-p', $script:ComposeProject) }
+    $composeArgs += @('logs', '--no-color', '--since', $script:LogSince, $Service)
+    $logs = & docker @composeArgs 2>&1
+    $logs | Add-Content -Path $outfile -Encoding UTF8
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Saved logs to $outfile"
+    }
+    else {
+        Write-Warning "docker compose logs returned an error (see the end of $outfile)."
+    }
+}
+
+# Download recent logs for a Kubernetes workload (deployment/<name> or "-l|<selector>").
+function Download-K8sLogs {
+    param([string]$Target, [string]$Want)
+    $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+    $outfile = Join-Path $script:LogOutputDir "container-logs-$ts-k8s-$Want.log"
+
+    if ($Target -like '-l|*') {
+        $sel = @('-l', $Target.Substring(3))
+    }
+    else {
+        $sel = @($Target)
+    }
+
+    $base = @()
+    if ($script:K8sContext) { $base += @('--context', $script:K8sContext) }
+    $base += @('-n', $script:K8sNamespace)
+
+    Write-Info "Fetching Kubernetes logs for '$Target' in namespace '$($script:K8sNamespace)' (last $($script:LogSince))..."
+    $header = @(
+        "# Spotfire Copilot container logs"
+        "# Generated:       $(Get-Date)"
+        "# Platform:        Kubernetes"
+        "# Context:         $(if ($script:K8sContext) { $script:K8sContext } else { '<current>' })"
+        "# Namespace:       $($script:K8sNamespace)"
+        "# Workload:        $Target ($Want)"
+        "# Window:          last $($script:LogSince)"
+        "# --------------------------------------------------------------"
+    )
+    $header | Set-Content -Path $outfile -Encoding UTF8
+
+    $logs = & kubectl @base logs @sel "--since=$($script:LogSince)" --all-containers --prefix '--tail=-1' 2>&1
+    $logs | Add-Content -Path $outfile -Encoding UTF8
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Saved current logs to $outfile"
+    }
+    else {
+        Write-Warning "kubectl logs returned an error (see the end of $outfile)."
+    }
+
+    if ($script:K8sIncludePrevious) {
+        @("", "# ---- previous (crashed/restarted) pod logs ----") | Add-Content -Path $outfile -Encoding UTF8
+        $prevLogs = & kubectl @base logs @sel --previous --all-containers --prefix '--tail=-1' 2>&1
+        $prevLogs | Add-Content -Path $outfile -Encoding UTF8
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Appended previous-pod logs to $outfile"
+        }
+        else {
+            Write-Info "No previous-pod logs available (workload has not restarted)."
+        }
+    }
+}
+
 # Download logs for the selected container(s): orchestrator | admin | both.
 function Download-ContainerLogs {
     param([string]$Selection)
@@ -1396,31 +1671,103 @@ function Download-ContainerLogs {
 
     foreach ($want in $wants) {
         $found = $false
-        if ($script:CloudPlatform -eq 'aws') {
-            for ($i = 0; $i -lt $script:AWSTaskDefinitions.Count; $i++) {
-                $role = if ($i -lt $script:AWSTaskRoles.Count) { $script:AWSTaskRoles[$i] } else { 'both' }
-                if ($role -eq 'both' -or $role -eq $want) {
-                    Download-EcsLogsFromTaskDef -TaskDef $script:AWSTaskDefinitions[$i] -Want $want
-                    $found = $true
-                    break
+        switch ($script:CloudPlatform) {
+            'aws' {
+                for ($i = 0; $i -lt $script:AWSTaskDefinitions.Count; $i++) {
+                    $role = if ($i -lt $script:AWSTaskRoles.Count) { $script:AWSTaskRoles[$i] } else { 'both' }
+                    if ($role -eq 'both' -or $role -eq $want) {
+                        Download-EcsLogsFromTaskDef -TaskDef $script:AWSTaskDefinitions[$i] -Want $want
+                        $found = $true
+                        break
+                    }
                 }
+                if (-not $found) { Write-Warning "Could not locate a task definition hosting the $want container." }
             }
-            if (-not $found) { Write-Warning "Could not locate a task definition hosting the $want container." }
-        }
-        else {
-            for ($i = 0; $i -lt $script:AzureContainerApps.Count; $i++) {
-                $role = if ($i -lt $script:AzureAppRoles.Count) { $script:AzureAppRoles[$i] } else { 'both' }
-                if ($role -eq 'both' -or $role -eq $want) {
-                    $app = $script:AzureContainerApps[$i]
-                    $cname = Get-AcaContainerName -App $app -Want $want
-                    if (-not $cname) { $cname = $want }
-                    Download-AcaLogs -App $app -Container $cname -Want $want
-                    $found = $true
-                    break
+            'azure' {
+                for ($i = 0; $i -lt $script:AzureContainerApps.Count; $i++) {
+                    $role = if ($i -lt $script:AzureAppRoles.Count) { $script:AzureAppRoles[$i] } else { 'both' }
+                    if ($role -eq 'both' -or $role -eq $want) {
+                        $app = $script:AzureContainerApps[$i]
+                        $cname = Get-AcaContainerName -App $app -Want $want
+                        if (-not $cname) { $cname = $want }
+                        Download-AcaLogs -App $app -Container $cname -Want $want
+                        $found = $true
+                        break
+                    }
                 }
+                if (-not $found) { Write-Warning "Could not locate a Container App hosting the $want container." }
             }
-            if (-not $found) { Write-Warning "Could not locate a Container App hosting the $want container." }
+            'compose' {
+                for ($i = 0; $i -lt $script:ComposeServices.Count; $i++) {
+                    $role = if ($i -lt $script:ComposeServiceRoles.Count) { $script:ComposeServiceRoles[$i] } else { 'both' }
+                    if ($role -eq 'both' -or $role -eq $want) {
+                        Download-ComposeLogs -Service $script:ComposeServices[$i] -Want $want
+                        $found = $true
+                        break
+                    }
+                }
+                if (-not $found) { Write-Warning "Could not locate a compose service hosting the $want container." }
+            }
+            'k8s' {
+                for ($i = 0; $i -lt $script:K8sWorkloads.Count; $i++) {
+                    $role = if ($i -lt $script:K8sWorkloadRoles.Count) { $script:K8sWorkloadRoles[$i] } else { 'both' }
+                    if ($role -eq 'both' -or $role -eq $want) {
+                        Download-K8sLogs -Target $script:K8sWorkloads[$i] -Want $want
+                        $found = $true
+                        break
+                    }
+                }
+                if (-not $found) { Write-Warning "Could not locate a Kubernetes workload hosting the $want container." }
+            }
         }
+    }
+}
+
+# Collect logs for the selection into a staging dir, then zip them into a single
+# "Spotfire Copilot Troubleshooting Bundle <timestamp>.zip".
+function Bundle-ContainerLogs {
+    param([string]$Selection)
+    $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+    $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("sc-troubleshooting-" + [System.Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+
+    $script:LogOutputDir = $staging
+    Download-ContainerLogs -Selection $Selection
+    $script:LogOutputDir = "."
+
+    $manifest = @(
+        "Spotfire Copilot Troubleshooting Bundle"
+        "Generated:   $(Get-Date)"
+        "Platform:    $($script:CloudPlatform)"
+        "Selection:   $Selection"
+        "Log window:  $($script:LogSince)"
+        "Tool:        spotfire-copilot-troubleshooting-bundle.ps1"
+    )
+    $manifest | Set-Content -Path (Join-Path $staging "manifest.txt") -Encoding UTF8
+
+    $logFiles = Get-ChildItem -Path $staging -Filter "container-logs-*.log" -ErrorAction SilentlyContinue
+    if (-not $logFiles) {
+        Write-Warning "No log files were collected - skipping bundle creation."
+        Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+        return
+    }
+
+    $bundle = Join-Path (Get-Location).Path "Spotfire Copilot Troubleshooting Bundle $ts.zip"
+    try {
+        Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $bundle -Force
+    }
+    catch {
+        Write-Warning "Compress-Archive reported an error: $_"
+    }
+    Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+
+    if (Test-Path $bundle) {
+        Write-Host ""
+        Write-Success "Bundle saved: $bundle"
+        Write-Info "Attach this file to your Spotfire support case."
+    }
+    else {
+        Write-Error "Failed to create the troubleshooting bundle."
     }
 }
 
@@ -1430,7 +1777,7 @@ function Invoke-LogDownloadOffer {
     $dl = Read-Host "Download container logs for troubleshooting? (y/n)"
     if ($dl -match '^(?i)y') {
         $sel = Prompt-LogTarget
-        Download-ContainerLogs -Selection $sel
+        Bundle-ContainerLogs -Selection $sel
     }
 }
 
@@ -1441,7 +1788,7 @@ function Invoke-LogDownloadOffer {
 function Main {
     Write-Host ""
     Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host "  Spotfire Copilot Environment Validator" -ForegroundColor Cyan
+    Write-Host "  Spotfire Copilot Troubleshooting Bundle" -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
 
     if ($Logs) {
@@ -1456,7 +1803,7 @@ function Main {
             Phase1-DetectPlatform
         }
         $sel = Prompt-LogTarget
-        Download-ContainerLogs -Selection $sel
+        Bundle-ContainerLogs -Selection $sel
         exit 0
     }
 
@@ -1482,6 +1829,19 @@ function Main {
     }
     else {
         Phase1-DetectPlatform
+    }
+
+    # Docker Compose and Kubernetes: collect logs into a bundle (no env-var validation).
+    if ($script:CloudPlatform -eq "compose" -or $script:CloudPlatform -eq "k8s") {
+        if (-not $script:Resumed) { Save-Answers }
+        Write-Host ""
+        Write-Info "Log collection mode for '$($script:CloudPlatform)' - env-variable validation is not applicable to this platform."
+        $sel = Prompt-LogTarget
+        Bundle-ContainerLogs -Selection $sel
+        exit 0
+    }
+
+    if (-not $script:Resumed) {
         Phase2-TemplateOrSchema
         Save-Answers
     }

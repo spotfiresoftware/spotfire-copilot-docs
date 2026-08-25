@@ -1,21 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-#  Spotfire Copilot — Backend Environment Validation Script
+#  Spotfire Copilot — Troubleshooting Bundle
 #  Version: 2.3.x
 #
-#  Purpose: Validates environment variables for Orchestrator and Admin Console
-#           deployed on AWS ECS/Fargate or Azure Container Apps
-# 
+#  Purpose: Validates environment variables for Orchestrator and Admin Console,
+#           and collects container logs into a single zipped troubleshooting
+#           bundle. Supports AWS ECS/Fargate, Azure Container Apps, on-prem
+#           Docker Compose, and Kubernetes (EKS/AKS/GKE).
+#
 #  Usage:
-#    ./spotfire-copilot-backend-validate-env.sh
-#    ./spotfire-copilot-backend-validate-env.sh --logs   # download container logs only
+#    ./spotfire-copilot-troubleshooting-bundle.sh
+#    ./spotfire-copilot-troubleshooting-bundle.sh --logs   # collect logs into a bundle only
 #
 #  Supports:
 #    - AWS ECS/Fargate (identify by ECS service name or task definition)
 #    - Azure Container Apps (single or multiple apps)
+#    - Docker Compose (on-prem)
+#    - Kubernetes (EKS / AKS / GKE)
 #    - Template-based validation or interactive schema builder
-#    - Saved answers with resume (validator-answers.env)
+#    - Saved answers with resume (troubleshooting-bundle-answers.env)
+#    - Log collection zipped as "Spotfire Copilot Troubleshooting Bundle <date>.zip"
 #    - No-CLI fallback (manual JSON import)
 ##############################################################################
 
@@ -68,6 +73,19 @@ AZURE_RESOURCE_GROUP=""
 AZURE_LOCATION=""
 AZURE_CONTAINER_APPS=()
 AZURE_APP_ROLES=()
+# Docker Compose (on-prem)
+COMPOSE_FILE=""
+COMPOSE_PROJECT=""
+COMPOSE_SERVICES=()
+COMPOSE_SERVICE_ROLES=()
+# Kubernetes (EKS/AKS/GKE)
+K8S_CONTEXT=""
+K8S_NAMESPACE=""
+K8S_WORKLOADS=()
+K8S_WORKLOAD_ROLES=()
+K8S_INCLUDE_PREVIOUS=false
+# Directory logs are written to before bundling (set by bundle_container_logs)
+LOG_OUTPUT_DIR="."
 HAS_TEMPLATE=false
 TEMPLATE_FILE=""
 LLM_PROVIDER=""
@@ -80,8 +98,8 @@ VALIDATION_ERRORS=0
 VALIDATION_WARNINGS=0
 VALIDATION_DETAILS=()  # per-container results captured for the report
 
-# Saved-answers file (resume support). Override with VALIDATOR_ANSWERS_FILE=... if desired.
-ANSWERS_FILE="${VALIDATOR_ANSWERS_FILE:-validator-answers.env}"
+# Saved-answers file (resume support). Override with TROUBLESHOOTING_ANSWERS_FILE=... if desired.
+ANSWERS_FILE="${TROUBLESHOOTING_ANSWERS_FILE:-troubleshooting-bundle-answers.env}"
 RESUMED=false
 
 ##############################################################################
@@ -90,7 +108,7 @@ RESUMED=false
 
 save_answers() {
     cat > "$ANSWERS_FILE" <<EOF
-# Spotfire Copilot validator - saved answers
+# Spotfire Copilot Troubleshooting Bundle - saved answers
 # Generated: $(date)
 # Delete this file to start fresh, or re-run and choose 'resume' to reuse it.
 CLOUD_PLATFORM=$CLOUD_PLATFORM
@@ -103,6 +121,15 @@ AZURE_RESOURCE_GROUP=$AZURE_RESOURCE_GROUP
 AZURE_LOCATION=$AZURE_LOCATION
 AZURE_CONTAINER_APPS=${AZURE_CONTAINER_APPS[*]:-}
 AZURE_APP_ROLES=${AZURE_APP_ROLES[*]:-}
+COMPOSE_FILE=$COMPOSE_FILE
+COMPOSE_PROJECT=$COMPOSE_PROJECT
+COMPOSE_SERVICES=${COMPOSE_SERVICES[*]:-}
+COMPOSE_SERVICE_ROLES=${COMPOSE_SERVICE_ROLES[*]:-}
+K8S_CONTEXT=$K8S_CONTEXT
+K8S_NAMESPACE=$K8S_NAMESPACE
+K8S_WORKLOADS=${K8S_WORKLOADS[*]:-}
+K8S_WORKLOAD_ROLES=${K8S_WORKLOAD_ROLES[*]:-}
+K8S_INCLUDE_PREVIOUS=$K8S_INCLUDE_PREVIOUS
 LLM_PROVIDER=$LLM_PROVIDER
 HAS_ADMIN_CONSOLE=$HAS_ADMIN_CONSOLE
 HAS_TEMPLATE=$HAS_TEMPLATE
@@ -129,6 +156,15 @@ load_answers() {
             AZURE_LOCATION)        AZURE_LOCATION="$value" ;;
             AZURE_CONTAINER_APPS)  read -ra AZURE_CONTAINER_APPS <<< "$value" ;;
             AZURE_APP_ROLES)       read -ra AZURE_APP_ROLES <<< "$value" ;;
+            COMPOSE_FILE)          COMPOSE_FILE="$value" ;;
+            COMPOSE_PROJECT)       COMPOSE_PROJECT="$value" ;;
+            COMPOSE_SERVICES)      read -ra COMPOSE_SERVICES <<< "$value" ;;
+            COMPOSE_SERVICE_ROLES) read -ra COMPOSE_SERVICE_ROLES <<< "$value" ;;
+            K8S_CONTEXT)           K8S_CONTEXT="$value" ;;
+            K8S_NAMESPACE)         K8S_NAMESPACE="$value" ;;
+            K8S_WORKLOADS)         read -ra K8S_WORKLOADS <<< "$value" ;;
+            K8S_WORKLOAD_ROLES)    read -ra K8S_WORKLOAD_ROLES <<< "$value" ;;
+            K8S_INCLUDE_PREVIOUS)  K8S_INCLUDE_PREVIOUS="$value" ;;
             LLM_PROVIDER)          LLM_PROVIDER="$value" ;;
             HAS_ADMIN_CONSOLE)     HAS_ADMIN_CONSOLE="$value" ;;
             HAS_TEMPLATE)          HAS_TEMPLATE="$value" ;;
@@ -193,13 +229,12 @@ preflight_check_cli() {
     info "Phase 0: CLI Preflight Check"
     echo ""
 
-    preflight_check_prereqs
-
-    if [[ "$CLOUD_PLATFORM" == "aws" ]]; then
-        preflight_check_aws
-    else
-        preflight_check_azure
-    fi
+    case "$CLOUD_PLATFORM" in
+        aws)     preflight_check_prereqs; preflight_check_aws ;;
+        azure)   preflight_check_prereqs; preflight_check_azure ;;
+        compose) preflight_check_docker ;;
+        k8s)     preflight_check_kubectl ;;
+    esac
 }
 
 preflight_check_aws() {
@@ -215,7 +250,7 @@ preflight_check_aws() {
         esac
         echo "  Docs: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
         echo ""
-        echo "No local CLI? Use the AWS CloudShell export fallback (see Validators/README.md)."
+        echo "No local CLI? Use the AWS CloudShell export fallback (see README.md)."
         exit 1
     fi
     success "AWS CLI found: $(aws --version 2>&1 | head -n1)"
@@ -272,7 +307,7 @@ preflight_check_azure() {
         esac
         echo "  Docs: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli"
         echo ""
-        echo "No local CLI? Use the Azure Cloud Shell export fallback (see Validators/README.md)."
+        echo "No local CLI? Use the Azure Cloud Shell export fallback (see README.md)."
         exit 1
     fi
     success "Azure CLI found: $(az version --query '\"azure-cli\"' -o tsv 2>/dev/null || echo 'installed')"
@@ -333,6 +368,64 @@ preflight_check_azure() {
     success "Preflight passed — the Azure CLI can talk to your resources."
 }
 
+preflight_check_docker() {
+    # Docker Compose (on-prem): only the local Docker engine is needed — no cloud CLI/auth.
+    if ! command -v docker &> /dev/null; then
+        error "Docker is not installed (required to read Docker Compose logs)."
+        echo ""
+        echo "Install Docker Engine 20.10+ with Compose V2, then re-run this tool."
+        echo "  Docs: https://docs.docker.com/engine/install/"
+        echo ""
+        exit 1
+    fi
+    success "Docker found: $(docker --version 2>&1 | head -n1)"
+
+    echo ""
+    info "Checking Docker engine connectivity (docker info)..."
+    if ! docker info &> /dev/null; then
+        error "The Docker CLI is installed but cannot reach the Docker engine."
+        echo "Start Docker Desktop / the Docker daemon, then re-run this tool."
+        exit 1
+    fi
+    if ! docker compose version &> /dev/null; then
+        warn "'docker compose' (Compose V2) was not detected — log collection needs Compose V2."
+    fi
+    echo ""
+    success "Preflight passed — the Docker engine is reachable."
+}
+
+preflight_check_kubectl() {
+    # Kubernetes (EKS/AKS/GKE): a working kubectl context is all that is needed.
+    if ! command -v kubectl &> /dev/null; then
+        error "kubectl is not installed (required to read Kubernetes logs)."
+        echo ""
+        echo "Install kubectl, then re-run this tool:"
+        case "$(detect_os)" in
+            macos) echo "  brew install kubectl" ;;
+            linux) echo "  curl -LO 'https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl' && sudo install kubectl /usr/local/bin/" ;;
+            *)     echo "  https://kubernetes.io/docs/tasks/tools/" ;;
+        esac
+        echo "  For EKS, first run: aws eks update-kubeconfig --name <cluster> --region <region>"
+        echo ""
+        exit 1
+    fi
+    success "kubectl found: $(kubectl version --client -o yaml 2>/dev/null | grep -m1 gitVersion | awk '{print $2}' || echo 'installed')"
+
+    echo ""
+    info "Checking cluster connectivity (kubectl cluster-info)..."
+    if ! kubectl cluster-info &> /dev/null; then
+        error "kubectl is installed but cannot reach a cluster."
+        echo "Configure your kubeconfig/context, then re-run this tool:"
+        echo "  # EKS:"
+        echo "  aws eks update-kubeconfig --name <cluster> --region <region>"
+        echo "  # then verify:"
+        echo "  kubectl config current-context"
+        exit 1
+    fi
+    echo ""
+    success "Preflight passed — kubectl can reach your cluster."
+}
+
 ##############################################################################
 # Phase 1: Platform & Topology Detection
 ##############################################################################
@@ -341,11 +434,13 @@ phase1_detect_platform() {
     echo ""
     info "Phase 1: Platform Detection"
     echo ""
-    echo "Which cloud platform are you using?"
+    echo "Where is the backend deployed?"
     echo "  1) AWS ECS/Fargate"
     echo "  2) Azure Container Apps"
+    echo "  3) Docker Compose (on-prem)"
+    echo "  4) Kubernetes (EKS / AKS / GKE)"
     echo ""
-    read -p "Enter choice (1 or 2): " platform_choice
+    read -p "Enter choice (1-4): " platform_choice
     
     case "$platform_choice" in
         1)
@@ -357,6 +452,16 @@ phase1_detect_platform() {
             CLOUD_PLATFORM="azure"
             preflight_check_cli
             phase1_detect_azure_topology
+            ;;
+        3)
+            CLOUD_PLATFORM="compose"
+            preflight_check_cli
+            phase1_detect_compose_topology
+            ;;
+        4)
+            CLOUD_PLATFORM="k8s"
+            preflight_check_cli
+            phase1_detect_k8s_topology
             ;;
         *)
             error "Invalid choice. Exiting."
@@ -469,6 +574,98 @@ phase1_detect_azure_topology() {
             exit 1
             ;;
     esac
+}
+
+phase1_detect_compose_topology() {
+    echo ""
+    local used_scripts
+    read -p "Did you deploy with the Spotfire Copilot deployment scripts? (y/n) [y]: " used_scripts
+    used_scripts="${used_scripts:-y}"
+
+    read -p "Path to your docker-compose file [docker-compose.yml]: " COMPOSE_FILE
+    COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+    read -p "Compose project name (press Enter to use the folder name): " COMPOSE_PROJECT
+
+    if [[ "$used_scripts" =~ ^[Yy] ]]; then
+        # Standard service names emitted by the deploy scripts
+        COMPOSE_SERVICES=("orchestrator" "admin-console")
+        COMPOSE_SERVICE_ROLES=("orchestrator" "admin")
+        info "Using standard service names: orchestrator, admin-console"
+    else
+        echo ""
+        echo "How are your services deployed?"
+        echo "  1) Both services in one compose file (default)"
+        echo "  2) Orchestrator only"
+        echo ""
+        read -p "Enter choice (1 or 2) [1]: " topo
+        topo="${topo:-1}"
+        local svc_orch svc_admin
+        read -p "Orchestrator service name [orchestrator]: " svc_orch
+        svc_orch="${svc_orch:-orchestrator}"
+        if [[ "$topo" == "1" ]]; then
+            read -p "Admin Console service name [admin-console]: " svc_admin
+            svc_admin="${svc_admin:-admin-console}"
+            COMPOSE_SERVICES=("$svc_orch" "$svc_admin")
+            COMPOSE_SERVICE_ROLES=("orchestrator" "admin")
+        else
+            COMPOSE_SERVICES=("$svc_orch")
+            COMPOSE_SERVICE_ROLES=("orchestrator")
+        fi
+    fi
+    info "Compose file: $COMPOSE_FILE"
+}
+
+phase1_detect_k8s_topology() {
+    echo ""
+    read -p "kubectl context (press Enter for the current context): " K8S_CONTEXT
+    read -p "Kubernetes namespace [copilot]: " K8S_NAMESPACE
+    K8S_NAMESPACE="${K8S_NAMESPACE:-copilot}"
+
+    local used_scripts
+    read -p "Did you deploy with the Spotfire Copilot deployment scripts? (y/n) [y]: " used_scripts
+    used_scripts="${used_scripts:-y}"
+
+    if [[ "$used_scripts" =~ ^[Yy] ]]; then
+        # Standard deployment names emitted by the deploy scripts / manifests
+        K8S_WORKLOADS=("deployment/orchestrator" "deployment/admin-console")
+        K8S_WORKLOAD_ROLES=("orchestrator" "admin")
+        info "Using standard deployments: orchestrator, admin-console"
+    else
+        echo ""
+        echo "How do you want to identify the workloads?"
+        echo "  1) Deployment names (recommended)"
+        echo "  2) Label selectors"
+        echo ""
+        read -p "Enter choice (1 or 2) [1]: " idc
+        idc="${idc:-1}"
+        local orch admin
+        if [[ "$idc" == "2" ]]; then
+            read -p "Orchestrator label selector [app=orchestrator]: " orch
+            orch="${orch:-app=orchestrator}"
+            read -p "Admin Console label selector (blank if not deployed): " admin
+            K8S_WORKLOADS=("-l|$orch")
+            K8S_WORKLOAD_ROLES=("orchestrator")
+            if [[ -n "$admin" ]]; then
+                K8S_WORKLOADS+=("-l|$admin")
+                K8S_WORKLOAD_ROLES+=("admin")
+            fi
+        else
+            read -p "Orchestrator deployment name [orchestrator]: " orch
+            orch="${orch:-orchestrator}"
+            read -p "Admin Console deployment name (blank if not deployed): " admin
+            K8S_WORKLOADS=("deployment/$orch")
+            K8S_WORKLOAD_ROLES=("orchestrator")
+            if [[ -n "$admin" ]]; then
+                K8S_WORKLOADS+=("deployment/$admin")
+                K8S_WORKLOAD_ROLES+=("admin")
+            fi
+        fi
+    fi
+
+    local prev
+    read -p "Also fetch logs from previous (crashed/restarted) pods? (y/n) [y]: " prev
+    prev="${prev:-y}"
+    if [[ "$prev" =~ ^[Yy] ]]; then K8S_INCLUDE_PREVIOUS=true; else K8S_INCLUDE_PREVIOUS=false; fi
 }
 
 ##############################################################################
@@ -1264,23 +1461,29 @@ generate_report() {
 # Container log download (troubleshooting)
 ##############################################################################
 
-# AWS/CloudWatch only: true time-bounded window for `aws logs tail --since`.
+# AWS/CloudWatch, Docker Compose, and Kubernetes honor this time-bounded window.
 # ACA has no time-window flag, so it uses a fixed 2000-line cap instead (see
 # download_aca_logs); LOG_SINCE does not apply to Azure Container Apps.
-LOG_SINCE="1h"
+# Override at runtime, e.g. LOG_SINCE=6h ./spotfire-copilot-troubleshooting-bundle.sh --logs
+LOG_SINCE="${LOG_SINCE:-1h}"
 
 print_usage() {
     cat <<'EOF'
-Spotfire Copilot - Backend Environment Validator
+Spotfire Copilot - Troubleshooting Bundle
 
 Usage:
-  ./spotfire-copilot-backend-validate-env.sh [options]
+  ./spotfire-copilot-troubleshooting-bundle.sh [options]
 
 Options:
-  --logs      Skip validation and download container logs (orchestrator / admin /
-              both) to a file in this folder for troubleshooting. Reuses saved
-              answers (validator-answers.env) if present.
+  --logs      Skip validation and collect container logs (orchestrator / admin /
+              both) into a single "Spotfire Copilot Troubleshooting Bundle <date>.zip"
+              for troubleshooting. Reuses saved answers
+              (troubleshooting-bundle-answers.env) if present.
   -h, --help  Show this help and exit.
+
+Environment:
+  LOG_SINCE   Log time window to collect (default: 1h). Example: LOG_SINCE=6h
+              Applies to AWS ECS, Docker Compose, and Kubernetes (not Azure ACA).
 EOF
 }
 
@@ -1349,7 +1552,7 @@ download_ecs_logs_from_taskdef() {
 
     local ts outfile
     ts=$(date +"%Y%m%d-%H%M%S")
-    outfile="container-logs-${ts}-ecs-${want}.log"
+    outfile="${LOG_OUTPUT_DIR}/container-logs-${ts}-ecs-${want}.log"
     info "Fetching CloudWatch logs for '$container' (group '$group', last ${LOG_SINCE})..."
     {
         echo "# Spotfire Copilot container logs"
@@ -1395,7 +1598,7 @@ download_aca_logs() {
     local app="$1" container="$2" want="$3"
     local ts outfile
     ts=$(date +"%Y%m%d-%H%M%S")
-    outfile="container-logs-${ts}-aca-${want}.log"
+    outfile="${LOG_OUTPUT_DIR}/container-logs-${ts}-aca-${want}.log"
     info "Fetching Container App logs for '$app' container '$container' (recent lines)..."
     {
         echo "# Spotfire Copilot container logs"
@@ -1418,6 +1621,79 @@ download_aca_logs() {
         || warn "az containerapp logs show returned an error (see the end of $outfile)."
 }
 
+# Download recent logs for a Docker Compose service (on-prem). Needs only Docker.
+download_compose_logs() {
+    local service="$1" want="$2"
+    local ts outfile
+    ts=$(date +"%Y%m%d-%H%M%S")
+    outfile="${LOG_OUTPUT_DIR}/container-logs-${ts}-compose-${want}.log"
+    info "Fetching Docker Compose logs for service '$service' (last ${LOG_SINCE})..."
+    {
+        echo "# Spotfire Copilot container logs"
+        echo "# Generated:       $(date)"
+        echo "# Platform:        Docker Compose (on-prem)"
+        echo "# Compose file:    $COMPOSE_FILE"
+        echo "# Project:         ${COMPOSE_PROJECT:-<directory default>}"
+        echo "# Service:         $service ($want)"
+        echo "# Window:          last ${LOG_SINCE}"
+        echo "# --------------------------------------------------------------"
+    } > "$outfile"
+
+    local -a base=(docker compose -f "$COMPOSE_FILE")
+    [[ -n "$COMPOSE_PROJECT" ]] && base+=(-p "$COMPOSE_PROJECT")
+    "${base[@]}" logs --no-color --since "$LOG_SINCE" "$service" \
+        >> "$outfile" 2>> "$outfile" \
+        && success "Saved logs to $outfile" \
+        || warn "docker compose logs returned an error (see the end of $outfile)."
+}
+
+# Download recent logs for a Kubernetes workload (deployment/<name> or "-l|<selector>").
+download_k8s_logs() {
+    local target="$1" want="$2"
+    local ts outfile
+    ts=$(date +"%Y%m%d-%H%M%S")
+    outfile="${LOG_OUTPUT_DIR}/container-logs-${ts}-k8s-${want}.log"
+
+    local -a sel
+    if [[ "$target" == -l\|* ]]; then
+        sel=(-l "${target#-l|}")
+    else
+        sel=("$target")
+    fi
+
+    local -a base=(kubectl)
+    [[ -n "$K8S_CONTEXT" ]] && base+=(--context "$K8S_CONTEXT")
+    base+=(-n "$K8S_NAMESPACE")
+
+    info "Fetching Kubernetes logs for '$target' in namespace '$K8S_NAMESPACE' (last ${LOG_SINCE})..."
+    {
+        echo "# Spotfire Copilot container logs"
+        echo "# Generated:       $(date)"
+        echo "# Platform:        Kubernetes"
+        echo "# Context:         ${K8S_CONTEXT:-<current>}"
+        echo "# Namespace:       $K8S_NAMESPACE"
+        echo "# Workload:        $target ($want)"
+        echo "# Window:          last ${LOG_SINCE}"
+        echo "# --------------------------------------------------------------"
+    } > "$outfile"
+
+    "${base[@]}" logs "${sel[@]}" --since="$LOG_SINCE" --all-containers --prefix --tail=-1 \
+        >> "$outfile" 2>> "$outfile" \
+        && success "Saved current logs to $outfile" \
+        || warn "kubectl logs returned an error (see the end of $outfile)."
+
+    if [[ "$K8S_INCLUDE_PREVIOUS" == true ]]; then
+        {
+            echo ""
+            echo "# ---- previous (crashed/restarted) pod logs ----"
+        } >> "$outfile"
+        "${base[@]}" logs "${sel[@]}" --previous --all-containers --prefix --tail=-1 \
+            >> "$outfile" 2>> "$outfile" \
+            && success "Appended previous-pod logs to $outfile" \
+            || info "No previous-pod logs available (workload has not restarted)."
+    fi
+}
+
 # Download logs for the selected container(s): orchestrator | admin | both.
 download_container_logs() {
     local selection="$1"
@@ -1431,32 +1707,111 @@ download_container_logs() {
     local want i role found
     for want in "${wants[@]}"; do
         found=false
-        if [[ "$CLOUD_PLATFORM" == "aws" ]]; then
-            for i in "${!AWS_TASK_DEFINITIONS[@]}"; do
-                role="${AWS_TASK_ROLES[$i]:-both}"
-                if [[ "$role" == "both" || "$role" == "$want" ]]; then
-                    download_ecs_logs_from_taskdef "${AWS_TASK_DEFINITIONS[$i]}" "$want" || true
-                    found=true
-                    break
-                fi
-            done
-            [[ "$found" == false ]] && warn "Could not locate a task definition hosting the $want container."
-        else
-            for i in "${!AZURE_CONTAINER_APPS[@]}"; do
-                role="${AZURE_APP_ROLES[$i]:-both}"
-                if [[ "$role" == "both" || "$role" == "$want" ]]; then
-                    local app cname
-                    app="${AZURE_CONTAINER_APPS[$i]}"
-                    cname="$(aca_container_name "$app" "$want")"
-                    [[ -z "$cname" ]] && cname="$want"
-                    download_aca_logs "$app" "$cname" "$want" || true
-                    found=true
-                    break
-                fi
-            done
-            [[ "$found" == false ]] && warn "Could not locate a Container App hosting the $want container."
-        fi
+        case "$CLOUD_PLATFORM" in
+            aws)
+                for i in "${!AWS_TASK_DEFINITIONS[@]}"; do
+                    role="${AWS_TASK_ROLES[$i]:-both}"
+                    if [[ "$role" == "both" || "$role" == "$want" ]]; then
+                        download_ecs_logs_from_taskdef "${AWS_TASK_DEFINITIONS[$i]}" "$want" || true
+                        found=true
+                        break
+                    fi
+                done
+                [[ "$found" == false ]] && warn "Could not locate a task definition hosting the $want container."
+                ;;
+            azure)
+                for i in "${!AZURE_CONTAINER_APPS[@]}"; do
+                    role="${AZURE_APP_ROLES[$i]:-both}"
+                    if [[ "$role" == "both" || "$role" == "$want" ]]; then
+                        local app cname
+                        app="${AZURE_CONTAINER_APPS[$i]}"
+                        cname="$(aca_container_name "$app" "$want")"
+                        [[ -z "$cname" ]] && cname="$want"
+                        download_aca_logs "$app" "$cname" "$want" || true
+                        found=true
+                        break
+                    fi
+                done
+                [[ "$found" == false ]] && warn "Could not locate a Container App hosting the $want container."
+                ;;
+            compose)
+                for i in "${!COMPOSE_SERVICES[@]}"; do
+                    role="${COMPOSE_SERVICE_ROLES[$i]:-both}"
+                    if [[ "$role" == "both" || "$role" == "$want" ]]; then
+                        download_compose_logs "${COMPOSE_SERVICES[$i]}" "$want" || true
+                        found=true
+                        break
+                    fi
+                done
+                [[ "$found" == false ]] && warn "Could not locate a compose service hosting the $want container."
+                ;;
+            k8s)
+                for i in "${!K8S_WORKLOADS[@]}"; do
+                    role="${K8S_WORKLOAD_ROLES[$i]:-both}"
+                    if [[ "$role" == "both" || "$role" == "$want" ]]; then
+                        download_k8s_logs "${K8S_WORKLOADS[$i]}" "$want" || true
+                        found=true
+                        break
+                    fi
+                done
+                [[ "$found" == false ]] && warn "Could not locate a Kubernetes workload hosting the $want container."
+                ;;
+        esac
     done
+}
+
+# Collect logs for the selection into a staging dir, then zip them into a single
+# "Spotfire Copilot Troubleshooting Bundle <timestamp>.zip".
+bundle_container_logs() {
+    local selection="$1"
+    local ts staging bundle
+    ts=$(date +"%Y%m%d-%H%M%S")
+    staging="$(mktemp -d "${TMPDIR:-/tmp}/sc-troubleshooting-XXXXXX")" || {
+        warn "Could not create a staging directory — writing logs to the current folder instead."
+        LOG_OUTPUT_DIR="."
+        download_container_logs "$selection"
+        return 1
+    }
+
+    LOG_OUTPUT_DIR="$staging"
+    download_container_logs "$selection"
+    LOG_OUTPUT_DIR="."
+
+    {
+        echo "Spotfire Copilot Troubleshooting Bundle"
+        echo "Generated:   $(date)"
+        echo "Platform:    $CLOUD_PLATFORM"
+        echo "Selection:   $selection"
+        echo "Log window:  $LOG_SINCE"
+        echo "Tool:        spotfire-copilot-troubleshooting-bundle.sh"
+    } > "$staging/manifest.txt"
+
+    if ! ls "$staging"/container-logs-*.log >/dev/null 2>&1; then
+        warn "No log files were collected — skipping bundle creation."
+        rm -rf "$staging"
+        return 1
+    fi
+
+    bundle="Spotfire Copilot Troubleshooting Bundle ${ts}.zip"
+    if command -v zip >/dev/null 2>&1; then
+        ( cd "$staging" && zip -q -r "$OLDPWD/$bundle" . ) || warn "zip reported an error."
+    elif command -v python3 >/dev/null 2>&1; then
+        ( cd "$staging" && python3 -m zipfile -c "$OLDPWD/$bundle" ./* ) || warn "python zip reported an error."
+    else
+        bundle="Spotfire Copilot Troubleshooting Bundle ${ts}.tar.gz"
+        tar -czf "$bundle" -C "$staging" . || warn "tar reported an error."
+    fi
+
+    rm -rf "$staging"
+
+    if [[ -f "$bundle" ]]; then
+        echo ""
+        success "Bundle saved: $bundle"
+        info "Attach this file to your Spotfire support case."
+    else
+        error "Failed to create the troubleshooting bundle."
+        return 1
+    fi
 }
 
 # End-of-run offer to grab logs for troubleshooting.
@@ -1467,7 +1822,7 @@ offer_log_download() {
     if [[ "$dl" =~ ^[Yy] ]]; then
         local sel
         sel="$(prompt_log_target)"
-        download_container_logs "$sel"
+        bundle_container_logs "$sel"
     fi
 }
 
@@ -1487,7 +1842,7 @@ main() {
 
     echo ""
     echo "================================================"
-    echo "  Spotfire Copilot Environment Validator"
+    echo "  Spotfire Copilot Troubleshooting Bundle"
     echo "================================================"
 
     if [[ "$logs_only" == true ]]; then
@@ -1502,7 +1857,7 @@ main() {
         fi
         local sel
         sel="$(prompt_log_target)"
-        download_container_logs "$sel"
+        bundle_container_logs "$sel"
         exit 0
     fi
 
@@ -1525,6 +1880,20 @@ main() {
         preflight_check_cli
     else
         phase1_detect_platform
+    fi
+
+    # Docker Compose and Kubernetes: collect logs into a bundle (no env-var validation).
+    if [[ "$CLOUD_PLATFORM" == "compose" || "$CLOUD_PLATFORM" == "k8s" ]]; then
+        [[ "$RESUMED" == true ]] || save_answers
+        echo ""
+        info "Log collection mode for '$CLOUD_PLATFORM' — env-variable validation is not applicable to this platform."
+        local sel
+        sel="$(prompt_log_target)"
+        bundle_container_logs "$sel"
+        exit 0
+    fi
+
+    if [[ "$RESUMED" != true ]]; then
         phase2_template_or_schema
         save_answers
     fi
