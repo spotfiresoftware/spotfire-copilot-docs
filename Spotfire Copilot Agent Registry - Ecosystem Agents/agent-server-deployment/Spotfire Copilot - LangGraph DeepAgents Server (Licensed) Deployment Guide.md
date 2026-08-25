@@ -161,7 +161,6 @@ Licensed runtime graph exposure is based on configured graphs. Current set:
 - `tavily_agent`
 - `milvus_agent`
 - `ddr_agent`
-- `support_agent`
 
 ### 4.2 Notes
 
@@ -275,7 +274,7 @@ Quick-start minimum set:
   - `ANTHROPIC_API_KEY` for `anthropic:*`
   - `GOOGLE_API_KEY` for `google:*`
   - Azure OpenAI: set `DEEPAGENTS_MODEL=azure_openai:<deployment-name>` (the value after the colon is the Azure **deployment** name, not the model name) plus `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION`.
-- Optional per-agent override: prefix any model variable with an agent's MCP prefix to change just that agent (same convention as `<PREFIX>_MCP_SERVER_URL`). For example, keep the fleet on OpenAI but move only `osdu_agent` to Azure by setting `OSDU_DEEPAGENTS_MODEL=azure_openai:<deployment>` (the `AZURE_*` vars are shared globally, or can be overridden as `OSDU_AZURE_OPENAI_*`). Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`, `SNOWFLAKE`.
+- Optional per-agent override: prefix any model variable with an agent's MCP prefix to change just that agent (same convention as `<PREFIX>_MCP_SERVER_URL`). For example, keep the fleet on OpenAI but move only `osdu_agent` to Azure by setting `OSDU_DEEPAGENTS_MODEL=azure_openai:<deployment>` (the `AZURE_*` vars are shared globally, or can be overridden as `OSDU_AZURE_OPENAI_*`). Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SNOWFLAKE`.
 - For each enabled agent integration, set its `*_MCP_SERVER_URL`.
 - Set per-server `*_MCP_BEARER_TOKEN` values as required by your MCP backends, or set `MCP_BEARER_TOKEN` as a shared fallback.
 - Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored. To keep one agent on its own static token while the minter is active — for example an **external SaaS MCP** such as Databricks Genie or Snowflake that authenticates with its own token rather than a Keycloak `aud=mcp` JWT — set `<PREFIX>_MCP_STATIC_TOKEN_ONLY=true` for that agent.

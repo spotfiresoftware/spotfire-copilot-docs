@@ -66,7 +66,7 @@ The system has two layers:
 
 | Layer | What it is | Who owns it | Changes require |
 |---|---|---|---|
-| **Baked agents** | The generic agents compiled into the image (OSDU, DV, Spotfire Library/License, Tavily, Milvus, DDR, Databricks Genie, Snowflake, Support). | Spotfire / the image build | A new image tag |
+| **Baked agents** | The generic agents compiled into the image (OSDU, DV, Spotfire Library/License, Tavily, Milvus, DDR, Databricks Genie, Snowflake). | Spotfire / the image build | A new image tag |
 | **Overlay agents** | Your domain agents, described by a bundle (a manifest + behavior packs). | You (the operator) | A values / bundle change at deploy time |
 
 The image is immutable; your domains are supplied on top. **You author and own
@@ -113,7 +113,7 @@ The image exposes a fixed roster of baked agent IDs:
 
 ```
 osdu_agent, dv_agent, sf_lib_md_agent, sf_lic_agent, tavily_agent,
-milvus_agent, ddr_agent, databricks_genie_agent, snowflake_agent, support_agent
+milvus_agent, ddr_agent, databricks_genie_agent, snowflake_agent
 ```
 
 These are **generic**: each connects to an MCP server you point it at. They are

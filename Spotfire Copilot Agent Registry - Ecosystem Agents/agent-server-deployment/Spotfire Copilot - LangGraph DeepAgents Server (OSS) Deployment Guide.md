@@ -185,7 +185,6 @@ This server image currently exposes these baked-in agent IDs at runtime:
 - `tavily_agent`
 - `milvus_agent`
 - `ddr_agent`
-- `support_agent`
 
 > **Adding your own domain agents.** Beyond these baked-in agents, you can add
 > domain / data-source agents (including Databricks domain agents) **at deploy
@@ -404,7 +403,7 @@ Quick-start minimum set:
   - `GOOGLE_API_KEY` for `google:*`
   - AWS Bedrock: `DEEPAGENTS_MODEL=bedrock_converse:<model-id>` plus `AWS_REGION`; credentials come from the standard AWS chain (env or, on EKS, the pod's IRSA role — no keys). The role needs `bedrock:InvokeModel` / `bedrock:InvokeModelWithResponseStream`. Setting `DEEPAGENTS_MODEL` fleet-wide puts **every** agent on Bedrock (one IRSA role covers all); use a `<PREFIX>_DEEPAGENTS_MODEL` to move just one agent. On EKS the IRSA webhook auto-injects `AWS_REGION` (= cluster region), so `AWS_REGION` is only needed to override it or when the Bedrock region differs from the cluster region.
   - Azure OpenAI: set `DEEPAGENTS_MODEL=azure_openai:<deployment-name>` (the value after the colon is the Azure **deployment** name, not the model name) plus `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION`.
-- Optional per-agent override: prefix any model variable with an agent's MCP prefix to change just that agent (same convention as `<PREFIX>_MCP_SERVER_URL`). For example, keep the fleet on OpenAI but move only `osdu_agent` to Azure by setting `OSDU_DEEPAGENTS_MODEL=azure_openai:<deployment>` (the `AZURE_*` vars are shared globally, or can be overridden as `OSDU_AZURE_OPENAI_*`). Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`, `SNOWFLAKE`. and set matching credentials (for example `A2A_BEARER_TOKENS` for `bearer`).
+- Optional per-agent override: prefix any model variable with an agent's MCP prefix to change just that agent (same convention as `<PREFIX>_MCP_SERVER_URL`). For example, keep the fleet on OpenAI but move only `osdu_agent` to Azure by setting `OSDU_DEEPAGENTS_MODEL=azure_openai:<deployment>` (the `AZURE_*` vars are shared globally, or can be overridden as `OSDU_AZURE_OPENAI_*`). Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SNOWFLAKE`. and set matching credentials (for example `A2A_BEARER_TOKENS` for `bearer`).
 - For each enabled agent integration, set `*_MCP_SERVER_URL`.
 - Set per-server `*_MCP_BEARER_TOKEN` values as required by your MCP backends, or set `MCP_BEARER_TOKEN` as a shared fallback.
 - Alternatively, configure outbound Keycloak client_credentials by setting all three of `MCP_CLIENT_ID`, `MCP_CLIENT_SECRET`, and `KEYCLOAK_TOKEN_URL`. When these are present the server mints fresh `aud=mcp` tokens per request and the static `*_MCP_BEARER_TOKEN` values are ignored. To keep one agent on its own static token while the minter is active — for example an **external SaaS MCP** such as Databricks Genie or Snowflake that authenticates with its own token rather than a Keycloak `aud=mcp` JWT — set `<PREFIX>_MCP_STATIC_TOKEN_ONLY=true` for that agent.
@@ -505,7 +504,7 @@ Commonly optional:
 
 Supported MCP prefixes in the template:
 
-- `OSDU`, `DATABRICKS`, `GENIE`, `SNOWFLAKE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`
+- `OSDU`, `DATABRICKS`, `GENIE`, `SNOWFLAKE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`
 
 > **The default is the standard starting point; per-user auth is an advanced
 > option.** The default `.env` above (`A2A_AUTH_MODE=bearer` inbound, per-server
@@ -521,7 +520,27 @@ Supported MCP prefixes in the template:
 
 ### 4.6 Per-Agent MCP Variables (Explicit Names)
 
-Use this table when you want concrete variable names instead of `<PREFIX>` patterns.
+**Baked-in agents and their env prefixes.** Each baked agent is configured by its
+own `<PREFIX>_*` variables. Set a baked agent's `<PREFIX>_MCP_SERVER_URL` (and a
+token) to load its tools; an agent with no URL starts with **zero tools**.
+
+| Baked agent (A2A id) | Env prefix | Set to enable its tools |
+|---|---|---|
+| `osdu_agent` | `OSDU` | `OSDU_MCP_SERVER_URL` (+ `OSDU_MCP_BEARER_TOKEN`) |
+| `dv_agent` | `DV` | `DV_MCP_SERVER_URL` (+ token) |
+| `sf_lib_md_agent` | `SFLIB` | `SFLIB_MCP_SERVER_URL` (+ token) |
+| `sf_lic_agent` | `SFLIC` | `SFLIC_MCP_SERVER_URL` (+ token) |
+| `tavily_agent` | `TAVILY` | `TAVILY_MCP_SERVER_URL` (+ token) |
+| `milvus_agent` | `MILVUS` | `MILVUS_MCP_SERVER_URL` (+ token) |
+| `ddr_agent` | `DDR` | `DDR_MCP_SERVER_URL` (+ token) |
+| `databricks_genie_agent` | `GENIE` | `GENIE_MCP_SERVER_URL` (+ token; external SaaS — set `GENIE_MCP_STATIC_TOKEN_ONLY=true`) |
+| `snowflake_agent` | `SNOWFLAKE` | `SNOWFLAKE_MCP_SERVER_URL` (+ token; external SaaS — set `SNOWFLAKE_MCP_STATIC_TOKEN_ONLY=true`) |
+
+> The `DATABRICKS_*` rows in the detailed table below configure **overlay**
+> Databricks agents (added at deploy time), **not** a baked-in agent — see the
+> [Adding Domain Agents via Overlay Guide](Spotfire%20Copilot%20-%20Adding%20Domain%20Agents%20via%20Overlay%20Guide.md).
+
+Use the table below when you want concrete variable names instead of `<PREFIX>` patterns.
 
 | Variable | Required | Description | Example |
 |---|---|---|---|
@@ -641,7 +660,7 @@ config:
   #   OSDU_DEEPAGENTS_MODEL: "azure_openai:my-osdu-deployment"
   #   OSDU_AZURE_OPENAI_ENDPOINT: "https://<resource>.openai.azure.com"
   #   OSDU_OPENAI_API_VERSION: "2024-10-21"
-  # Prefixes: OSDU, DATABRICKS, GENIE, DV, SFLIB, SFLIC, TAVILY, MILVUS, DDR, SUPPORT, SNOWFLAKE.
+  # Prefixes: OSDU, DATABRICKS, GENIE, DV, SFLIB, SFLIC, TAVILY, MILVUS, DDR, SNOWFLAKE.
 
 secret:
   create: false
@@ -659,7 +678,7 @@ Required keys in `deepagents-oss-secrets` for this example:
 
 > **Azure OpenAI.** To use Azure instead of public OpenAI, set `config.deepagentsModel: "azure_openai:<deployment-name>"` (the value after the colon is the Azure deployment name), `config.azureOpenaiEndpoint: "https://<resource>.openai.azure.com"`, and `config.openaiApiVersion: "2024-10-21"`. Provide `AZURE_OPENAI_API_KEY` in the Secret (via `secret.azureOpenaiApiKey`, or your `existingSecretName` Secret) instead of `OPENAI_API_KEY`. Optionally set `config.modelProvider: "azure"` to force the Azure path regardless of the model prefix.
 >
-> **Per-agent override (Helm).** To change the model for a single agent, add its `<PREFIX>_`-scoped variables via `config.extraEnv` (non-secret) and `secret.extraSecretEnv` (secret). For example, keep the fleet on OpenAI but move `osdu_agent` to Azure with `config.extraEnv: { OSDU_DEEPAGENTS_MODEL: "azure_openai:<deployment>", AZURE_OPENAI_ENDPOINT: "https://<resource>.openai.azure.com", OPENAI_API_VERSION: "2024-10-21" }` and `secret.extraSecretEnv: { AZURE_OPENAI_API_KEY: "<azure-key>" }`. Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SUPPORT`, `SNOWFLAKE`.
+> **Per-agent override (Helm).** To change the model for a single agent, add its `<PREFIX>_`-scoped variables via `config.extraEnv` (non-secret) and `secret.extraSecretEnv` (secret). For example, keep the fleet on OpenAI but move `osdu_agent` to Azure with `config.extraEnv: { OSDU_DEEPAGENTS_MODEL: "azure_openai:<deployment>", AZURE_OPENAI_ENDPOINT: "https://<resource>.openai.azure.com", OPENAI_API_VERSION: "2024-10-21" }` and `secret.extraSecretEnv: { AZURE_OPENAI_API_KEY: "<azure-key>" }`. Prefixes: `OSDU`, `DATABRICKS`, `GENIE`, `DV`, `SFLIB`, `SFLIC`, `TAVILY`, `MILVUS`, `DDR`, `SNOWFLAKE`.
 
 #### 5.1.2 Install
 
