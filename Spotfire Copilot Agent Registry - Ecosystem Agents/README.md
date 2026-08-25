@@ -1,4 +1,4 @@
-# Spotfire Copilot™ Agent Registry — Ecosystem Agents
+# Spotfire Copilot™ Ecosystem Agents Server
 
 **Ecosystem agents** are pre-built, domain-targeted A2A (Agent-to-Agent) agents — hosted by a framework-based agent server and backed by Model Context Protocol (MCP) servers — that you can deploy to give Spotfire Copilot ready-made capabilities. They complement the [Spotfire Copilot Agent Registry](../Spotfire%20Copilot%20-%20Agent%20Registry%20Overview.md).
 
