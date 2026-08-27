@@ -28,6 +28,26 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Invoke the Azure CLI safely and return only its stdout.
+# The 'az' CLI writes benign notices to stderr - most notably
+#   "The behavior of this command has been altered by the following
+#    extension: containerapp"
+# With $ErrorActionPreference = 'Stop', a native command writing to stderr is
+# turned into a terminating NativeCommandError (a plain 2>$null redirect does
+# NOT prevent this). This wrapper relaxes the preference locally and discards
+# stderr so only real stdout is returned. $LASTEXITCODE is still set by az.
+function Invoke-AzCli {
+    param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $AzArgs)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & az @AzArgs 2>$null
+    }
+    finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
 # Global variables
 $CloudPlatform = ""
 $AWSRegion = ""
@@ -651,7 +671,7 @@ function Phase1-DetectAzureTopology {
     # --- Container Apps: auto-discover within the chosen resource group ---
     Write-Host ""
     Write-Info "Discovering Container Apps in '$($script:AzureResourceGroup)'..."
-    $apps = @(az containerapp list --resource-group $script:AzureResourceGroup --subscription $script:AzureSubscription --query '[].name' -o tsv 2>$null |
+    $apps = @(Invoke-AzCli containerapp list --resource-group $script:AzureResourceGroup --subscription $script:AzureSubscription --query '[].name' -o tsv |
         Where-Object { $_ } | Sort-Object)
 
     if ($apps.Count -gt 0) {
@@ -1346,7 +1366,7 @@ function Validate-AzureContainerApp {
     Write-Info "Fetching Container App: $AppName"
     
     try {
-        $appJson = az containerapp show `
+        $appJson = Invoke-AzCli containerapp show `
             --subscription $script:AzureSubscription `
             --resource-group $script:AzureResourceGroup `
             --name $AppName `
@@ -1641,7 +1661,7 @@ function Download-EcsLogsFromTaskDef {
 function Get-AcaContainerName {
     param([string]$App, [string]$Want)
     try {
-        $appJson = az containerapp show `
+        $appJson = Invoke-AzCli containerapp show `
             --subscription $script:AzureSubscription `
             --resource-group $script:AzureResourceGroup `
             --name $App `
