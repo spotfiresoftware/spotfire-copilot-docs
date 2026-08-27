@@ -98,7 +98,7 @@ Then answer the interactive prompts:
 
 1. **Platform:** AWS ECS, Azure Container Apps, Docker Compose (on-prem), or Kubernetes (EKS/AKS/GKE)? *(Compose and Kubernetes run in log-collection mode only.)*
 2. **Preflight (Phase 0):** The validator first checks local prerequisites (`jq` for the Bash script; PowerShell needs none), then confirms the matching CLI (AWS or Azure) is **installed**, **authenticated**, and can **reach your resources** — it lists your ECS clusters / Azure resource groups to prove connectivity. If any check fails, it prints the exact install/configure command **for your OS** and stops.
-3. **Topology:** On AWS, identify what to validate by **ECS service name** (recommended — the validator resolves the task definition each service is actually running) or by **task definition name** directly. Then choose all-in-one or separate (orchestrator + admin-console). On Azure, enter the Container App name(s).
+3. **Topology:** On AWS, identify what to validate by **ECS service name** (recommended — the validator resolves the task definition each service is actually running) or by **task definition name** directly. Then choose all-in-one or separate (orchestrator + admin-console). On Azure, the validator **auto-discovers** your subscriptions, resource groups, and Container Apps and lets you **pick from a numbered list** — the region is derived automatically from the chosen resource group (you can still type a name manually if something isn't listed).
 4. **Schema:** Do you have a config template from our deploy script?
    - Yes → Load LLM provider + Admin Console settings from template
    - No → Interactively select LLM provider + whether Admin Console is deployed
@@ -195,7 +195,7 @@ On AWS you first choose how to name what to validate:
 - **ECS service name (recommended)** — enter the service name(s) and the validator resolves the task definition each service is *currently running* via `aws ecs describe-services ... --query 'services[0].taskDefinition'`. This validates exactly what's deployed and live, so you don't have to know the revision number.
 - **Task definition name** — enter the task definition name directly (existing behaviour).
 
-Azure Container Apps are already the deployable/running unit, so on Azure you simply enter the Container App name(s) — no separate service-vs-definition choice is needed.
+Azure Container Apps are already the deployable/running unit, so on Azure the validator **auto-discovers** the subscription, resource group, and Container Apps and lets you pick from a numbered list — no separate service-vs-definition choice is needed, and the region is derived automatically from the resource group.
 
 ### Resume: saved answers
 
