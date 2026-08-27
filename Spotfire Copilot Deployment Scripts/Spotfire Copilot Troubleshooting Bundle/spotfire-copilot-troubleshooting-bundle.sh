@@ -69,6 +69,7 @@ AWS_CLUSTER=""
 AWS_TASK_DEFINITIONS=()
 AWS_TASK_ROLES=()
 AWS_SERVICE_NAMES=()
+AZURE_SUBSCRIPTION=""
 AZURE_RESOURCE_GROUP=""
 AZURE_LOCATION=""
 AZURE_CONTAINER_APPS=()
@@ -117,6 +118,7 @@ AWS_CLUSTER=$AWS_CLUSTER
 AWS_TASK_DEFINITIONS=${AWS_TASK_DEFINITIONS[*]:-}
 AWS_TASK_ROLES=${AWS_TASK_ROLES[*]:-}
 AWS_SERVICE_NAMES=${AWS_SERVICE_NAMES[*]:-}
+AZURE_SUBSCRIPTION=$AZURE_SUBSCRIPTION
 AZURE_RESOURCE_GROUP=$AZURE_RESOURCE_GROUP
 AZURE_LOCATION=$AZURE_LOCATION
 AZURE_CONTAINER_APPS=${AZURE_CONTAINER_APPS[*]:-}
@@ -152,6 +154,7 @@ load_answers() {
             AWS_TASK_DEFINITIONS)  read -ra AWS_TASK_DEFINITIONS <<< "$value" ;;
             AWS_TASK_ROLES)        read -ra AWS_TASK_ROLES <<< "$value" ;;
             AWS_SERVICE_NAMES)     read -ra AWS_SERVICE_NAMES <<< "$value" ;;
+            AZURE_SUBSCRIPTION)    AZURE_SUBSCRIPTION="$value" ;;
             AZURE_RESOURCE_GROUP)  AZURE_RESOURCE_GROUP="$value" ;;
             AZURE_LOCATION)        AZURE_LOCATION="$value" ;;
             AZURE_CONTAINER_APPS)  read -ra AZURE_CONTAINER_APPS <<< "$value" ;;
@@ -294,6 +297,49 @@ preflight_check_aws() {
     success "Preflight passed — the AWS CLI can talk to your resources."
 }
 
+# Prompt the user for which Azure subscription to work against. On resume, the
+# previously-saved subscription is reused without prompting.
+select_azure_subscription() {
+    local cur_id cur_name
+    cur_id=$(az account show --query 'id' --output tsv 2>/dev/null)
+    cur_name=$(az account show --query 'name' --output tsv 2>/dev/null)
+
+    # Resume path: a subscription was already chosen and saved — just apply it.
+    if [[ -n "$AZURE_SUBSCRIPTION" ]]; then
+        if az account set --subscription "$AZURE_SUBSCRIPTION" 2>/dev/null; then
+            success "Using saved subscription: $AZURE_SUBSCRIPTION"
+        else
+            warn "Could not select saved subscription '$AZURE_SUBSCRIPTION'. Falling back to the active one ($cur_id)."
+            AZURE_SUBSCRIPTION="$cur_id"
+        fi
+        return
+    fi
+
+    echo ""
+    info "Subscriptions available to this account:"
+    az account list --query '[].{Name:name, SubscriptionId:id, Default:isDefault}' --output table 2>/dev/null \
+        | sed 's/^/    /' || warn "Could not list subscriptions."
+
+    echo ""
+    echo "Active subscription: ${cur_name:-<unknown>} (${cur_id:-<unknown>})"
+    local answer
+    read -p "Enter the subscription ID or name to use (press Enter to keep the active one): " answer
+
+    if [[ -z "$answer" ]]; then
+        AZURE_SUBSCRIPTION="$cur_id"
+    else
+        AZURE_SUBSCRIPTION="$answer"
+    fi
+
+    if ! az account set --subscription "$AZURE_SUBSCRIPTION" 2>&1; then
+        error "Could not switch to subscription '$AZURE_SUBSCRIPTION'. Check the ID/name and your access."
+        exit 1
+    fi
+    # Normalise to the subscription ID so it is stable across sessions.
+    AZURE_SUBSCRIPTION="$(az account show --query 'id' --output tsv 2>/dev/null || echo "$AZURE_SUBSCRIPTION")"
+    success "Subscription set to: $(az account show --query 'name' --output tsv 2>/dev/null) ($AZURE_SUBSCRIPTION)"
+}
+
 preflight_check_azure() {
     # 1) Is the Azure CLI installed?
     if ! command -v az &> /dev/null; then
@@ -329,13 +375,16 @@ preflight_check_azure() {
         echo "Detail: $account"
         exit 1
     fi
-    success "Logged in to subscription: $account"
+    success "Logged in as account: $account"
+
+    # 2b) Let the user choose which subscription to work against.
+    select_azure_subscription
 
     # 3) Prove connectivity by listing resource groups
     echo ""
     info "Checking connectivity (az group list)..."
     local groups
-    if ! groups=$(az group list --query '[].name' --output tsv 2>&1); then
+    if ! groups=$(az group list --subscription "$AZURE_SUBSCRIPTION" --query '[].name' --output tsv 2>&1); then
         error "Could not list resource groups. Check your permissions and selected subscription."
         echo "Detail: $groups"
         exit 1
@@ -543,28 +592,90 @@ phase1_detect_aws_topology() {
     esac
 }
 
-phase1_detect_azure_topology() {
+# Print a numbered menu of the given items and read the user's choice into the
+# variable named by $2. Selecting 0 (or a value not in the list) falls back to
+# manual entry. Works on bash 3.2 (macOS) — no mapfile / associative arrays.
+# Usage: pick_from_list "Prompt text" RESULT_VAR "${items[@]}"
+pick_from_list() {
+    local prompt="$1" __resultvar="$2"; shift 2
+    local -a items=("$@")
+    local i choice manual
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        read -p "$prompt (none auto-discovered — type the name): " manual
+        printf -v "$__resultvar" '%s' "$manual"
+        return
+    fi
+
     echo ""
-    read -p "Enter Azure resource group name: " AZURE_RESOURCE_GROUP
-    read -p "Enter Azure location (e.g., eastus): " AZURE_LOCATION
-    
+    echo "$prompt"
+    for i in "${!items[@]}"; do
+        printf "  %d) %s\n" "$((i + 1))" "${items[$i]}"
+    done
+    echo "  0) Enter a value manually"
+    read -p "Select a number: " choice
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#items[@]} )); then
+        printf -v "$__resultvar" '%s' "${items[$((choice - 1))]}"
+    else
+        read -p "Type the value: " manual
+        printf -v "$__resultvar" '%s' "$manual"
+    fi
+}
+
+phase1_detect_azure_topology() {
+    # --- Resource group: auto-discover and let the user pick from the list ---
+    echo ""
+    info "Discovering resource groups in the selected subscription..."
+    local -a rgs=()
+    local line
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && rgs+=("$line")
+    done < <(az group list --subscription "$AZURE_SUBSCRIPTION" --query '[].name' -o tsv 2>/dev/null | sort)
+
+    pick_from_list "Select the resource group hosting your Container Apps:" AZURE_RESOURCE_GROUP "${rgs[@]}"
+    if [[ -z "$AZURE_RESOURCE_GROUP" ]]; then
+        error "No resource group selected. Exiting."
+        exit 1
+    fi
+
+    # Derive the region automatically from the resource group (no manual prompt).
+    AZURE_LOCATION="$(az group show --name "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSCRIPTION" --query location -o tsv 2>/dev/null)"
+    [[ -n "$AZURE_LOCATION" ]] && info "Resource group region: $AZURE_LOCATION"
+
+    # --- Container Apps: auto-discover within the chosen resource group ---
+    echo ""
+    info "Discovering Container Apps in '$AZURE_RESOURCE_GROUP'..."
+    local -a apps=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && apps+=("$line")
+    done < <(az containerapp list --resource-group "$AZURE_RESOURCE_GROUP" --subscription "$AZURE_SUBSCRIPTION" --query '[].name' -o tsv 2>/dev/null | sort)
+
+    if [[ ${#apps[@]} -gt 0 ]]; then
+        success "Container Apps found: ${apps[*]}"
+    else
+        warn "No Container Apps auto-discovered in '$AZURE_RESOURCE_GROUP' — you can still enter names manually."
+    fi
+
     echo ""
     echo "How are your services deployed?"
     echo "  1) All in one Container App"
     echo "  2) Separate Container Apps (orchestrator + admin-console)"
     echo ""
     read -p "Enter choice (1 or 2): " topology_choice
-    
+
     case "$topology_choice" in
         1)
-            read -p "Enter Container App name (e.g., spotfire-copilot-services): " app_name
+            local app_name
+            pick_from_list "Select the Container App hosting the services:" app_name "${apps[@]}"
             AZURE_CONTAINER_APPS=("$app_name")
             AZURE_APP_ROLES=("both")
             info "Container App: $app_name (will validate both services)"
             ;;
         2)
-            read -p "Enter Orchestrator Container App name: " app_orch
-            read -p "Enter Admin Console Container App name: " app_admin
+            local app_orch app_admin
+            pick_from_list "Select the Orchestrator Container App:" app_orch "${apps[@]}"
+            pick_from_list "Select the Admin Console Container App:" app_admin "${apps[@]}"
             AZURE_CONTAINER_APPS=("$app_orch" "$app_admin")
             AZURE_APP_ROLES=("orchestrator" "admin")
             info "Container Apps: $app_orch (orchestrator), $app_admin (admin-console)"
@@ -1246,6 +1357,7 @@ validate_azure_container_app() {
     
     local app_json
     app_json=$(az containerapp show \
+        --subscription "$AZURE_SUBSCRIPTION" \
         --resource-group "$AZURE_RESOURCE_GROUP" \
         --name "$app_name" \
         --output json 2>&1) || {
@@ -1587,6 +1699,7 @@ aca_container_name() {
     local app="$1" want="$2"
     local app_json
     app_json=$(az containerapp show \
+        --subscription "$AZURE_SUBSCRIPTION" \
         --resource-group "$AZURE_RESOURCE_GROUP" \
         --name "$app" \
         --output json 2>/dev/null) || { echo ""; return; }
@@ -1612,6 +1725,7 @@ download_aca_logs() {
     } > "$outfile"
 
     az containerapp logs show \
+        --subscription "$AZURE_SUBSCRIPTION" \
         --name "$app" \
         --resource-group "$AZURE_RESOURCE_GROUP" \
         --container "$container" \
@@ -1865,7 +1979,7 @@ main() {
     if [[ -f "$ANSWERS_FILE" ]]; then
         echo ""
         info "Found saved answers: $ANSWERS_FILE"
-        grep -E '^(CLOUD_PLATFORM|AWS_REGION|AWS_CLUSTER|AWS_TASK_DEFINITIONS|AWS_SERVICE_NAMES|AZURE_RESOURCE_GROUP|AZURE_LOCATION|AZURE_CONTAINER_APPS|LLM_PROVIDER|HAS_ADMIN_CONSOLE)=' "$ANSWERS_FILE" 2>/dev/null | sed 's/^/    /' || true
+        grep -E '^(CLOUD_PLATFORM|AWS_REGION|AWS_CLUSTER|AWS_TASK_DEFINITIONS|AWS_SERVICE_NAMES|AZURE_SUBSCRIPTION|AZURE_RESOURCE_GROUP|AZURE_LOCATION|AZURE_CONTAINER_APPS|LLM_PROVIDER|HAS_ADMIN_CONSOLE)=' "$ANSWERS_FILE" 2>/dev/null | sed 's/^/    /' || true
         echo ""
         read -p "Resume with these saved answers? (y/n): " resume_choice
         if [[ "$resume_choice" =~ ^[Yy] ]]; then

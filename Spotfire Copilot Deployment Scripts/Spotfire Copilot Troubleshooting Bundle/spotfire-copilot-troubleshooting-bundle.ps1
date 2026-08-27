@@ -28,6 +28,26 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Invoke the Azure CLI safely and return only its stdout.
+# The 'az' CLI writes benign notices to stderr - most notably
+#   "The behavior of this command has been altered by the following
+#    extension: containerapp"
+# With $ErrorActionPreference = 'Stop', a native command writing to stderr is
+# turned into a terminating NativeCommandError (a plain 2>$null redirect does
+# NOT prevent this). This wrapper relaxes the preference locally and discards
+# stderr so only real stdout is returned. $LASTEXITCODE is still set by az.
+function Invoke-AzCli {
+    param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $AzArgs)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & az @AzArgs 2>$null
+    }
+    finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
 # Global variables
 $CloudPlatform = ""
 $AWSRegion = ""
@@ -35,6 +55,7 @@ $AWSCluster = ""
 $AWSTaskDefinitions = @()
 $AWSTaskRoles = @()
 $AWSServiceNames = @()
+$AzureSubscription = ""
 $AzureResourceGroup = ""
 $AzureLocation = ""
 $AzureContainerApps = @()
@@ -134,6 +155,7 @@ function Save-Answers {
         "AWS_TASK_DEFINITIONS=$($script:AWSTaskDefinitions -join ' ')"
         "AWS_TASK_ROLES=$($script:AWSTaskRoles -join ' ')"
         "AWS_SERVICE_NAMES=$($script:AWSServiceNames -join ' ')"
+        "AZURE_SUBSCRIPTION=$($script:AzureSubscription)"
         "AZURE_RESOURCE_GROUP=$($script:AzureResourceGroup)"
         "AZURE_LOCATION=$($script:AzureLocation)"
         "AZURE_CONTAINER_APPS=$($script:AzureContainerApps -join ' ')"
@@ -172,6 +194,7 @@ function Load-Answers {
             'AWS_TASK_DEFINITIONS' { $script:AWSTaskDefinitions = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
             'AWS_TASK_ROLES'       { $script:AWSTaskRoles = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
             'AWS_SERVICE_NAMES'    { $script:AWSServiceNames = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
+            'AZURE_SUBSCRIPTION'   { $script:AzureSubscription = $value }
             'AZURE_RESOURCE_GROUP' { $script:AzureResourceGroup = $value }
             'AZURE_LOCATION'       { $script:AzureLocation = $value }
             'AZURE_CONTAINER_APPS' { $script:AzureContainerApps = @($value -split '\s+' | Where-Object { $_ -ne '' }) }
@@ -314,6 +337,53 @@ function Preflight-CheckAws {
     Write-Success "Preflight passed - the AWS CLI can talk to your resources."
 }
 
+# Prompt the user for which Azure subscription to work against. On resume, the
+# previously-saved subscription is reused without prompting.
+function Select-AzureSubscription {
+    $curId = az account show --query 'id' --output tsv 2>$null
+    $curName = az account show --query 'name' --output tsv 2>$null
+
+    # Resume path: a subscription was already chosen and saved — just apply it.
+    if (-not [string]::IsNullOrWhiteSpace($script:AzureSubscription)) {
+        az account set --subscription $script:AzureSubscription 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Using saved subscription: $($script:AzureSubscription)"
+        }
+        else {
+            Write-Warning "Could not select saved subscription '$($script:AzureSubscription)'. Falling back to the active one ($curId)."
+            $script:AzureSubscription = $curId
+        }
+        return
+    }
+
+    Write-Host ""
+    Write-Info "Subscriptions available to this account:"
+    az account list --query '[].{Name:name, SubscriptionId:id, Default:isDefault}' --output table 2>$null |
+        ForEach-Object { Write-Host ("    " + $_) }
+
+    Write-Host ""
+    Write-Host "Active subscription: $curName ($curId)"
+    $answer = Read-Host "Enter the subscription ID or name to use (press Enter to keep the active one)"
+
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+        $script:AzureSubscription = $curId
+    }
+    else {
+        $script:AzureSubscription = $answer
+    }
+
+    az account set --subscription $script:AzureSubscription 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Could not switch to subscription '$($script:AzureSubscription)'. Check the ID/name and your access."
+        exit 1
+    }
+    # Normalise to the subscription ID so it is stable across sessions.
+    $normId = az account show --query 'id' --output tsv 2>$null
+    if ($normId) { $script:AzureSubscription = $normId }
+    $setName = az account show --query 'name' --output tsv 2>$null
+    Write-Success "Subscription set to: $setName ($($script:AzureSubscription))"
+}
+
 function Preflight-CheckAzure {
     # 1) Is the Azure CLI installed?
     if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
@@ -354,12 +424,15 @@ function Preflight-CheckAzure {
         Write-Host "Detail: $account"
         exit 1
     }
-    Write-Success "Logged in to subscription: $account"
+    Write-Success "Logged in as account: $account"
+
+    # 2b) Let the user choose which subscription to work against.
+    Select-AzureSubscription
 
     # 3) Prove connectivity by listing resource groups
     Write-Host ""
     Write-Info "Checking connectivity (az group list)..."
-    $groups = az group list --query '[].name' --output tsv 2>&1
+    $groups = az group list --subscription $script:AzureSubscription --query '[].name' --output tsv 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Could not list resource groups. Check your permissions and selected subscription."
         Write-Host "Detail: $groups"
@@ -552,29 +625,80 @@ function Phase1-DetectAWSTopology {
     }
 }
 
-function Phase1-DetectAzureTopology {
+# Print a numbered menu of the given items and return the user's choice.
+# Selecting 0 (or a value not in the list) falls back to manual entry.
+function Select-FromList {
+    param(
+        [string]$Prompt,
+        [string[]]$Items
+    )
+
+    if (-not $Items -or $Items.Count -eq 0) {
+        return (Read-Host "$Prompt (none auto-discovered - type the name)")
+    }
+
     Write-Host ""
-    $script:AzureResourceGroup = Read-Host "Enter Azure resource group name"
-    $script:AzureLocation = Read-Host "Enter Azure location (e.g., eastus)"
-    
+    Write-Host $Prompt
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        Write-Host ("  {0}) {1}" -f ($i + 1), $Items[$i])
+    }
+    Write-Host "  0) Enter a value manually"
+    $choice = Read-Host "Select a number"
+
+    if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $Items.Count) {
+        return $Items[[int]$choice - 1]
+    }
+    return (Read-Host "Type the value")
+}
+
+function Phase1-DetectAzureTopology {
+    # --- Resource group: auto-discover and let the user pick from the list ---
+    Write-Host ""
+    Write-Info "Discovering resource groups in the selected subscription..."
+    $rgs = @(az group list --subscription $script:AzureSubscription --query '[].name' -o tsv 2>$null |
+        Where-Object { $_ } | Sort-Object)
+
+    $script:AzureResourceGroup = Select-FromList -Prompt "Select the resource group hosting your Container Apps:" -Items $rgs
+    if ([string]::IsNullOrWhiteSpace($script:AzureResourceGroup)) {
+        Write-Error "No resource group selected. Exiting."
+        exit 1
+    }
+
+    # Derive the region automatically from the resource group (no manual prompt).
+    $script:AzureLocation = az group show --name $script:AzureResourceGroup --subscription $script:AzureSubscription --query location -o tsv 2>$null
+    if ($script:AzureLocation) { Write-Info "Resource group region: $($script:AzureLocation)" }
+
+    # --- Container Apps: auto-discover within the chosen resource group ---
+    Write-Host ""
+    Write-Info "Discovering Container Apps in '$($script:AzureResourceGroup)'..."
+    $apps = @(Invoke-AzCli containerapp list --resource-group $script:AzureResourceGroup --subscription $script:AzureSubscription --query '[].name' -o tsv |
+        Where-Object { $_ } | Sort-Object)
+
+    if ($apps.Count -gt 0) {
+        Write-Success "Container Apps found: $($apps -join ', ')"
+    }
+    else {
+        Write-Warning "No Container Apps auto-discovered in '$($script:AzureResourceGroup)' - you can still enter names manually."
+    }
+
     Write-Host ""
     Write-Host "How are your services deployed?"
     Write-Host "  1) All in one Container App"
     Write-Host "  2) Separate Container Apps (orchestrator + admin-console)"
     Write-Host ""
-    
+
     $topologyChoice = Read-Choice -Prompt "Enter choice (1 or 2)" -MaxChoice 2
-    
+
     switch ($topologyChoice) {
         1 {
-            $appName = Read-Host "Enter Container App name (e.g., spotfire-copilot-services)"
+            $appName = Select-FromList -Prompt "Select the Container App hosting the services:" -Items $apps
             $script:AzureContainerApps = @($appName)
             $script:AzureAppRoles = @("both")
             Write-Info "Container App: $appName (will validate both services)"
         }
         2 {
-            $appOrch = Read-Host "Enter Orchestrator Container App name"
-            $appAdmin = Read-Host "Enter Admin Console Container App name"
+            $appOrch = Select-FromList -Prompt "Select the Orchestrator Container App:" -Items $apps
+            $appAdmin = Select-FromList -Prompt "Select the Admin Console Container App:" -Items $apps
             $script:AzureContainerApps = @($appOrch, $appAdmin)
             $script:AzureAppRoles = @("orchestrator", "admin")
             Write-Info "Container Apps: $appOrch (orchestrator), $appAdmin (admin-console)"
@@ -1242,7 +1366,8 @@ function Validate-AzureContainerApp {
     Write-Info "Fetching Container App: $AppName"
     
     try {
-        $appJson = az containerapp show `
+        $appJson = Invoke-AzCli containerapp show `
+            --subscription $script:AzureSubscription `
             --resource-group $script:AzureResourceGroup `
             --name $AppName `
             --output json | ConvertFrom-Json
@@ -1536,7 +1661,8 @@ function Download-EcsLogsFromTaskDef {
 function Get-AcaContainerName {
     param([string]$App, [string]$Want)
     try {
-        $appJson = az containerapp show `
+        $appJson = Invoke-AzCli containerapp show `
+            --subscription $script:AzureSubscription `
             --resource-group $script:AzureResourceGroup `
             --name $App `
             --output json | ConvertFrom-Json
@@ -1566,6 +1692,7 @@ function Download-AcaLogs {
     $header | Set-Content -Path $outfile -Encoding UTF8
 
     $logs = az containerapp logs show `
+        --subscription $script:AzureSubscription `
         --name $App `
         --resource-group $script:AzureResourceGroup `
         --container $Container `
@@ -1812,7 +1939,7 @@ function Main {
         Write-Host ""
         Write-Info "Found saved answers: $($script:AnswersFile)"
         Get-Content $script:AnswersFile |
-            Where-Object { $_ -match '^(CLOUD_PLATFORM|AWS_REGION|AWS_CLUSTER|AWS_TASK_DEFINITIONS|AWS_SERVICE_NAMES|AZURE_RESOURCE_GROUP|AZURE_LOCATION|AZURE_CONTAINER_APPS|LLM_PROVIDER|HAS_ADMIN_CONSOLE)=' } |
+            Where-Object { $_ -match '^(CLOUD_PLATFORM|AWS_REGION|AWS_CLUSTER|AWS_TASK_DEFINITIONS|AWS_SERVICE_NAMES|AZURE_SUBSCRIPTION|AZURE_RESOURCE_GROUP|AZURE_LOCATION|AZURE_CONTAINER_APPS|LLM_PROVIDER|HAS_ADMIN_CONSOLE)=' } |
             ForEach-Object { Write-Host "    $_" }
         Write-Host ""
         $resume = Read-Host "Resume with these saved answers? (y/n)"
