@@ -49,6 +49,7 @@
   - [Cloud storage sources](#cloud-storage-sources)
 - [8. Step 5 — Deploy](#8-step-5--deploy)
   - [Quick start (OpenAI + Zilliz)](#quick-start-openai--zilliz)
+  - [Cloud deployment (AWS ECS / Azure Container Apps)](#cloud-deployment-aws-ecs--azure-container-apps)
 - [9. Step 6 — Load Documents via the API](#9-step-6--load-documents-via-the-api)
   - [Authenticate first](#authenticate-first)
   - [Register a client (optional)](#register-a-client-optional)
@@ -347,13 +348,23 @@ REDIS_URL=redis://your-redis-host:6379
 
 ### Azure Cognitive Search
 
-```bash
-VECTORDB_PLUGIN_ENTRY_POINT=plugins.vectordbs.az_cog_search:ACognitiveSearchRetrieverPlugin
+> **Azure Cognitive Search uses dedicated loader images**, not the generic
+> `VECTORDB_PLUGIN_ENTRY_POINT` mechanism. Use the **`azcog-data-loader-pdf`** image
+> (PDFs from a mounted `/docs` directory) or **`azcog-data-loader-azblob`** (documents
+> pulled straight from Azure Blob Storage). These images write to the index over the
+> Azure Search REST API and do **not** read the model / embeddings / vectordb plugin
+> entry points. The generic `data-loader-pdf-pypdf` / `-unstruct` images can only
+> *retrieve* from Azure Cognitive Search at query time — they cannot load into it.
 
-AZURE_COGNITIVE_SEARCH_SERVICE_NAME=your-search-service-name
-AZURE_COGNITIVE_SEARCH_API_KEY=your-search-api-key
+```bash
+# Use image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.4
 AZSEARCH_EP=https://your-service.search.windows.net/
 AZSEARCH_KEY=your-search-key
+
+# Embeddings — Azure OpenAI (falls back to OpenAI if AZURE_OPENAI_ENDPOINT is unset)
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-azure-openai-key
+OPENAI_API_VERSION=2024-02-15-preview
 ```
 
 ### Vertex AI Vector Search
@@ -528,6 +539,246 @@ docker compose ps
 # Check logs
 docker compose logs -f data-loader
 ```
+
+### Cloud deployment (AWS ECS / Azure Container Apps)
+
+The Data Loader is a **transient, run-once workload** — you start it, call its `/load`
+endpoints to populate the vector database, then shut it down. Unlike the Orchestrator, it
+does **not** need to run permanently. That changes how you deploy it in the cloud:
+
+- **Run it only as long as you need it.** Start the task/app, load your documents, then
+  delete it so you stop paying for idle compute. Re-create it later when you need to load
+  more documents (for example, after adding new PDFs or upgrading the image).
+- **Secrets go in the platform secret store**, not a `.env` file — `SECRET_KEY`,
+  `HASHED_ADMIN_PASSWORD`, and your LLM + vector-DB credentials. Use the same patterns as
+  the Orchestrator: see the [Backend Setup guide → Managing Environment Variables in the
+  Cloud](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md#managing-environment-variables-in-the-cloud)
+  and the [OCI registry image-pull secret](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md#61-pulling-the-docker-images)
+  guidance (the Data Loader images live in the same `copilotoci.azurecr.io/spotfirecopilot/`
+  registry and need the same pull credentials).
+- **The `/docs` volume is the only real difference from the Orchestrator.** A cloud
+  container has no local folder to bind-mount, so pick one of these for your own PDFs:
+
+| Approach | When to use |
+|---|---|
+| **Bundled Spotfire docs only** (`/load_spotfire_docs`) | You only need Copilot Help/HowTo. The PDFs are baked into the image — **no volume or storage needed**. This is the simplest cloud path. |
+| **Bake your PDFs into a custom image** | Small, static document sets. Build `FROM` the loader image, `COPY` your PDFs into `/docs`, push to your registry, and deploy that image. |
+| **Mount a cloud file share at `/docs`** | Larger or changing document sets. Use **Amazon EFS** (ECS) or **Azure Files** (Container Apps). |
+| **Pull from cloud object storage** | Azure Cognitive Search targets only. Use the `azcog-data-loader-azblob` image to read straight from Azure Blob Storage — no `/docs` mount required. |
+
+> **Tip — only need Help/HowTo?** If you are just enabling Copilot's built-in Help and
+> HowTo, deploy the loader with **no volume at all**, call `/load_spotfire_docs`, then
+> delete it. You never touch `/docs`.
+
+#### AWS ECS / Fargate
+
+Run the loader as a one-off **Fargate task**. Store secrets in AWS Secrets Manager and (if
+you need your own PDFs) mount an EFS file system at `/docs`.
+
+```json
+{
+  "family": "copilot-data-loader",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "taskRoleArn": "arn:aws:iam::...:role/copilot-data-loader-task-role",
+  "executionRoleArn": "arn:aws:iam::...:role/ecsTaskExecutionRole",
+  "volumes": [
+    {
+      "name": "docs",
+      "efsVolumeConfiguration": { "fileSystemId": "fs-0123456789abcdef0", "rootDirectory": "/pdf_docs" }
+    }
+  ],
+  "containerDefinitions": [
+    {
+      "name": "data-loader",
+      "image": "copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4",
+      "portMappings": [{ "containerPort": 8080 }],
+      "mountPoints": [{ "sourceVolume": "docs", "containerPath": "/docs", "readOnly": true }],
+      "environment": [
+        { "name": "LOG_LEVEL", "value": "INFO" },
+        { "name": "VECTORDB_PLUGIN_ENTRY_POINT", "value": "plugins.vectordbs.milvus:MilvusRetrieverPlugin" },
+        { "name": "MODEL_PLUGIN_ENTRY_POINT", "value": "plugins.models.bedrock:BedrockPlugin" },
+        { "name": "EMBEDDINGS_PLUGIN_ENTRY_POINT", "value": "plugins.embeddings.bedrock:BedrockEmbeddingsPlugin" },
+        { "name": "AWS_REGION", "value": "us-east-1" },
+        { "name": "EMBEDDING_MODEL_NAME", "value": "amazon.titan-embed-text-v2:0" },
+        { "name": "VECTORDB_URI", "value": "http://your-milvus-host:19530" }
+      ],
+      "secrets": [
+        { "name": "SECRET_KEY", "valueFrom": "arn:aws:secretsmanager:...:secret:copilot/secret-key" },
+        { "name": "HASHED_ADMIN_PASSWORD", "valueFrom": "arn:aws:secretsmanager:...:secret:copilot/hashed-admin-pw" },
+        { "name": "VECTORDB_TOKEN", "valueFrom": "arn:aws:secretsmanager:...:secret:copilot/vectordb-token" }
+      ]
+    }
+  ]
+}
+```
+
+> **IAM task role.** Give the task role the same LLM/vector-DB permissions the Orchestrator
+> uses (e.g. `bedrock:InvokeModel` for Bedrock embeddings) plus
+> `secretsmanager:GetSecretValue` for the secrets above. When using an IAM task role, do
+> **not** set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — only `AWS_REGION`.
+
+> **EFS on Fargate needs platform `1.4.0` or later.** The `efsVolumeConfiguration` mount
+> above only works on Fargate platform version 1.4.0+ — pass `--platform-version 1.4.0`
+> on `run-task` (shown below). For tighter access control you can also point
+> `efsVolumeConfiguration` at an EFS **access point** and enable
+> `transitEncryption: "ENABLED"`. Omit the `volumes`/`mountPoints` entirely if you only
+> call `/load_spotfire_docs`.
+
+Register the task, run it, load documents, then stop it:
+
+```bash
+# 1. Register and run the task
+aws ecs register-task-definition --cli-input-json file://data-loader-task.json
+aws ecs run-task --cluster copilot --task-definition copilot-data-loader \
+  --launch-type FARGATE \
+  --platform-version 1.4.0 \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-...],securityGroups=[sg-...],assignPublicIp=ENABLED}"
+
+# 2. Find the task's public IP (or put it behind an ALB) and call the API — see §9.
+#    Load the bundled Spotfire docs and/or your own /docs, e.g.:
+#      curl -X POST http://<TASK_IP>:8080/load_spotfire_docs -H "Authorization: Bearer <token>"
+
+# 3. When loading is complete, stop the task so it stops incurring cost
+aws ecs stop-task --cluster copilot --task <task-arn>
+```
+
+#### Azure Container Apps
+
+Deploy the loader as a Container App with external ingress on port `8080`, call its API,
+then delete it. Store secrets as Key Vault references; for your own PDFs, mount an Azure
+Files share at `/docs`. This example targets **Azure Cognitive Search**, so it uses the
+dedicated `azcog-data-loader-pdf` image — the generic `data-loader-pdf-pypdf` image
+exposes the `az_cog_search` plugin for *retrieval only* and cannot write to an index.
+
+```bash
+az containerapp create \
+  --name copilot-data-loader \
+  --resource-group SpotfireCopilot \
+  --environment copilot-env \
+  --image copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.4 \
+  --target-port 8080 \
+  --ingress external \
+  --min-replicas 1 --max-replicas 1 \
+  --secrets \
+    secret-key=keyvaultref:https://copilot-kv.vault.azure.net/secrets/secret-key,identityref:/subscriptions/.../managedIdentities/copilot-id \
+    hashed-admin-pw=keyvaultref:https://copilot-kv.vault.azure.net/secrets/hashed-admin-pw,identityref:... \
+    openai-key=keyvaultref:https://copilot-kv.vault.azure.net/secrets/openai-api-key,identityref:... \
+    azsearch-key=keyvaultref:https://copilot-kv.vault.azure.net/secrets/azsearch-key,identityref:... \
+  --env-vars \
+    LOG_LEVEL=INFO \
+    SECRET_KEY=secretref:secret-key \
+    HASHED_ADMIN_PASSWORD=secretref:hashed-admin-pw \
+    AZSEARCH_EP=https://your-search-service.search.windows.net/ \
+    AZSEARCH_KEY=secretref:azsearch-key \
+    AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/ \
+    AZURE_OPENAI_API_KEY=secretref:openai-key \
+    OPENAI_API_VERSION=2024-02-15-preview
+```
+
+To mount your own PDFs at `/docs`, you need an Azure Files share holding the PDFs,
+registered on the Container Apps **environment**, then attached to the app as a volume.
+Container Apps does not expose volume mounts through `az containerapp create` flags, so
+the mount itself is applied with a small YAML patch. **Skip this whole block if you only
+call `/load_spotfire_docs`** — the bundled docs are already inside the image and need no
+volume.
+
+**1. Create the file share and upload your PDFs** (skip if you already have one):
+
+> **Use a *classic* Azure file share.** Azure Container Apps mounts only classic file
+> shares (the `Microsoft.Storage/storageAccounts/fileServices/shares` type created inside
+> a storage account) — which is exactly what `az storage share create` below produces. It
+> does **not** support the newer top-level `Microsoft.FileShares` resource.
+
+```bash
+# Create a storage account and an Azure Files share
+az storage account create \
+  --name copilotdocs$RANDOM \
+  --resource-group SpotfireCopilot \
+  --location eastus \
+  --sku Standard_LRS
+
+# Capture the account name and key
+STORAGE_ACCOUNT=$(az storage account list \
+  --resource-group SpotfireCopilot \
+  --query "[?starts_with(name,'copilotdocs')].name | [0]" -o tsv)
+STORAGE_KEY=$(az storage account keys list \
+  --resource-group SpotfireCopilot \
+  --account-name "$STORAGE_ACCOUNT" \
+  --query "[0].value" -o tsv)
+
+# Create the share and upload every local PDF into it
+az storage share create \
+  --name pdf-docs \
+  --account-name "$STORAGE_ACCOUNT" \
+  --account-key "$STORAGE_KEY"
+
+az storage file upload-batch \
+  --destination pdf-docs \
+  --source ./pdf_docs \
+  --pattern "*.pdf" \
+  --account-name "$STORAGE_ACCOUNT" \
+  --account-key "$STORAGE_KEY"
+```
+
+**2. Register the share on the Container Apps environment:**
+
+```bash
+az containerapp env storage set \
+  --name copilot-env --resource-group SpotfireCopilot \
+  --storage-name docs \
+  --azure-file-account-name "$STORAGE_ACCOUNT" \
+  --azure-file-account-key "$STORAGE_KEY" \
+  --azure-file-share-name pdf-docs \
+  --access-mode ReadOnly
+```
+
+**3. Attach the volume to the app.** Save the following as `data-loader-volume.yaml`
+(the `storageName` must match the `--storage-name` from step 2, and `volumeName` must
+match on both the volume and the mount):
+
+```yaml
+properties:
+  template:
+    containers:
+      - name: copilot-data-loader
+        image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+        volumeMounts:
+          - volumeName: docs
+            mountPath: /docs
+    volumes:
+      - name: docs
+        storageType: AzureFile
+        storageName: docs
+```
+
+Then apply the patch — this creates a new revision with `/docs` mounted read-only:
+
+```bash
+az containerapp update \
+  --name copilot-data-loader \
+  --resource-group SpotfireCopilot \
+  --yaml data-loader-volume.yaml
+```
+
+> **Portal alternative.** Register the share on the **environment** first (Container Apps
+> environment → **Settings → Volume mounts → Add**, choose the `docs` file share). Then on
+> the app, create a new revision (**Revisions and replicas → Create new revision**), add
+> the `docs` volume on the **Volumes** tab, and map it to mount path `/docs` under the
+> container's **Volume mounts** tab before creating the revision.
+
+Load documents (see **[§9](#9-step-6--load-documents-via-the-api)**) against the app's
+ingress FQDN, then delete the app:
+
+```bash
+az containerapp delete --name copilot-data-loader --resource-group SpotfireCopilot --yes
+```
+
+> **Azure Cognitive Search shortcut.** To skip volumes entirely, use the
+> `azcog-data-loader-azblob` image and set `AZURE_STORAGE_CONNECTION` — the loader reads
+> PDFs directly from Azure Blob Storage instead of `/docs`.
 
 ---
 
@@ -787,7 +1038,7 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 | Milvus | `plugins.vectordbs.milvus:MilvusRetrieverPlugin` | pypdf, unstruct |
 | MongoDB Atlas | `plugins.vectordbs.mongo:MongoRetrieverPlugin` | pypdf, unstruct |
 | Redis | `plugins.vectordbs.redis:RedisRetrieverPlugin` | pypdf, unstruct |
-| Azure Cognitive Search | `plugins.vectordbs.az_cog_search:ACognitiveSearchRetrieverPlugin` | pypdf, unstruct |
+| Azure Cognitive Search | *No loader plugin* — use the dedicated `azcog-data-loader-pdf` / `azcog-data-loader-azblob` images | — |
 | Vertex AI Vector Search | `plugins.vectordbs.vertexai_vector_search:VertexAIVectorSearchRetrieverPlugin` | pypdf, unstruct |
 | Databricks | `plugins.vectordbs.databricks:DatabricksRetrieverPlugin` | pypdf only |
 | PostgreSQL pgvector | `plugins.vectordbs.pgvector:PgVectorRetrieverPlugin` | pypdf, unstruct |
@@ -795,6 +1046,13 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 > **Note:** Qdrant is not supported via the plugin system in data loaders. Use Qdrant's
 > native import tools or LangChain's Qdrant integration to load data, then query it at
 > runtime via the Orchestrator's `plugins.retrievers.qdrant:QdrantRetrieverPlugin`.
+
+> **Note:** Azure Cognitive Search is loaded by the dedicated `azcog-data-loader-pdf` and
+> `azcog-data-loader-azblob` images, which write to the index over the Azure Search REST
+> API and read only `AZSEARCH_EP` / `AZSEARCH_KEY` plus the Azure OpenAI embeddings vars
+> (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `OPENAI_API_VERSION`). The generic
+> `data-loader-pdf-*` images expose the `az_cog_search` plugin for *retrieval only*
+> (Orchestrator query time) and cannot load into Azure Cognitive Search.
 
 **LLM models:**
 
@@ -885,12 +1143,20 @@ services:
       VECTORDB_TOKEN: ${VECTORDB_TOKEN}
 ```
 
-### Azure OpenAI + Azure Cognitive Search
+### Azure OpenAI embeddings + Azure Cognitive Search
+
+> Azure Cognitive Search uses the dedicated **`azcog-data-loader-pdf`** image (REST-based
+> loader), not the generic `data-loader-pdf-pypdf` image. It reads only the variables
+> below — it does **not** use `VECTORDB_PLUGIN_ENTRY_POINT` / `MODEL_PLUGIN_ENTRY_POINT` /
+> `EMBEDDINGS_PLUGIN_ENTRY_POINT`, `AZURE_COGNITIVE_SEARCH_*`, `MODEL_NAME`, or
+> `EMBEDDING_MODEL_NAME`. To pull documents straight from Azure Blob Storage instead of a
+> mounted `/docs` folder, use the `azcog-data-loader-azblob` image with
+> `AZURE_STORAGE_CONNECTION`.
 
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.4
     ports:
       - 8080:8080
     container_name: data-loader
@@ -902,19 +1168,11 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       ACCESS_TOKEN_EXPIRE_DAYS: ${ACCESS_TOKEN_EXPIRE_DAYS}
       HASHED_ADMIN_PASSWORD: ${HASHED_ADMIN_PASSWORD}
-      VECTORDB_PLUGIN_ENTRY_POINT: plugins.vectordbs.az_cog_search:ACognitiveSearchRetrieverPlugin
-      MODEL_PLUGIN_ENTRY_POINT: plugins.models.az_openai:AzOpenAIPlugin
-      EMBEDDINGS_PLUGIN_ENTRY_POINT: plugins.embeddings.az_openai:AzOpenAIEmbeddingsPlugin
-      OPENAI_API_TYPE: azure
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_API_VERSION: ${OPENAI_API_VERSION}
-      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
-      MODEL_NAME: ${MODEL_NAME}
-      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME}
-      AZURE_COGNITIVE_SEARCH_SERVICE_NAME: ${AZURE_COGNITIVE_SEARCH_SERVICE_NAME}
-      AZURE_COGNITIVE_SEARCH_API_KEY: ${AZURE_COGNITIVE_SEARCH_API_KEY}
       AZSEARCH_EP: ${AZSEARCH_EP}
       AZSEARCH_KEY: ${AZSEARCH_KEY}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      OPENAI_API_VERSION: ${OPENAI_API_VERSION}
 ```
 
 ### AWS Bedrock + Milvus

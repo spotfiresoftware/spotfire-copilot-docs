@@ -1899,7 +1899,7 @@ AZSEARCH_KEY=$($script:AZSEARCH_KEY)
 "@
             $script:VECTOR_BLOCK_DL = @"
 # REQUIRED: Vector DB writer plugin used by Data Loader for Azure AI Search.
-VECTORDB_PLUGIN_ENTRY_POINT=plugins.vectordbs.az_cog_search:ACognitiveSearchRetrieverPlugin
+VECTORDB_PLUGIN_ENTRY_POINT=plugins.vectordbs.az_cog_search:AzCognitiveSearchRetrieverPlugin
 # REQUIRED: Azure AI Search service name.
 AZURE_COGNITIVE_SEARCH_SERVICE_NAME=$($script:AZURE_COGNITIVE_SEARCH_SERVICE_NAME)
 # REQUIRED: Azure AI Search API key.

@@ -36,12 +36,21 @@ $ErrorActionPreference = "Stop"
 # turned into a terminating NativeCommandError (a plain 2>$null redirect does
 # NOT prevent this). This wrapper relaxes the preference locally and discards
 # stderr so only real stdout is returned. $LASTEXITCODE is still set by az.
+# NOTE: This is intentionally a *simple* function that reads the automatic
+# $args variable rather than declaring a [Parameter(...)] block. Declaring a
+# parameter turns this into an *advanced* function, which silently gains the
+# PowerShell common parameters (-OutVariable, -OutBuffer, ...). That makes an
+# Azure CLI short flag like '-o tsv' bind against the function instead of being
+# passed through to az, failing with:
+#   "the parameter name 'o' is ambiguous. Possible matches include:
+#    -OutVariable -OutBuffer."
+# Using $args keeps every argument (including '-o') opaque to PowerShell so it
+# is forwarded verbatim to the az CLI.
 function Invoke-AzCli {
-    param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $AzArgs)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & az @AzArgs 2>$null
+        & az @args 2>$null
     }
     finally {
         $ErrorActionPreference = $prev
