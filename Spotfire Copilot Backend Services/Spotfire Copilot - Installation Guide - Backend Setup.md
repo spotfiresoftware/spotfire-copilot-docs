@@ -1,8 +1,8 @@
 # Spotfire Copilot™ Installation Guide — Backend Setup
 
-> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, and 2.3.5 &nbsp;|&nbsp; **Last updated:** 29 June 2026 &nbsp;|&nbsp; **Applies to:** Orchestrator Service
+> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, 2.3.5, and 2.3.7 &nbsp;|&nbsp; **Last updated:** 8 September 2026 &nbsp;|&nbsp; **Applies to:** Orchestrator Service
 >
-> This guide covers backend versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, and **2.3.5**. New configuration introduced in 2.3.1, 2.3.2, and 2.3.4 is called out inline and summarised in **[Appendix D](#appendix-d--release-notes) — Release notes** at the end of this guide. **2.3.5 is a security release for the Admin Console** — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**.
+> This guide covers backend versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, **2.3.5**, and **2.3.7**. New configuration introduced in 2.3.1, 2.3.2, and 2.3.4 is called out inline and summarised in **[Appendix D](#appendix-d--release-notes) — Release notes** at the end of this guide. **2.3.5 is a security release for the Admin Console** — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**. **2.3.7 is the current latest orchestrator release** and is a drop-in replacement for 2.3.0–2.3.6.
 >
 > **Tip — prefer a guided install?** Rather than hand-writing your `.env` and `docker-compose.yml`, you can run the interactive installer documented in the [Backend Deployment Scripts User Guide](../Spotfire%20Copilot%20Deployment%20Scripts/Spotfire%20Copilot%20-%20Backend%20Deployment%20Scripts%20User%20Guide.md). It walks you through credentials, LLM provider, knowledge base, and Docker or Kubernetes output. This guide remains the reference for what each setting does.
 
@@ -116,9 +116,9 @@
 
 | Component | Latest Version | Notes |
 |-----------|---------------|-------|
-| **Orchestrator (backend)** | **2.3.5** | Drop-in replacement for 2.3.0–2.3.4 (no breaking changes, no required migrations). **Security release — operators running the Admin Console are strongly recommended to upgrade to 2.3.5.** See **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**. Still **required for GPT-5.x or o-series (`o1` / `o3` / `o4`) Azure OpenAI deployments** — set `OPENAI_GPT5_COMPATIBLE=true` (introduced in 2.3.4) in addition to upgrading the image. Existing deployments on GPT-4o, Claude, Bedrock, Gemini, Vertex AI, Mistral, Ollama, Cohere, Hugging Face, or NVIDIA NIM continue to be supported. See **[§11](#11-environment-variable-reference) Environment Variable Reference → GPT-5+ / o-series deployment flag** and **[Appendix D](#appendix-d--release-notes) — Release notes**. |
-| [**Data loaders**](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md) | **2.3.4** | Existing deployments on 2.3.2 or later do not need to upgrade. |
-| [**Spotfire client packages**](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md) | **2.3.4** | Compatible with the 2.3.0, 2.3.1, 2.3.2, and 2.3.4 backends. |
+| **Orchestrator (backend)** | **2.3.7** | Drop-in replacement for 2.3.0–2.3.6 (no breaking changes, no required migrations). **Operators running the Admin Console should be on 2.3.5 or later** — 2.3.5 was a security release for the Admin Console. See **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**. Still **required for GPT-5.x or o-series (`o1` / `o3` / `o4`) Azure OpenAI deployments** — set `OPENAI_GPT5_COMPATIBLE=true` (introduced in 2.3.4) in addition to upgrading the image. Existing deployments on GPT-4o, Claude, Bedrock, Gemini, Vertex AI, Mistral, Ollama, Cohere, Hugging Face, or NVIDIA NIM continue to be supported. See **[§11](#11-environment-variable-reference) Environment Variable Reference → GPT-5+ / o-series deployment flag** and **[Appendix D](#appendix-d--release-notes) — Release notes**. |
+| [**Data loaders**](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md) | **2.3.7** | Existing deployments on 2.3.2 or later do not need to upgrade. |
+| [**Spotfire client packages**](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md) | **2.3.6** | Compatible with the 2.3.0 through 2.3.7 backends. |
 | [**Ecosystem Agent Server**](../Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/README.md) | **1.0.4** | *Optional.* Ecosystem integration agents (Databricks, Snowflake, OSDU, and more) hosted on a LangGraph DeepAgents server — [Licensed](https://community.spotfire.com/articles/spotfire/langgraph-deepagents-server-licensed-deployment-guide/) or [OSS](https://community.spotfire.com/articles/spotfire/langgraph-deepagents-server-oss-deployment-guide/). See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
 | [**Ecosystem Agent MCP Servers**](../Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/mcp-servers/README.md) | **1.1.0** | *Optional.* MCP servers that back the ecosystem agents (OSDU, Databricks, Data Virtualization, and more), exposing tools over `streamable-http`. See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
 | [**Agent Registry Toolkit**](../Spotfire%20Copilot%20Agent%20Registry%20Toolkit/Spotfire%20Copilot%20-%20Agent%20Registry%20Toolkit%20User%20Guide.md) | **1.1.0** | *Optional.* Build and serve your own domain-targeted agents; the same container also hosts industry-vertical agents such as Well Recompletions. See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
@@ -181,7 +181,7 @@ The backend is **two services from one Docker image**, sharing one PostgreSQL da
 |---|---|---|
 | **Purpose** | LLM inference, conversation persistence, RAG retrieval, OAuth2 token issuance, agent routing | Web UI for user / OAuth2-client management, conversation monitoring, knowledge-base inspection, system diagnostics |
 | **Required?** | **Yes** — Spotfire clients depend on it | No — orchestrator is fully usable on its own via the REST API |
-| **Image** | `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4` | Same image |
+| **Image** | `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7` | Same image |
 | **Startup command** | *(default — no override)* | `python /app/admin_console/admin_main.py` |
 | **Container port** | `8080` | `8081` |
 | **Health check** | `GET /` → `200` *(note: there is no `/health` path)* | `GET /health` → `200` *(note: `/` returns `302 → /login`)* |
@@ -536,13 +536,13 @@ Defaults work for most deployments. To tune retrieval (chunks per query, score t
 
 ## 6. Step 4 — Deploy
 
-> **Image references in the examples below assume 2.3.4 (latest).** All snippets pull from
-> `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4`. You must have already
+> **Image references in the examples below assume 2.3.7 (latest).** All snippets pull from
+> `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7`. You must have already
 > logged in to the registry with credentials issued by Spotfire Support — see
 > **[§6.1](#61-pulling-the-docker-images) Pulling the Docker Images** below and the
 > [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
 >
-> **Already on 2.3.2?** You only need to redeploy with the 2.3.4 image tag if you use a GPT-5.x or o-series (`o1` / `o3` / `o4`) Azure OpenAI deployment. Otherwise 2.3.2 is fully supported — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.4**.
+> **Already on 2.3.2?** You only need to redeploy with the 2.3.7 image tag if you use a GPT-5.x or o-series (`o1` / `o3` / `o4`) Azure OpenAI deployment. Otherwise 2.3.2 is fully supported — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.4**.
 >
 > **Deploying 2.3.0?** Substitute `public.ecr.aws/tds/llm-orchestrator:2.3.0` for the image
 > in every snippet and omit any registry-credential / image-pull-secret configuration
@@ -564,12 +564,12 @@ The container image source depends on the version you are installing.
 
 | Version | Registry | Authentication | Reference |
 |---|---|---|---|
-| **2.3.4** *(latest — use for new deployments)* | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
+| **2.3.7** *(latest — use for new deployments)* | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
 | **2.3.2** *(previous release — fully supported)* | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
 | **2.3.1** | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
 | **2.3.0** | `public.ecr.aws/tds/` (Amazon ECR Public) | None — anonymous pull | n/a |
 
-#### 2.3.4 / 2.3.2 / 2.3.1 — OCI registry
+#### 2.3.7 / 2.3.4 / 2.3.2 / 2.3.1 — OCI registry
 
 Starting with 2.3.1, all Spotfire Copilot container images are distributed via an OCI registry hosted in Azure Container Registry. **You must obtain credentials before deploying.**
 
@@ -580,14 +580,14 @@ Starting with 2.3.1, all Spotfire Copilot container images are distributed via a
    # (optional, for Helm-based deployments)
    helm registry login copilotoci.azurecr.io
    ```
-3. **Pull the images** (substitute the tag for the version you want — `2.3.4` for new deployments):
+3. **Pull the images** (substitute the tag for the version you want — `2.3.7` for new deployments):
    ```bash
    # Orchestrator (also used for the admin console — same image)
-   docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4
+   docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7
 
   # Data loaders (pull only the ones you need)
-  docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
-  docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.4
+  docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
+  docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.7
    ```
 
 For login command details, version policy, troubleshooting registry auth errors, and the complete artifact catalog, consult the [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
@@ -619,11 +619,11 @@ docker pull public.ecr.aws/tds/llm-orchestrator:2.3.0
 If your deployment environment cannot reach the upstream registry, pull on an internet-connected machine, then retag and push to your internal registry:
 
 ```bash
-# 2.3.4 (latest)
+# 2.3.7 (latest)
 docker login copilotoci.azurecr.io
-docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4
-docker tag  copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4 your-registry.example.com/llm-orchestrator:2.3.4
-docker push your-registry.example.com/llm-orchestrator:2.3.4
+docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7
+docker tag  copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 your-registry.example.com/llm-orchestrator:2.3.7
+docker push your-registry.example.com/llm-orchestrator:2.3.7
 
 # 2.3.2 (previous release — still supported)
 docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.2
@@ -731,7 +731,7 @@ az containerapp create \
   --name orch-orchestrator \
   --resource-group SpotfireCopilot \
   --environment copilot-env \
-  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4 \
+  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
   --target-port 8080 \
   --ingress external \
   --min-replicas 1 \
@@ -764,7 +764,7 @@ az containerapp create \
   --name orch-console \
   --resource-group SpotfireCopilot \
   --environment copilot-env \
-  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4 \
+  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
   --target-port 8081 \
   --ingress external \
   --min-replicas 1 \
@@ -826,7 +826,7 @@ gcloud secrets add-iam-policy-binding secret-key \
 
 ```bash
 gcloud run deploy llm-orchestrator \
-  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4 \
+  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
   --port 8080 \
   --set-env-vars \
     MODEL_PLUGIN_ENTRY_POINT=plugins.models.vertexai_enhanced:VertexAIPlugin,\
@@ -853,7 +853,7 @@ gcloud run deploy llm-orchestrator \
 
 ```bash
 gcloud run deploy llm-orchestrator-console \
-  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4 \
+  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
   --port 8081 \
   --command "python","/app/admin_console/admin_main.py" \
   --set-env-vars \
@@ -949,7 +949,7 @@ Create an ECS task role with the following permissions:
   "containerDefinitions": [
     {
       "name": "orchestrator",
-      "image": "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4",
+      "image": "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7",
       "portMappings": [{ "containerPort": 8080 }],
       "environment": [
         { "name": "MODEL_PLUGIN_ENTRY_POINT", "value": "plugins.models.bedrock_enhanced:BedrockPlugin" },
@@ -990,7 +990,7 @@ Use the same image but override the command and port:
   "containerDefinitions": [
     {
       "name": "admin-console",
-      "image": "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4",
+      "image": "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7",
       "command": ["python", "/app/admin_console/admin_main.py"],
       "portMappings": [{ "containerPort": 8081 }],
       "environment": [
@@ -1091,7 +1091,7 @@ spec:
     spec:
       containers:
         - name: orchestrator
-          image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4
+          image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7
           ports:
             - containerPort: 8080
           envFrom:
@@ -1142,7 +1142,7 @@ spec:
     spec:
       containers:
         - name: admin-console
-          image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4
+          image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7
           command: ["python", "/app/admin_console/admin_main.py"]
           ports:
             - containerPort: 8081
@@ -1342,7 +1342,7 @@ docker run --rm \
   -e DATABASE_URL="postgresql+asyncpg://orchestrator:pass@your-pg-host:5432/orchestrator" \
   -e SYNC_DATABASE_URL="postgresql://orchestrator:pass@your-pg-host:5432/orchestrator" \
   -e SECRET_KEY="dummy-for-migration-only" \
-  copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4 \
+  copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
   alembic upgrade head
 
 # If running bare (Python environment with the source)
@@ -1455,7 +1455,7 @@ your vector database.
 Quick summary:
 ```bash
 # Pull and run the basic data loader
-docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
 
 # Configure .env with your LLM + vector DB credentials, then:
 docker compose -f docker-compose-data-loader.yml up -d

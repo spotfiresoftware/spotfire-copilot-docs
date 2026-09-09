@@ -1,8 +1,8 @@
 # Spotfire Copilot™ — Data Loaders Installation Guide
 
-> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, and 2.3.4 &nbsp;|&nbsp; **Last updated:** 23 June 2026 &nbsp;|&nbsp; **Applies to:** Data Loader Services
+> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, and 2.3.7 &nbsp;|&nbsp; **Last updated:** 8 September 2026 &nbsp;|&nbsp; **Applies to:** Data Loader Services
 >
-> This guide covers data-loader versions **2.3.0**, **2.3.1**, **2.3.2**, and **2.3.4**. For new deployments, use **2.3.4**.
+> This guide covers data-loader versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, and **2.3.7**. For new deployments, use **2.3.7**.
 >
 > ## Before you start: registry access is required for current images
 >
@@ -10,7 +10,7 @@
 >
 > ## Milvus PDF loading fix
 >
-> The Milvus / Zilliz PDF-ingestion failure that surfaces as **`ConnectionNotExistException`** during `/load` was fixed in **2.3.2**. That fix remains included in **2.3.4**, which is the recommended tag for all current data-loader deployments.
+> The Milvus / Zilliz PDF-ingestion failure that surfaces as **`ConnectionNotExistException`** during `/load` was fixed in **2.3.2**. That fix remains included in **2.3.7**, which is the recommended tag for all current data-loader deployments.
 >
 > ## Tip: automate the setup
 >
@@ -126,8 +126,8 @@ All current images are hosted on the credentialed OCI registry at **`copilotoci.
 
 | Image | Description | Best For |
 |---|---|---|
-| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4` | **Basic text loader.** Extracts text from PDFs using PyPDF. Fast, lightweight, reliable. | Text-heavy PDFs, simple documents |
-| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.4` | **Advanced OCR loader.** Uses Unstructured.io for full document analysis — OCR, table extraction, layout preservation. | Scanned documents, image-heavy PDFs, complex layouts |
+| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7` | **Basic text loader.** Extracts text from PDFs using PyPDF. Fast, lightweight, reliable. | Text-heavy PDFs, simple documents |
+| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.7` | **Advanced OCR loader.** Uses Unstructured.io for full document analysis — OCR, table extraction, layout preservation. | Scanned documents, image-heavy PDFs, complex layouts |
 
 > **Which one should I use?** Start with the **Basic (PyPDF)** loader. It handles most
 > text-based PDFs well and is significantly faster. Only use the Advanced (Unstructured)
@@ -140,8 +140,8 @@ local PDFs or Azure Blob Storage:
 
 | Image | Description |
 |---|---|
-| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.4` | Load PDFs into Azure Cognitive Search |
-| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-azblob:2.3.4` | Load documents from Azure Blob Storage into Azure Cognitive Search |
+| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.7` | Load PDFs into Azure Cognitive Search |
+| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-azblob:2.3.7` | Load documents from Azure Blob Storage into Azure Cognitive Search |
 
 ### Plugin-based approach (recommended)
 
@@ -317,7 +317,7 @@ VECTORDB_URI=http://your-milvus-host:19530
 VECTORDB_TOKEN=root:Milvus
 ```
 
-Use **2.3.4** for Milvus and Zilliz deployments. Versions before **2.3.2** can fail during document ingestion with `ConnectionNotExistException` even though the target collection or index is created.
+Use **2.3.7** for Milvus and Zilliz deployments. Versions before **2.3.2** can fail during document ingestion with `ConnectionNotExistException` even though the target collection or index is created.
 
 ### Qdrant
 
@@ -357,7 +357,7 @@ REDIS_URL=redis://your-redis-host:6379
 > *retrieve* from Azure Cognitive Search at query time — they cannot load into it.
 
 ```bash
-# Use image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.4
+# Use image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.7
 AZSEARCH_EP=https://your-service.search.windows.net/
 AZSEARCH_KEY=your-search-key
 
@@ -511,7 +511,7 @@ DOCS_DIR=./pdf_docs
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -593,7 +593,7 @@ you need your own PDFs) mount an EFS file system at `/docs`.
   "containerDefinitions": [
     {
       "name": "data-loader",
-      "image": "copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4",
+      "image": "copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7",
       "portMappings": [{ "containerPort": 8080 }],
       "mountPoints": [{ "sourceVolume": "docs", "containerPath": "/docs", "readOnly": true }],
       "environment": [
@@ -658,7 +658,7 @@ az containerapp create \
   --name copilot-data-loader \
   --resource-group SpotfireCopilot \
   --environment copilot-env \
-  --image copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.4 \
+  --image copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.7 \
   --target-port 8080 \
   --ingress external \
   --min-replicas 1 --max-replicas 1 \
@@ -744,7 +744,7 @@ properties:
   template:
     containers:
       - name: copilot-data-loader
-        image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+        image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
         volumeMounts:
           - volumeName: docs
             mountPath: /docs
@@ -1090,7 +1090,7 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1120,7 +1120,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1156,7 +1156,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1180,7 +1180,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1209,7 +1209,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1240,7 +1240,7 @@ Use the same patterns above but replace the image:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.7
     # ... rest of configuration is identical
 ```
 
@@ -1249,7 +1249,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.4
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1301,7 +1301,7 @@ services:
 | `/docs` directory empty in container | `DOCS_DIR` not set or wrong path | Verify `DOCS_DIR` in `.env` points to a real directory with files |
 | Embedding errors | Wrong embedding model or API key | Verify `EMBEDDING_MODEL_NAME` and API credentials |
 | Vector DB connection refused | Wrong URI/host or DB not running | Check `VECTORDB_URI` / `ZILLIZ_CLOUD_URI` / `PGVECTOR_CONNECTION_STRING` and connectivity |
-| `ConnectionNotExistException` during `/load` with Milvus or Zilliz | Running an older image that predates the connection-alias fix | Upgrade the data-loader image to `2.3.4`, redeploy, and retry the load |
+| `ConnectionNotExistException` during `/load` with Milvus or Zilliz | Running an older image that predates the connection-alias fix | Upgrade the data-loader image to `2.3.7`, redeploy, and retry the load |
 | pgvector "extension not found" | `vector` extension not installed | Run `CREATE EXTENSION IF NOT EXISTS vector;` on the target database |
 | Timeout during loading | Large documents or slow network | Check logs; consider splitting large PDFs |
 
@@ -1342,7 +1342,7 @@ docker compose pull && docker compose up -d
 - **Rotate credentials regularly** — regenerate and restart
 - **Run containers as non-root** — the Data Loader images already run as a non-root user (`spotuser`)
 - **Limit network exposure** — if the Data Loader is only used internally, don't expose port 8080 externally
-- **Keep images up to date** — always use the latest tagged version (`2.3.4`)
+- **Keep images up to date** — always use the latest tagged version (`2.3.7`)
 - **Use TLS in production** — place a reverse proxy in front of the container for HTTPS
 
 ---
