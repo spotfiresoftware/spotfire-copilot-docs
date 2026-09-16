@@ -1,8 +1,8 @@
 # Spotfire Copilot — Admin Console Guide
 
-> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, and 2.3.4 &nbsp;|&nbsp; **Last updated:** 24 June 2026 &nbsp;|&nbsp; **Applies to:** Admin Console (companion service to the orchestrator)
+> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, and 2.3.4 &nbsp;|&nbsp; **Last updated:** 16 September 2026 &nbsp;|&nbsp; **Applies to:** Admin Console (companion service to the orchestrator)
 >
-> This guide is for **customer administrators** who need to operate the Spotfire Copilot admin console day-to-day — managing users, OAuth2 clients, conversations, RAG indexes, and system health. For installing or deploying the admin console alongside the orchestrator, see the [Spotfire Copilot Installation Guide — Backend Infrastructure Setup](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md).
+> This guide is for **customer administrators** who need to operate the Spotfire Copilot admin console day-to-day — managing users, OAuth2 clients, conversations, token budgets, rules, RAG indexes, and system health. For installing or deploying the admin console alongside the orchestrator, see the [Spotfire Copilot Installation Guide — Backend Infrastructure Setup](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md).
 
 ## Table of Contents
 
@@ -20,6 +20,7 @@
 - [5. Conversations and Token Usage](#5-conversations-and-token-usage)
   - [5.1 Conversations tab](#51-conversations-tab)
   - [5.2 Token Usage tab](#52-token-usage-tab)
+  - [5.3 Monthly token budgets (OAuth2 clients)](#53-monthly-token-budgets-oauth2-clients)
 - [6. User Management](#6-user-management)
   - [6.1 Common actions](#61-common-actions)
   - [6.2 The temporary-password-shown-once gotcha](#62-the-temporary-password-shown-once-gotcha)
@@ -32,11 +33,19 @@
   - [8.2 Password policy](#82-password-policy)
   - [8.3 Forcing a re-login](#83-forcing-a-re-login)
 - [9. RAG Indexes](#9-rag-indexes)
-- [10. A2A Agents and Tunnels](#10-a2a-agents-and-tunnels)
-  - [10.1 A2A Agents tab](#101-a2a-agents-tab)
-  - [10.2 Tunnels tab](#102-tunnels-tab)
-- [11. System Logs](#11-system-logs)
-- [12. Common Tasks](#12-common-tasks)
+- [10. Rules (Custom Prompts)](#10-rules-custom-prompts)
+  - [10.1 What rules are](#101-what-rules-are)
+  - [10.2 Scope model — how rules resolve](#102-scope-model--how-rules-resolve)
+  - [10.3 Creating rules — two paths](#103-creating-rules--two-paths)
+  - [10.4 The Rules tab UI](#104-the-rules-tab-ui)
+  - [10.5 Promotions — widening a rule's scope](#105-promotions--widening-a-rules-scope)
+  - [10.6 Who can do what](#106-who-can-do-what)
+- [11. A2A Agents, MCP Servers, and Tunnels](#11-a2a-agents-mcp-servers-and-tunnels)
+  - [11.1 A2A Agents tab](#111-a2a-agents-tab)
+  - [11.2 MCP Servers tab](#112-mcp-servers-tab)
+  - [11.3 Tunnels tab](#113-tunnels-tab)
+- [12. System Logs](#12-system-logs)
+- [13. Common Tasks](#13-common-tasks)
   - [Add a new internal user](#add-a-new-internal-user)
   - [Issue OAuth2 credentials for a new Spotfire client install](#issue-oauth2-credentials-for-a-new-spotfire-client-install)
   - [Investigate "the chatbot gave the wrong answer"](#investigate-the-chatbot-gave-the-wrong-answer)
@@ -45,7 +54,10 @@
   - [Investigate a "can't log in" ticket](#investigate-a-cant-log-in-ticket)
   - [Investigate "RAG isn't returning my new document"](#investigate-rag-isnt-returning-my-new-document)
   - [Audit who's been logging in](#audit-whos-been-logging-in)
-- [13. Troubleshooting](#13-troubleshooting)
+  - [Set or top up an OAuth2 client's monthly token budget](#set-or-top-up-an-oauth2-clients-monthly-token-budget)
+  - [Promote a user's personal rule to their whole group](#promote-a-users-personal-rule-to-their-whole-group)
+  - [Register a new MCP tool server](#register-a-new-mcp-tool-server)
+- [14. Troubleshooting](#14-troubleshooting)
   - [`Incorrect username or password` when logging in as admin](#incorrect-username-or-password-when-logging-in-as-admin)
   - [`Account is temporarily locked` even though I haven't tried many times](#account-is-temporarily-locked-even-though-i-havent-tried-many-times)
   - [Tabs are visible but every list is empty](#tabs-are-visible-but-every-list-is-empty)
@@ -54,6 +66,9 @@
   - [`403 Forbidden` after I just clicked a button](#403-forbidden-after-i-just-clicked-a-button)
   - [Token expired and I keep getting redirected to login](#token-expired-and-i-keep-getting-redirected-to-login)
   - [Conversations show `[Content hidden — conversation privacy is enabled]`](#conversations-show-content-hidden--conversation-privacy-is-enabled)
+  - [A power user can see Rules but Approve/Reject buttons 403](#a-power-user-can-see-rules-but-approvereject-buttons-403)
+  - [An OAuth2 client keeps getting `token_budget_exceeded`](#an-oauth2-client-keeps-getting-token_budget_exceeded)
+  - [`'id' is required` or a 400 when registering an MCP server](#id-is-required-or-a-400-when-registering-an-mcp-server)
 
 ---
 
@@ -67,8 +82,11 @@ The **admin console** is a browser-based **operations dashboard** for Spotfire C
 - **OAuth2 client management** — issue and revoke machine-to-machine credentials for Spotfire clients, scripts, and CI/CD integrations.
 - **Conversation monitoring** — read across all users' conversations to investigate support issues, study usage, and audit activity.
 - **Token usage analytics** — track LLM token spend per user and per client.
+- **Token budget enforcement** — set, top up, and monitor monthly token budgets per OAuth2 client.
+- **Rules (custom prompts)** — manage hierarchical, scoped prompt rules that agents fold into their own system prompts, including the promotion workflow for widening a rule's scope.
 - **RAG index management** — list knowledge-base collections, view indexed sources, trigger enrichment.
 - **A2A agent registry** — view and manage agents the orchestrator routes to.
+- **MCP server registry** — register and manage remote MCP tool servers agents can call, including credentials and per-group/per-client access restrictions.
 - **MCP tunnel management** — see active tunnels for tools that bridge to local Spotfire instances.
 - **Security audit** — view failed login attempts, configure password policy and account-lockout rules.
 - **System logs** — tail orchestrator, admin-console, and PostgreSQL container logs from the browser.
@@ -150,7 +168,7 @@ What's on it:
 - **Active OAuth2 clients** — clients with `is_active=true`.
 - **Recent activity** — most recent conversations, last 10 by default.
 
-Nothing here is configurable. If a tile shows `0` or `—`, see **[§13](#13-troubleshooting) Troubleshooting → Dashboard tiles show zero**.
+Nothing here is configurable. If a tile shows `0` or `—`, see **[§14](#14-troubleshooting) Troubleshooting → Dashboard tiles show zero**.
 
 ## 5. Conversations and Token Usage
 
@@ -185,6 +203,45 @@ What you can do:
 - **Purge token-usage metadata for a user** — useful when offboarding (deletes the `token_usage` dict from each message's metadata while keeping the conversation text intact).
 
 Where the numbers come from: every assistant message is stamped with the provider's reported prompt/completion/total token counts in `metadata_.token_usage`. The Token Usage tab simply aggregates this JSONB field. If your LLM provider doesn't return usage (rare), the count is zero — the answer was still generated, but it's not visible here.
+
+### 5.3 Monthly token budgets (OAuth2 clients)
+
+Below the per-user chart, the Token Usage tab lists every **OAuth2 client** with a bar graph per month: usage vs. the client's monthly token budget. This is where budget restrictions are configured and monitored — there is no separate "Budgets" tab.
+
+*[Screenshot: Token Usage tab, OAuth2 client section, showing a monthly bar for a client with a budget line marker and a "✏️ Set budget" button, plus an "over budget" bar highlighted in red]*
+
+**Scope of enforcement — read this first:**
+
+- Budgets apply **only to OAuth2 clients** (machine-to-machine callers — the Spotfire client, scripts, CI/CD, agents). Human end-user sessions are **never** budget-limited.
+- A client only has a budget if you set one. By default `monthly_token_budget` is unset (`NULL`) — **unlimited** — and the client shows no budget bars, just a plain "Unlimited" summary.
+- Budget checks **fail open**: if the database is unreachable when checking, the request is allowed and a warning is logged. Budgets must never be able to take the orchestrator down.
+
+**Setting or clearing a budget:**
+
+1. Find the client in the Token Usage tab's OAuth2 client list.
+2. Click **✏️ Set budget**.
+3. Enter a monthly token cap (a non-negative integer), or leave it blank to make the client **unlimited** again.
+4. Confirm. The new cap applies to the **current** calendar month immediately.
+
+**Temporary top-ups ("extend"):**
+
+- Use **Extend** to add a one-off bonus on top of the recurring `monthly_token_budget` for the **current month only** — useful when a client is about to hit its cap mid-month and you don't want to raise its permanent allowance.
+- The bonus (`current_period_bonus`) auto-expires at month rollover; it does not carry over or change the recurring base budget.
+- Extending a client that has an **unlimited** budget has no effect (there's nothing to top up).
+
+**How usage is measured and enforced:**
+
+| Term | Meaning |
+|------|---------|
+| `monthly_token_budget` | The recurring base allowance for the client, per calendar month (UTC). `NULL` = unlimited. |
+| `current_period_bonus` | A temporary top-up added for the current month only (see **Extend**, above). |
+| Effective budget | `monthly_token_budget + current_period_bonus`. This is the number actually enforced and drawn as the budget line in the bar chart. |
+| Warning threshold | Once usage crosses **90%** of the effective budget (configurable via the orchestrator's `TOKEN_BUDGET_WARN_PCT` env var), successful API responses to that client carry a `token_budget.warning: true` flag so well-behaved callers can self-throttle before they're cut off. |
+
+- Enforcement is a **pre-request, soft check**: a client already at or over budget is rejected with `HTTP 422` (`error_type: token_budget_exceeded`) *before* the LLM call runs, so a single in-flight request can still overshoot slightly (usage is only known after the call completes) — this is expected and bounded.
+- `429` is **not** used for budget exhaustion (that status is reserved for upstream LLM provider rate limits); budget exhaustion is always `422`.
+
+> **Known display caveat:** the bar chart here recomputes usage by summing the `messages` table, while live enforcement uses a fast running counter (`current_period_tokens`) incremented per-request. The two can drift slightly apart. If you need the number that's actually being enforced, don't rely on this tab — check the client's `token_budget` field on a live orchestrator response instead.
 
 ## 6. User Management
 
@@ -294,9 +351,81 @@ If this tab shows "RAG is not configured" or returns errors, the orchestrator is
 
 For the data-loading side of RAG (the data loaders that ingest your documents and turn them into vectors), see the [Spotfire Copilot Data Loaders Installation Guide](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md).
 
-## 10. A2A Agents and Tunnels
+## 10. Rules (Custom Prompts)
 
-### 10.1 A2A Agents tab
+The **Rules** tab manages hierarchical, scoped prompt fragments — the mechanism for "always answer in metric units", "never show the cost column to this group", "for this DXP, prefer the well-log agent", and similar standing instructions that shouldn't have to be retyped into every conversation.
+
+*[Screenshot: Rules tab showing stat tiles (Total/Active/Disabled/Unused), a filter bar, and a table with columns Scope, Applies to, Rule, Used, Last used, Status, Actions]*
+
+Unlike User Management, OAuth Clients, and Security, this tab is **not admin-only** — it's visible and usable by both **admins and power users**. Approving a scope-widening request (see **[§10.5](#105-promotions--widening-a-rules-scope)**) is the one action that additionally requires a **human** admin/power-user account.
+
+### 10.1 What rules are
+
+A rule is a short block of text (up to 5,000 characters) stored in Postgres and resolved against the current request's context (group / user / document / library folder / intent). The orchestrator itself does **not** inject rules into prompts — a downstream agent calls `GET /rules/prompt` for its context and folds the returned text into its own system prompt. If a support ticket claims "the chatbot ignored my rule," first confirm the agent that answered actually calls the rules endpoint — not every agent does.
+
+### 10.2 Scope model — how rules resolve
+
+A rule can be narrowed along up to five independent dimensions:
+
+| Dimension | Field | Matching |
+|-----------|-------|----------|
+| Group | `group_id` | Exact match against the caller's Spotfire group(s) |
+| User | `user_id` | Exact match against the calling end-user |
+| Document | `document_id` | Exact match against the `.dxp` analysis ID |
+| Library folder | `library_path` | Prefix match (e.g. `/Teams/Reservoir/` matches everything under it) |
+| Intent | `intent` | Exact match against the classified intent of the request |
+
+Resolution is **most-specific-wins**: when multiple rules apply to a request, the one combining the most/narrowest dimensions is used first (e.g. a rule scoped to *this user + this document + this intent* beats one scoped to *this user* alone, which beats one scoped to *the user's group*, which beats a fully **global** rule with no dimensions set). Up to `max_rules` (default 10) applicable rules are returned, most-specific first — a request can be governed by several rules stacked together, not just one.
+
+### 10.3 Creating rules — two paths
+
+There are two distinct ways a rule gets created, with different scope limits:
+
+1. **Self-service, via the Spotfire client** — end users can define their own rules (e.g. "always show me results in bbl, not m³") through the client, which relays the request to the orchestrator's `POST /rules`. This path **always** creates a rule owned by and scoped to that calling user — optionally narrowed further by document, library path, or intent. It can **never** create a group- or global-scoped rule directly.
+2. **Directly in the admin console** — admins and power users are already elevated humans, so the **New Rule** button in this tab can create a rule at **any** scope, including group-wide or fully global, in one step. Use this for organization-wide standing instructions (e.g. "never fabricate a well name — say you don't have the data").
+
+The **New Rule** modal collects: rule text (required), and optional Group, User, Document/DXP ID, Library folder path, and Intent to narrow it, plus an optional "primary group" (recorded as `owner_primary_group` — the group a later promotion of this rule would target).
+
+### 10.4 The Rules tab UI
+
+- **Stat tiles** — Total, Active, Disabled, and Unused (rules with `usage_count = 0`) rule counts.
+- **Filters** — group, user, document, library path, intent, and an "active only" checkbox; **Clear Filters** resets them.
+- **Table columns** — Scope (badge, e.g. `user global`, `group doc intent`), Applies to (the concrete dimension values), Rule (truncated preview, full text on hover), Used (usage count), Last used, Status, and row actions:
+  - **✏️ Edit** — change the rule text, toggle active/disabled, or update the recorded owner primary group. Scope dimensions are **immutable** once created — to change them, delete the rule and recreate it with the new dimensions.
+  - **⏸️/▶️ Toggle** — enable/disable without deleting (and without losing usage history).
+  - **🗑️ Delete** — permanent.
+
+### 10.5 Promotions — widening a rule's scope
+
+A rule created via the self-service path is locked to its owner's scope. To widen it (e.g. promote a personal rule to the owner's whole group, or to global), the owner — or an admin/power user — **proposes a promotion**:
+
+1. The owner (or an elevated user) calls `POST /rules/{rule_id}/propose-promotion` with the target scope and a reason.
+2. This queues a **pending promotion**; the original self-scoped rule keeps applying unchanged while it waits.
+3. A **human** admin or power user reviews it in the **Pending Promotions** panel at the top of the Rules tab and either:
+   - **✅ Approve** — the live rule is immediately widened to the new scope, or
+   - **❌ Reject** — requires a typed reason; the rule is left untouched at its original scope.
+4. Every decision is recorded in **Promotion History** below (filterable by status: pending / approved / rejected) as an audit trail — who proposed it, who decided, and why.
+
+Two things worth calling out:
+
+- **A group promotion always targets the rule's recorded `owner_primary_group`** — the group the trusted Spotfire client relayed when the rule was first created. A user cannot redirect their promotion request into a group they don't belong to.
+- **Approve/Reject requires a human account.** Machine callers (OAuth2 clients relaying an end-user's identity) can *propose* a promotion but can never approve one — that would let a machine client silently grant itself an org-wide rule. If a power user's Approve button 403s, see **[§14](#14-troubleshooting) Troubleshooting**.
+
+### 10.6 Who can do what
+
+| Action | Who |
+|--------|-----|
+| Create a self-scoped rule (via Spotfire client) | Any authenticated end user |
+| Create a rule at any scope (admin console) | Admin or power user |
+| Edit or delete a rule | The rule's owner, or an admin/power user |
+| Propose a promotion | The rule's owner, or an admin/power user |
+| Approve or reject a promotion | Admin or power user — **human account only**, never an OAuth2 client |
+
+## 11. A2A Agents, MCP Servers, and Tunnels
+
+Three separate tabs, all **admin-only**, cover three distinct kinds of "things the orchestrator connects to": agents it routes to (A2A Agents), remote tool servers it calls (MCP Servers), and Spotfire clients that have connected to it (Tunnels). It's easy to conflate the last two because both use the MCP protocol — the difference is *direction*: MCP Servers are tool providers the orchestrator calls out to; Tunnels are Spotfire clients that called in.
+
+### 11.1 A2A Agents tab
 
 Lists every agent registered with the orchestrator's A2A (agent-to-agent) registry. Use this to:
 
@@ -309,7 +438,31 @@ Lists every agent registered with the orchestrator's A2A (agent-to-agent) regist
 
 For the deeper architecture (when to register an agent here vs. running it inside the Domain Agents or Platform Integrations containers), see the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/).
 
-### 10.2 Tunnels tab
+### 11.2 MCP Servers tab
+
+The **MCP Servers** tab is a registry of remote **Model Context Protocol** tool servers — external endpoints exposing tools (e.g. a GitHub-tools server, an internal data-quality service) that agents can call. This is separate from both the A2A Agents registry (whole agents, not individual tools) and the Tunnels tab (client-initiated connections, not admin-registered ones).
+
+*[Screenshot: MCP Servers tab showing stat tiles (Total/Active/Disabled/Restricted) and a table with columns ID, URL, Auth, Tools, Access, Status, Actions]*
+
+**Registering a server** (**Register Server** button):
+
+- **Server ID** — a slug agents reference to call this server's tools (e.g. `github-tools`). Must be unique.
+- **Endpoint URL** — validated with the same SSRF guard used for A2A agent endpoints; URLs pointing at disallowed targets (e.g. internal metadata services) are rejected at registration time.
+- **Description** — optional, free text.
+- **Default tool kind** — `read` or `write`, used to classify a tool's safety **only when the tool itself doesn't declare a `readOnlyHint`**. Get this wrong and a destructive tool may be treated as safe-to-auto-approve, so default to `write` unless you know every tool on the server is read-only.
+- **Authentication** — `none`, `API Key`, `Bearer Token`, or `OAuth2 Client Credentials`, each with its own credential fields. Credentials are **encrypted at rest**; the edit form never redisplays them — it shows a "credentials configured" banner instead, and fields are filled in only to *replace* the existing secret.
+- **Access control** — optional `allowed_groups` and/or `allowed_clients` (comma-separated) whitelists. Leaving **both** blank makes the server **public** — any authenticated caller's agent may use its tools; setting either restricts use to the listed Spotfire groups or OAuth2 client IDs.
+
+**Row actions:**
+
+- **✏️ Edit** — change URL, description, default kind, credentials, or access-control whitelists.
+- **🧪 Test** — a connectivity probe: the admin console asks the orchestrator to connect to the server and list its tools, then reports success/failure. Credentials are never echoed back in the result.
+- **⏸️/▶️ Toggle** — enable/disable without losing the registration or its credentials.
+- **🗑️ Delete** — permanent; removes the registration (and its encrypted credentials) entirely.
+
+Stat tiles: **Total**, **Active**, **Disabled**, and **Restricted** (servers with at least one group/client whitelist entry).
+
+### 11.3 Tunnels tab
 
 Shows the live MCP (Model Context Protocol) tunnels currently open between Spotfire Copilot and bridged tools. Each tunnel represents one Spotfire client that has connected to give the orchestrator access to its local Spotfire instance for things like running data functions and reading the active analysis.
 
@@ -321,7 +474,7 @@ You can't create tunnels here — they are opened by the Spotfire client when a 
 - Debugging a "the agent says it can't read my Spotfire" support ticket.
 - Spotting stale tunnels (high "Last activity" age) that haven't been cleaned up.
 
-## 11. System Logs
+## 12. System Logs
 
 The **System Logs** tab is **admin-only**. It tails container logs without needing to SSH into the host.
 
@@ -337,7 +490,7 @@ By default the last 100 lines are shown. Use this for first-line diagnosis befor
 
 > **Requirement for orchestrator and PostgreSQL logs:** the orchestrator container needs access to the Docker socket (or to its own in-memory log buffer as a fallback) so the admin console can proxy the request through. If you see `Log proxy unavailable` for those two sources but `orchestrator-admin-console` logs work fine, the Docker socket is the missing piece — see the deployment guide for your platform in the install guide.
 
-## 12. Common Tasks
+## 13. Common Tasks
 
 A cookbook of the most common operations, with the menu path to perform each.
 
@@ -396,7 +549,31 @@ A cookbook of the most common operations, with the menu path to perform each.
 1. **Security** → filter by `event_type=login_success`.
 2. Export the table (right-click → Save as CSV in most browsers) for compliance evidence.
 
-## 13. Troubleshooting
+### Set or top up an OAuth2 client's monthly token budget
+
+1. **Token Usage** → scroll to the OAuth2 client's row.
+2. To set a permanent monthly cap (or remove one): click **✏️ Set budget**, enter a token count, or leave it blank for unlimited.
+3. To handle a one-off overage without changing the permanent cap: click **Extend** and enter a temporary top-up — it applies to the current month only and expires automatically at month rollover.
+4. Confirm the change took effect by checking the client's bar for the current month; the effective budget line should reflect base + bonus.
+
+### Promote a user's personal rule to their whole group
+
+1. Have the owner (or an admin/power user on their behalf) call `POST /rules/{rule_id}/propose-promotion` with the target scope (typically `group`) and a reason — this is normally done by the trusted Spotfire client, not typed directly into the admin console.
+2. **Rules** → **Pending Promotions** → find the request.
+3. Review the rule text and the scope change (current → proposed).
+4. **✅ Approve** to widen it immediately, or **❌ Reject** with a reason to leave it unchanged.
+5. Check **Promotion History** afterward to confirm the decision was recorded.
+
+### Register a new MCP tool server
+
+1. **MCP Servers** → **Register Server**.
+2. Fill in a unique **Server ID** (the slug agents will reference), the **Endpoint URL**, and an optional description.
+3. Set **Default tool kind** to `read` only if you're certain every tool on that server is non-destructive; otherwise leave it at `write`.
+4. If the server requires authentication, pick the auth type and fill in its credential fields — these are encrypted before being stored.
+5. Optionally restrict usage with **Access control** (allowed groups and/or allowed OAuth2 client IDs); leave both blank to make it public.
+6. Click **Register**, then use **🧪 Test** on the new row to confirm the orchestrator can reach it and list its tools.
+
+## 14. Troubleshooting
 
 ### `Incorrect username or password` when logging in as admin
 
@@ -412,7 +589,7 @@ Someone or something else has — automated tooling pointed at the wrong host, a
 
 You're logged in as a non-admin (most likely a standard `user`). Role-based filtering is showing you no data because there's nothing in scope. Log in as an admin to see the system view.
 
-If you're logged in as an admin and lists are still empty, the database is genuinely empty (you've just installed) or the admin console can't reach PostgreSQL. Check **[§11](#11-system-logs) System Logs → `orchestrator-admin-console`** for connection errors.
+If you're logged in as an admin and lists are still empty, the database is genuinely empty (you've just installed) or the admin console can't reach PostgreSQL. Check **[§12](#12-system-logs) System Logs → `orchestrator-admin-console`** for connection errors.
 
 ### Dashboard tiles show zero
 
@@ -433,3 +610,22 @@ Tokens are valid for 1 hour and there is no silent refresh. Log in again. If thi
 ### Conversations show `[Content hidden — conversation privacy is enabled]`
 
 That's intentional — your deployment has `HIDE_CONVERSATION_CONTENT=true` set. There is no per-user override; the redaction is at the server. If you need to read conversation contents and you have a legitimate reason to, change the env var on the admin console container and restart it. If you can't (regulated deployment), use the audit logs instead.
+
+### A power user can see Rules but Approve/Reject buttons 403
+
+This is by design, not a bug. Viewing and editing rules only requires `admin` or `power_user`, but **approving or rejecting a promotion requires a human account with that role** — an OAuth2 client (even one with the right scopes) is deliberately excluded, so a machine relaying end-user identity can never grant itself an org-wide rule. If the signed-in account genuinely is a human admin/power user and still gets 403, check that they're logged in via the dashboard login form (not a token minted for a machine client) — see **[§3](#3-roles-and-permissions) Roles and Permissions**.
+
+### An OAuth2 client keeps getting `token_budget_exceeded`
+
+The client has hit its monthly token cap. This only ever happens to OAuth2 clients — never to end-user sessions. Options, in **[§5.3](#53-monthly-token-budgets-oauth2-clients) Token Usage → Monthly token budgets**:
+
+- **Extend** the client's budget for the rest of the current month (temporary top-up), or
+- **Set budget** to raise the recurring `monthly_token_budget`, or clear it entirely for unlimited use.
+
+The error is `HTTP 422`, not `429` — if you see `429` instead, that's an upstream LLM provider rate limit, not a budget issue, and raising the budget won't help.
+
+### `'id' is required` or a 400 when registering an MCP server
+
+- **`'id' is required` / `'url' is required`** — both the Server ID and Endpoint URL are mandatory; the Server ID must also be unique (a duplicate returns `409 Conflict`, not `400`).
+- **`400` naming a URL validation failure** — the endpoint URL failed the same SSRF guard used for A2A agent endpoints (it blocks things like internal-only hosts, link-local/metadata addresses, and disallowed schemes). Point the registration at a URL your admin console/orchestrator network is actually allowed to reach, or ask your platform team to review the SSRF allowlist if the target is legitimate.
+- **`422 Invalid credentials`** — the fields for the selected auth type didn't validate (e.g. OAuth2 selected but the token URL was left blank). Re-open the auth-type dropdown and confirm every required field for that type is filled in.
