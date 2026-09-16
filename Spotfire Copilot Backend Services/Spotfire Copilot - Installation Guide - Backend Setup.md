@@ -1942,7 +1942,36 @@ This issue has been observed in traditional on-premise installs hosted on AWS wh
 | `connection refused` | PostgreSQL not started or not reachable | On-premise: wait for postgres health check. Cloud: verify managed DB endpoint, SSL mode, and network connectivity. |
 | `SSL connection required` | Managed PostgreSQL enforces SSL | Set `DB_SSLMODE=require` in your environment variables |
 | DNS resolution failure on Azure | Azure Container Apps DNS race condition | The orchestrator retries DNS at startup automatically — check logs |
-| Migration errors | Stale migration state | Run `alembic upgrade head` in the orchestrator container |
+| `Can't locate revision identified by '<id>'`, migration failed on startup | The running image is **older** than the database (usually an image rolled back while the database volume was kept) | See **Database migration failures** below |
+
+### Database migration failures
+
+On startup, the orchestrator applies database schema migrations automatically. If startup fails with a message like `FAILED: Can't locate revision identified by '023_rules_storage'` followed by `❌ Database migration failed!`, the database has already been upgraded by a **newer** version of the orchestrator than the one currently running.
+
+The database records the schema version it has reached. When a container starts, it can only move that version *forward*, using the migration scripts built into its own image. If the database is already ahead of the running image, the image contains no script for the database's current version, so startup stops. This never happens during a normal forward upgrade — only when the running image is **older than the database**, typically after one of the following:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Can't locate revision identified by '<id>'` on startup; container restart-loops | The image tag was rolled **back** to a version older than the one that last ran against this database, while the database was kept | Roll **forward** to the image tag you were previously running (or newer). If you must run the older version, restore a database backup taken while that older version was in use. |
+| The same error on only some instances during an upgrade | A mixed-version rollout: a newer instance migrated the shared database, and older instances that (re)start cannot recognise the new version | Complete the rollout so every instance runs the **same** image tag. The error clears once all instances are on the version that performed the migration (or newer). |
+| The same error immediately after restoring the database | The restored database snapshot is newer than the deployed image | Deploy an image tag equal to or newer than the version that produced the snapshot. |
+
+To confirm what happened:
+
+1. Check the version the database has reached:
+   ```bash
+   # On-premise (Docker Compose)
+   docker compose exec orchestrator alembic current
+   # Kubernetes
+   kubectl -n copilot exec deployment/orchestrator -- alembic current
+   ```
+2. Check the versions the running image supports:
+   ```bash
+   docker compose exec orchestrator alembic heads
+   ```
+3. If `alembic current` reports a revision that does **not** appear in `alembic heads` (nor in `alembic history`), the database is ahead of the image. Deploy a matching or newer image tag.
+
+> **Golden rule:** the deployed image must always be the **same version as, or newer than, the database**. Treat the database as the source of truth for the schema version, and never roll an image back past it without also restoring a database backup from that earlier version.
 
 ### LLM provider issues
 
