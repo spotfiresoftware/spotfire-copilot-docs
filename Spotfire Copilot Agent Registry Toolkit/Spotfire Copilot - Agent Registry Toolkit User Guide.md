@@ -12,7 +12,7 @@
 
 # Spotfire Copilot™ — Agent Registry Toolkit User Guide
 
-> **Version:** `1.1.0` &nbsp;|&nbsp; **Last updated:** 1 July 2026 &nbsp;|&nbsp; **Applies to:** Agent Registry `1.1.0`
+> **Version:** `1.1.1` &nbsp;|&nbsp; **Last updated:** 1 July 2026 &nbsp;|&nbsp; **Applies to:** Agent Registry `1.1.1`
 >
 > This guide is for **Spotfire developers** who want to build custom agents locally using the Agent Registry Toolkit and MCP development server. It covers the toolkit module surface, the VS Code development workflow, a complete reference of every MCP tool and skill, and a full end-to-end walkthrough of creating a new agent from scratch.
 >

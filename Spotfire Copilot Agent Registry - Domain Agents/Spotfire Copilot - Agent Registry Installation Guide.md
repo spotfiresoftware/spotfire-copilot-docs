@@ -12,7 +12,7 @@
 
 # Spotfire Copilot™ — Agent Registry Installation Guide
 
-> **Version:** `1.1.0` &nbsp;|&nbsp; **Last updated:** 22 June 2026 &nbsp;|&nbsp; **Applies to:** Agent Registry Container
+> **Version:** `1.1.1` &nbsp;|&nbsp; **Last updated:** 17 September 2026 &nbsp;|&nbsp; **Applies to:** Agent Registry Container
 >
 > The **Agent Registry** is a Docker container that hosts one or more A2A (Agent-to-Agent) agents on a single port and exposes them for registration with the Spotfire Copilot™ orchestrator. In development mode it also enables optional tools (MCP server, WebSocket reverse tunnel, type-stub generator) for building custom agents locally.
 >
@@ -27,6 +27,7 @@
 
 ## Table of Contents
 
+- [What's New in 1.1.1](#whats-new-in-111)
 - [What's New in 1.1.0](#whats-new-in-110)
 - [1. Introduction](#1-introduction)
   - [1.1 What You Are Deploying](#11-what-you-are-deploying)
@@ -84,6 +85,20 @@
 
 ---
 
+## What's New in 1.1.1
+
+- **Bundled Databricks and Snowflake Spotfire agents.** The container now ships two additional built-in domain agents:
+  - **Databricks Spotfire Agent** (`databricks-spotfire-agent`) — explores an existing Spotfire Databricks data connection and lands query results as live, refreshable Spotfire tables.
+  - **Snowflake Spotfire Agent** (`snowflake-spotfire-agent`) — the same connection-based workflow for Snowflake.
+
+  Both are data-connection agents (no external MCP server required) and are auto-discovered at startup like the other bundled agents. See their user guides in the [Agent Registry Toolkit](../Spotfire%20Copilot%20Agent%20Registry%20Toolkit/) documentation.
+
+  > **⚠️ These agents are not present in `1.1.0` images.** The `1.1.0` build predates them. Verify with `docker run --rm <image> ls /app/workflows` — if `databricks_spotfire_agent` and `snowflake_spotfire_agent` are not listed, pull `1.1.1` (or later).
+
+- **Bundled agent set (`1.1.1`).** The image ships these built-in agents: `schema-discovery`, `well-log-agent`, `well-recompletions-agent`, `databricks-spotfire-agent`, and `snowflake-spotfire-agent`. Custom agents mounted at `CUSTOM_WORKFLOWS_DIR` are served alongside them.
+
+---
+
 ## What's New in 1.1.0
 
 - **MCP development server now requires VS Code 1.109 or later.** The MCP Apps UI surface (design form, welcome screens, interactive components) was updated for the stable MCP Apps protocol shipped in VS Code 1.109. Earlier VS Code builds will not render the rich UI; upgrade VS Code before running `MCP_ENABLED=true`. See [section 7](#7-step-5--set-up-the-local-agent-workspace-developers), *Enabling the MCP Development Server*.
@@ -127,9 +142,9 @@ The container provides:
 
 The Agent Registry runs as **one container** from a single Docker image. There is no database to provision and no separate admin console — registration state lives in the orchestrator.
 
-| Container | Default Port | Image (`1.1.0`) | Required? | Role |
+| Container | Default Port | Image (`1.1.1`) | Required? | Role |
 |---|---|---|---|---|
-| **Agent Registry** | `8050` | `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0` | **Yes** | Hosts agents, issues bearer tokens, relays LLM calls to the orchestrator |
+| **Agent Registry** | `8050` | `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1` | **Yes** | Hosts agents, issues bearer tokens, relays LLM calls to the orchestrator |
 | **Orchestrator** | `8080` | `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4` | **Yes** *(separate install)* | LLM orchestration, thread management, agent registration. Compatible with orchestrator `2.3.1` and later; `2.3.4` is the latest. |
 
 > **One image, two deployment shapes.** The same image binary serves production and development. Production deployments run the image with its default startup command and minimal environment. Local development sets `MCP_ENABLED=true` and `TUNNEL_ENABLED=true` and bind-mounts a custom-agents directory; nothing about the image itself changes.
@@ -228,7 +243,7 @@ The Agent Registry is distributed exclusively via the **Azure Container Registry
    ```
 3. **Pull the image:**
    ```bash
-   docker pull copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0
+   docker pull copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
    ```
 
 For login command details, version policy, troubleshooting registry auth errors, and the complete artifact catalog, consult the [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
@@ -248,10 +263,10 @@ If your deployment environment cannot reach the upstream registry, pull on an in
 
 ```bash
 docker login copilotoci.azurecr.io
-docker pull copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0
-docker tag  copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0 \
-            your-registry.example.com/agent-container:1.1.0
-docker push your-registry.example.com/agent-container:1.1.0
+docker pull copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
+docker tag  copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1 \
+            your-registry.example.com/agent-container:1.1.1
+docker push your-registry.example.com/agent-container:1.1.1
 ```
 
 Update all deployment manifests and compose files to reference your internal registry URL.
@@ -443,7 +458,7 @@ Requirements:
 
 ## 5. Step 3 — Deploy
 
-> **Image references below pin version `1.1.0`.** All snippets pull from `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0`. You must already have logged in to that registry with credentials issued by Spotfire Support — see *Pulling the Docker Image* in [section 1](#1-get-the-wheel-into-your-workspace) and the [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
+> **Image references below pin version `1.1.1`.** All snippets pull from `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1`. You must already have logged in to that registry with credentials issued by Spotfire Support — see *Pulling the Docker Image* in [section 1](#1-get-the-wheel-into-your-workspace) and the [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
 
 > **Key pattern for all platforms:** You deploy the **same Docker image** in every environment. The differences are the environment variables (`MCP_ENABLED`/`TUNNEL_ENABLED` for development), the volumes (mounting your custom-agents directory at `CUSTOM_WORKFLOWS_DIR`), and how you supply secrets.
 
@@ -507,7 +522,7 @@ In cloud deployments, you **do not use `.env` files**. Each cloud platform has i
    ```yaml
    services:
      agent-registry:
-       image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0
+       image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
        ports:
          - "8050:8050"
        env_file: .env
@@ -617,7 +632,7 @@ az containerapp create \
   --name agent-registry \
   --resource-group SpotfireAgents \
   --environment agents-env \
-  --image copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0 \
+  --image copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1 \
   --target-port 8050 \
   --ingress external \
   --min-replicas 1 \
@@ -669,7 +684,7 @@ Cloud Run can pull from Azure Container Registry using a service-account-mounted
 
 ```bash
 gcloud run deploy agent-registry \
-  --image copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0 \
+  --image copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1 \
   --port 8050 \
   --region us-central1 \
   --min-instances 1 \
@@ -736,7 +751,7 @@ The Agent Registry itself does not require AWS service permissions. The task rol
   "containerDefinitions": [
     {
       "name": "agent-registry",
-      "image": "copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0",
+      "image": "copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1",
       "portMappings": [{ "containerPort": 8050 }],
       "environment": [
         { "name": "AUTH_CLIENT_ID",         "value": "<AUTH_CLIENT_ID>" },
@@ -826,9 +841,20 @@ spec:
     spec:
       imagePullSecrets:
         - name: copilotoci-pull
+      # Run as a non-root user. The GA 1.1.1 image starts as root unless
+      # overridden; runAsUser forces a non-root UID and fsGroup: 0 makes mounted
+      # volumes writable by group 0 (OpenShift arbitrary-UID compatible).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 0
       containers:
         - name: agent-registry
-          image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0
+          image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8050
           envFrom:
@@ -930,7 +956,7 @@ Pick any directory on the host \u2014 for example `/opt/spotfire-agent-registry/
 ```yaml
 services:
   agent-registry:
-    image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0
+    image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
     ports:
       - "${PORT:-8050}:8050"
     env_file: .env
@@ -1339,14 +1365,41 @@ curl -s https://agents.example.com/readyz  | python -m json.tool
 ### Network security
 
 - **Always terminate TLS in front of the Agent Registry in production.** Cloud platforms (Container Apps, Cloud Run, ALB on ECS) terminate TLS at the ingress layer; on-premise, place a reverse proxy (nginx, Traefik, Caddy) in front of port 8050.
-- **Mount custom-agent volumes read-only in production.** Use `:ro` on Docker Compose volume specs and `readOnly: true` in Kubernetes `volumeMounts`. The container never writes to `CUSTOM_WORKFLOWS_DIR` in normal operation.
+- **Mount custom-agent *code* read-only, but keep a writable log path.** The registry writes per-agent conversation logs (and schema-discovery reports) under `$CUSTOM_WORKFLOWS_DIR/logs/` and `$CUSTOM_WORKFLOWS_DIR/.discovery/`, so a blanket read-only (`:ro`) mount of `CUSTOM_WORKFLOWS_DIR` will break logging. Either (a) mount the agent-code directory read-only and point `CONVERSATION_LOGS_DIR` at a separate read-write volume, or (b) mount `CUSTOM_WORKFLOWS_DIR` read-write and ensure it is writable by the runtime user (see *Runtime user and writable directories* under **Container security**).
 - **Restrict outbound network egress** to the orchestrator's URL and the OCI registry. The Agent Registry has no other outbound dependencies in production.
 
 ### Container security
 
-- **Always pull pinned versions.** Reference `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.0`, not `:latest`. Pinned tags make rollback deterministic.
-- **Run as non-root.** The base image already runs as a non-root user — do not override the user in your manifests.
+- **Always pull pinned versions.** Reference `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1`, not `:latest`. Pinned tags make rollback deterministic.
+- **Run as non-root where your platform requires it.** The current GA image (`1.1.1`) does not set a `USER` directive, so by default it starts as **root (UID 0)** and its `Config.User` image metadata is empty. To satisfy hardened runtimes (Kubernetes `runAsNonRoot`, OpenShift SCC, CIS Docker Benchmark), supply an explicit non-root user at deploy time:
+  - **Docker:** `docker run --user 1000:0 …`
+  - **Compose:** `user: "1000:0"`
+  - **Kubernetes:** a pod/container `securityContext` (see the example in [§5.5](#55-kubernetes)).
+
+  The chosen user must belong to group `0` (the root group) and have write access to any mounted writable directory. A hardened image that runs as a non-root user **by default** (and populates `Config.User`) is planned for an upcoming release; until then, the explicit override above is the supported way to run non-root.
 - **Set memory and CPU limits.** A runaway agent should be capped rather than allowed to consume the host. The Kubernetes example in [§5.5](#55-kubernetes) includes sensible defaults.
+
+#### Runtime user and writable directories
+
+| Property | Value |
+|---|---|
+| **Default runtime user (GA `1.1.1`)** | root — UID `0`, GID `0` (`Config.User` empty) |
+| **Recommended override** | UID `1000`, GID `0` (group `0` for OpenShift arbitrary-UID compatibility) |
+| **Must be writable** | `CUSTOM_WORKFLOWS_DIR` (holds `logs/` and `.discovery/`), or a separate `CONVERSATION_LOGS_DIR` |
+| **Required ownership for an override** | The writable directory must be owned by / writable to the chosen UID and group `0` — e.g. `chown -R 1000:0 <dir>` on a host mount, or `fsGroup: 0` in Kubernetes |
+
+**Verify the runtime identity:**
+
+```bash
+# Image metadata — empty on 1.1.1 (root); a value like 1000:0 once the hardened image ships
+docker inspect --format '{{.Config.User}}' copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
+
+# Actual process identity at runtime (default -> uid=0(root))
+docker run --rm copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1 id
+
+# With an override -> uid=1000 gid=0(root)
+docker run --rm --user 1000:0 copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1 id
+```
 
 ### Audit and monitoring
 
