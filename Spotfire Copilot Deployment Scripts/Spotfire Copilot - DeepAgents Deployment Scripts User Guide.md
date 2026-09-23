@@ -61,7 +61,7 @@ Along the way it can:
 - Fix the container port at `8000` and publish it through a separate host port,
   bound to loopback (`127.0.0.1`) by default for safety.
 - Configure local (in-Compose) or external/managed PostgreSQL + Redis.
-- Choose the LLM provider (OpenAI, Anthropic, or Google) and model.
+- Choose the LLM provider (OpenAI, Anthropic, Google, or Ollama) and model.
 - Configure A2A authentication (bearer token, API key header, or none).
 - Enable any subset of the ten catalog agents and wire each one to its MCP server.
 - Validate the generated Compose file with `docker compose config`.
@@ -201,7 +201,7 @@ This can be pre-selected with `--compose`/`-Compose` or `--kubernetes`/`-Kuberne
 
 ### 5.4 Model provider
 
-Pick **OpenAI**, **Anthropic**, or **Google Gemini**. The script prompts for the
+Pick **OpenAI**, **Anthropic**, **Google Gemini**, or **Ollama**. The script prompts for the
 matching API key (masked) and the `DEEPAGENTS_MODEL` value, and enforces that the
 model string starts with the selected provider prefix. Defaults:
 
@@ -210,6 +210,22 @@ model string starts with the selected provider prefix. Defaults:
 | OpenAI | `OPENAI_API_KEY` | `openai:gpt-5.1` |
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic:claude-3-5-sonnet-latest` |
 | Google | `GOOGLE_API_KEY` | `google:gemini-2.0-flash` |
+| Ollama | `OPENAI_API_KEY` (placeholder) + `OPENAI_BASE_URL` | `openai:llama3.2` |
+
+**Ollama** runs local/self-hosted models through Ollama's OpenAI-compatible API, so
+DeepAgents talks to it via the OpenAI provider. Selecting Ollama sets three values in
+`.env` (or the Kubernetes Secret): `DEEPAGENTS_MODEL=openai:<model>`, `OPENAI_BASE_URL`
+pointing at the Ollama endpoint, and any non-empty `OPENAI_API_KEY` (Ollama ignores the
+key value, so `ollama` is fine). Because the endpoint is reached over the OpenAI-compatible
+API, the model string keeps the `openai:` prefix (for example `openai:llama3.2`).
+
+- **Compose** default endpoint is `http://host.docker.internal:11434/v1`. Do **not** use
+  `localhost`/`127.0.0.1`: inside the container that resolves to the container itself, not
+  the host running Ollama. The script warns if you enter a loopback address.
+- **Kubernetes** default endpoint is `http://ollama.ollama.svc.cluster.local:11434/v1`.
+  `OPENAI_BASE_URL` is written into the Kubernetes Secret alongside `OPENAI_API_KEY` so both
+  are injected as container environment variables. Make sure the endpoint is reachable from
+  the cluster.
 
 ### 5.5 A2A authentication
 

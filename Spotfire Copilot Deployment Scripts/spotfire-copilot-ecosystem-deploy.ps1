@@ -550,17 +550,33 @@ function Invoke-KubernetesMode {
 
     Write-Section 'DeepAgents model'
     $llmProvider = Read-ChooseNum 'Which model provider will DeepAgents OSS use?' 1 @(
-        'openai|OpenAI', 'anthropic|Anthropic', 'google|Google Gemini API'
+        'openai|OpenAI', 'anthropic|Anthropic', 'google|Google Gemini API', 'ollama|Ollama (self-hosted, OpenAI-compatible)'
     )
+    $providerExtraSecretKv = ''
     switch ($llmProvider) {
         'openai'    { $providerKeyName = 'OPENAI_API_KEY';    $modelDefault = 'openai:gpt-5.1' }
         'anthropic' { $providerKeyName = 'ANTHROPIC_API_KEY'; $modelDefault = 'anthropic:claude-3-5-sonnet-latest' }
         'google'    { $providerKeyName = 'GOOGLE_API_KEY';    $modelDefault = 'google:gemini-2.0-flash' }
+        'ollama'    { $providerKeyName = 'OPENAI_API_KEY';    $modelDefault = 'openai:llama3.2' }
     }
-    $providerKeyValue = Read-PromptRequired $providerKeyName '' -Secret
-    $deepagentsModel = Read-PromptRequired 'DEEPAGENTS_MODEL' $modelDefault
-    if ($deepagentsModel -notlike "${llmProvider}:*") {
-        Invoke-Die "DEEPAGENTS_MODEL must start with '${llmProvider}:' for the $llmProvider provider."
+    if ($llmProvider -eq 'ollama') {
+        # Ollama exposes an OpenAI-compatible API. DeepAgents reaches it through the
+        # OpenAI provider (openai:<model>) plus OPENAI_BASE_URL and a placeholder key.
+        # Both go into the Kubernetes Secret so they are injected as container env vars.
+        $ollamaBaseUrl = Read-PromptRequired 'OPENAI_BASE_URL (Ollama endpoint reachable from the cluster)' 'http://ollama.ollama.svc.cluster.local:11434/v1'
+        $providerExtraSecretKv = "OPENAI_BASE_URL=$ollamaBaseUrl"
+        $providerKeyValue = Read-Prompt 'OPENAI_API_KEY (any non-empty value; Ollama ignores it)' 'ollama'
+        if ([string]::IsNullOrEmpty($providerKeyValue)) { $providerKeyValue = 'ollama' }
+        $deepagentsModel = Read-PromptRequired 'DEEPAGENTS_MODEL' $modelDefault
+        if ($deepagentsModel -notlike 'openai:*') {
+            Invoke-Die 'Ollama selection requires DEEPAGENTS_MODEL=openai:<model> (Ollama uses the OpenAI-compatible API).'
+        }
+    } else {
+        $providerKeyValue = Read-PromptRequired $providerKeyName '' -Secret
+        $deepagentsModel = Read-PromptRequired 'DEEPAGENTS_MODEL' $modelDefault
+        if ($deepagentsModel -notlike "${llmProvider}:*") {
+            Invoke-Die "DEEPAGENTS_MODEL must start with '${llmProvider}:' for the $llmProvider provider."
+        }
     }
 
     Write-Section 'A2A authentication'
@@ -656,6 +672,12 @@ function Invoke-KubernetesMode {
     $slines.Add('kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -')
     $slines.Add('kubectl -n "$NAMESPACE" create secret generic "$SECRET_NAME" \')
     $slines.Add("  --from-literal=$providerKeyName='$providerKeyValue' \")
+    if (-not [string]::IsNullOrEmpty($providerExtraSecretKv)) {
+        $exIdx = $providerExtraSecretKv.IndexOf('=')
+        $exKey = $providerExtraSecretKv.Substring(0, $exIdx)
+        $exVal = $providerExtraSecretKv.Substring($exIdx + 1)
+        $slines.Add("  --from-literal=$exKey='$exVal' \")
+    }
     if (-not [string]::IsNullOrEmpty($a2aSecretKey)) {
         $slines.Add("  --from-literal=$a2aSecretKey='$a2aSecretValue' \")
     }
@@ -877,17 +899,22 @@ switch ($PERSISTENCE_MODE) {
 # ----------------------------------------------------------------------------
 Write-Section 'DeepAgents model'
 $EXISTING_MODEL = Get-EnvValue $EXISTING_ENV 'DEEPAGENTS_MODEL'
+$EXISTING_OPENAI_BASE_URL = Get-EnvValue $EXISTING_ENV 'OPENAI_BASE_URL'
 $EXISTING_PROVIDER = 'openai'
 switch -Wildcard ($EXISTING_MODEL) {
     'anthropic:*' { $EXISTING_PROVIDER = 'anthropic' }
     'google:*'    { $EXISTING_PROVIDER = 'google' }
     'openai:*'    { $EXISTING_PROVIDER = 'openai' }
 }
+# Ollama reuses the OpenAI-compatible API, so a previous Ollama config looks like
+# an openai:* model with OPENAI_BASE_URL set. Disambiguate on that base URL.
+if ($EXISTING_PROVIDER -eq 'openai' -and -not [string]::IsNullOrEmpty($EXISTING_OPENAI_BASE_URL)) { $EXISTING_PROVIDER = 'ollama' }
 $providerDefaultNum = 1
 if ($EXISTING_PROVIDER -eq 'anthropic') { $providerDefaultNum = 2 }
 if ($EXISTING_PROVIDER -eq 'google') { $providerDefaultNum = 3 }
+if ($EXISTING_PROVIDER -eq 'ollama') { $providerDefaultNum = 4 }
 $LLM_PROVIDER = Read-ChooseNum 'Which model provider will DeepAgents OSS use?' $providerDefaultNum @(
-    'openai|OpenAI', 'anthropic|Anthropic', 'google|Google Gemini API'
+    'openai|OpenAI', 'anthropic|Anthropic', 'google|Google Gemini API', 'ollama|Ollama (local / self-hosted, OpenAI-compatible)'
 )
 
 $MODEL_SECRET_BLOCK = ''
@@ -900,6 +927,27 @@ switch ($LLM_PROVIDER) {
         $DEEPAGENTS_MODEL = Read-PromptRequired 'DEEPAGENTS_MODEL' $MODEL_DEFAULT
         if ($DEEPAGENTS_MODEL -notlike 'openai:*') { Invoke-Die 'OpenAI selection requires DEEPAGENTS_MODEL=openai:<model>.' }
         $MODEL_SECRET_BLOCK = "OPENAI_API_KEY=$OPENAI_API_KEY`n# ANTHROPIC_API_KEY=`n# GOOGLE_API_KEY="
+    }
+    'ollama' {
+        # Ollama exposes an OpenAI-compatible API, so DeepAgents talks to it through the
+        # OpenAI provider: DEEPAGENTS_MODEL=openai:<model> plus OPENAI_BASE_URL pointing
+        # at the Ollama endpoint and any non-empty OPENAI_API_KEY (Ollama ignores it).
+        $OLLAMA_BASE_DEFAULT = $EXISTING_OPENAI_BASE_URL
+        if ([string]::IsNullOrEmpty($OLLAMA_BASE_DEFAULT)) { $OLLAMA_BASE_DEFAULT = 'http://host.docker.internal:11434/v1' }
+        $OPENAI_BASE_URL = Read-PromptRequired 'OPENAI_BASE_URL (Ollama OpenAI-compatible endpoint)' $OLLAMA_BASE_DEFAULT
+        if ($OPENAI_BASE_URL -match 'localhost|127\.0\.0\.1') {
+            Write-Warn 'OPENAI_BASE_URL points at localhost/127.0.0.1. Inside the Compose container that resolves to the container itself, not the host running Ollama.'
+            Write-Warn 'Use http://host.docker.internal:11434/v1 (or the host''s LAN address) so the container can reach Ollama on the host.'
+        }
+        $EXISTING_OLLAMA_KEY = Get-EnvValue $EXISTING_ENV 'OPENAI_API_KEY'
+        if ([string]::IsNullOrEmpty($EXISTING_OLLAMA_KEY)) { $EXISTING_OLLAMA_KEY = 'ollama' }
+        $OPENAI_API_KEY = Read-Prompt 'OPENAI_API_KEY (any non-empty value; Ollama ignores it)' $EXISTING_OLLAMA_KEY
+        if ([string]::IsNullOrEmpty($OPENAI_API_KEY)) { $OPENAI_API_KEY = 'ollama' }
+        $MODEL_DEFAULT = $EXISTING_MODEL
+        if ($MODEL_DEFAULT -notlike 'openai:*') { $MODEL_DEFAULT = 'openai:llama3.2' }
+        $DEEPAGENTS_MODEL = Read-PromptRequired 'DEEPAGENTS_MODEL' $MODEL_DEFAULT
+        if ($DEEPAGENTS_MODEL -notlike 'openai:*') { Invoke-Die 'Ollama selection requires DEEPAGENTS_MODEL=openai:<model> (Ollama uses the OpenAI-compatible API).' }
+        $MODEL_SECRET_BLOCK = "OPENAI_API_KEY=$OPENAI_API_KEY`nOPENAI_BASE_URL=$OPENAI_BASE_URL`n# ANTHROPIC_API_KEY=`n# GOOGLE_API_KEY="
     }
     'anthropic' {
         $EXISTING_PROVIDER_KEY = Get-EnvValue $EXISTING_ENV 'ANTHROPIC_API_KEY'
@@ -996,8 +1044,16 @@ $ENV_CONTENT = @"
 # ============================================================
 
 IMAGE_TAG=$IMAGE_TAG
+# HOST/PORT are the address:port the server binds to INSIDE the container.
+# Keep PORT=8000 unless you have a specific reason to change it — the compose
+# port mapping and the container healthcheck both follow this value, so there is
+# nothing else to edit if you do change it. To change the port CLIENTS use on the
+# host, edit DEEPAGENTS_HOST_PORT below (NOT PORT). Do not blindly search/replace
+# port digits across these files — PORT and DEEPAGENTS_HOST_PORT are different.
 HOST=$HostValue
 PORT=8000
+# DEEPAGENTS_HOST_PORT: host-published port mapped to the container's PORT.
+# DEEPAGENTS_HOST_BIND: host interface it is published on (127.0.0.1 = loopback).
 DEEPAGENTS_HOST_PORT=$DEEPAGENTS_HOST_PORT
 DEEPAGENTS_HOST_BIND=$DEEPAGENTS_HOST_BIND
 LOG_LEVEL=$LOG_LEVEL
@@ -1068,13 +1124,14 @@ services:
       deepagents-oss-postgres:
         condition: service_healthy
     ports:
-      - "${DEEPAGENTS_HOST_BIND:-127.0.0.1}:${DEEPAGENTS_HOST_PORT:-8000}:8000"
+      # host_bind:host_port:container_port — container side follows PORT in .env
+      - "${DEEPAGENTS_HOST_BIND:-127.0.0.1}:${DEEPAGENTS_HOST_PORT:-8000}:${PORT:-8000}"
     env_file:
       - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${PORT:-8000}/healthz"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -1089,13 +1146,14 @@ services:
     image: copilotoci.azurecr.io/spotfirecopilot/copilot-deepagents-server-oss:${IMAGE_TAG}
     restart: unless-stopped
     ports:
-      - "${DEEPAGENTS_HOST_BIND:-127.0.0.1}:${DEEPAGENTS_HOST_PORT:-8000}:8000"
+      # host_bind:host_port:container_port — container side follows PORT in .env
+      - "${DEEPAGENTS_HOST_BIND:-127.0.0.1}:${DEEPAGENTS_HOST_PORT:-8000}:${PORT:-8000}"
     env_file:
       - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${PORT:-8000}/healthz"]
       interval: 10s
       timeout: 3s
       retries: 5
