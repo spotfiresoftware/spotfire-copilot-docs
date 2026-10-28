@@ -453,6 +453,12 @@ This directory will be mounted into the container at `/docs`. When you call the 
 endpoint, the Data Loader processes every PDF in this directory, splits them into chunks,
 generates embeddings, and stores the results in your vector database.
 
+> **Note — `DOCS_DIR` is a Docker Compose setting, not a container setting.** `DOCS_DIR`
+> tells Docker Compose which folder **on your host** to mount at `/docs`. The Data Loader
+> itself always reads PDFs from `/docs` inside the container and ignores `DOCS_DIR`. On
+> cloud platforms, mount your storage at `/docs` instead — see **§8 Step 5 — Deploy →
+> Cloud deployment (AWS ECS / Azure Container Apps)**.
+
 **Tips for best results:**
 
 - **Keep documents focused** — a collection of related documents (e.g., all admin guides)
@@ -569,6 +575,12 @@ does **not** need to run permanently. That changes how you deploy it in the clou
 > **Tip — only need Help/HowTo?** If you are just enabling Copilot's built-in Help and
 > HowTo, deploy the loader with **no volume at all**, call `/load_spotfire_docs`, then
 > delete it. You never touch `/docs`.
+
+> **Important — mount at exactly `/docs`, and do not set `DOCS_DIR`.** The Data Loader
+> always reads your PDFs from `/docs` inside the container. `DOCS_DIR` is only used by
+> Docker Compose to choose a host folder; setting it as a container environment variable
+> (for example `DOCS_DIR=./docs`) has no effect. If your file share is mounted anywhere
+> other than `/docs`, `/load` will not find your PDFs.
 
 #### AWS ECS / Fargate
 
@@ -909,7 +921,8 @@ Parameters:
 
 **Typical workflow:**
 
-1. Place your PDFs in the directory specified by `DOCS_DIR` (mounted as `/docs`)
+1. Place your PDFs where the container will see them at `/docs` — the host folder set by
+   `DOCS_DIR` (Docker Compose), or the file share mounted at `/docs` (cloud)
 2. Start the Data Loader container
 3. Authenticate (see above)
 4. Call `/load` with your chosen `index_name`
@@ -1011,7 +1024,7 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 | `EMBEDDING_MODEL_NAME` | Provider default | Embedding model name |
 | `DEFAULT_CLIENT_ID` | — | Pre-seeded OAuth2 client ID (survives restart) |
 | `DEFAULT_CLIENT_SECRET` | — | Pre-seeded OAuth2 client secret (survives restart) |
-| `DOCS_DIR` | `./pdf_docs` | Host path to mount as `/docs` in the container |
+| `DOCS_DIR` | `./pdf_docs` | **Docker Compose only.** Host folder that `docker-compose.yml` mounts at `/docs`. The Data Loader does not read this variable; on cloud platforms, mount your storage at `/docs` instead. |
 
 ### LangSmith tracing (optional)
 
@@ -1298,7 +1311,7 @@ services:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `/docs` directory empty in container | `DOCS_DIR` not set or wrong path | Verify `DOCS_DIR` in `.env` points to a real directory with files |
+| `/docs` directory empty in container | Docker Compose: `DOCS_DIR` not set or wrong path. Cloud: file share not mounted at `/docs` | Docker Compose: verify `DOCS_DIR` in `.env` points to a real host directory with files. Cloud: mount the share at exactly `/docs` — setting `DOCS_DIR` on the container has no effect |
 | Embedding errors | Wrong embedding model or API key | Verify `EMBEDDING_MODEL_NAME` and API credentials |
 | Vector DB connection refused | Wrong URI/host or DB not running | Check `VECTORDB_URI` / `ZILLIZ_CLOUD_URI` / `PGVECTOR_CONNECTION_STRING` and connectivity |
 | `ConnectionNotExistException` during `/load` with Milvus or Zilliz | Running an older image that predates the connection-alias fix | Upgrade the data-loader image to `2.3.7`, redeploy, and retry the load |
