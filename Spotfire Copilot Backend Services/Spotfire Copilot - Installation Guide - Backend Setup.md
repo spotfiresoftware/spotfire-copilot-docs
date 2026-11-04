@@ -107,6 +107,12 @@
   - [What's new in 2.3.4](#whats-new-in-234)
   - [What's new in 2.3.2](#whats-new-in-232)
   - [What's new in 2.3.1](#whats-new-in-231)
+- [Appendix E — LLM Rate Limits and TPM Best Practices](#appendix-e--llm-rate-limits-and-tpm-best-practices)
+  - [E.1 TPM, RPM, and Copilot token budgets](#e1-tpm-rpm-and-copilot-token-budgets)
+  - [E.2 What drives Copilot's LLM usage](#e2-what-drives-copilots-llm-usage)
+  - [E.3 Which models and deployments share a quota](#e3-which-models-and-deployments-share-a-quota)
+  - [E.4 Best practices](#e4-best-practices)
+  - [E.5 Troubleshooting rate-limit errors](#e5-troubleshooting-rate-limit-errors)
 
 ---
 
@@ -1833,6 +1839,7 @@ If the flag is left unset but the configured model name looks like a GPT-5+ or o
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 | `ORCHESTRATOR_INTERNAL_URL` | `http://orchestrator:8080` | URL used by admin console to reach the orchestrator. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:8081,http://localhost:3000` | Comma-separated list of origins allowed to make cross-origin requests. **Must be set in production** — include every domain that hosts a Spotfire client or custom UI that calls the API. Both the orchestrator and admin console read this variable. |
+| `TOKEN_BUDGET_WARN_PCT` | `0.9` | Fraction of an OAuth2 client's monthly token budget at which responses start carrying `token_budget.warning: true` (for example `0.8` for 80%). Budgets themselves are set per client in the admin console — see the [Admin Console Guide §5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets). |
 
 ### Database variables
 
@@ -1955,7 +1962,8 @@ This issue has been observed in traditional on-premise installs hosted on AWS wh
 | `Warning: Missing configuration for AZURE fast category`, requests to `/deployments/UNCONFIGURED/chat/completions`, and `DeploymentNotFound` | Azure model-category env vars are incomplete; the enhanced plugin loads a category only when both `AZURE_<CATEGORY>_MODEL` and `AZURE_<CATEGORY>_TEMPERATURE` are set | Set complete pairs for every category you use, especially `AZURE_FAST_MODEL` + `AZURE_FAST_TEMPERATURE` (summarization/title generation uses `fast`). Keep `MODEL_PLUGIN_ENTRY_POINT=plugins.models.azure_openai_enhanced:AzureOpenAIPlugin` and verify deployment names exactly match Azure deployment names |
 | `DeploymentNotFound` with a non-`UNCONFIGURED` deployment in the request URL | The configured Azure deployment name does not exist in that Azure OpenAI resource (typo, deleted deployment, wrong environment/resource, or propagation delay right after creation) | Verify every configured deployment value exists in the same Azure OpenAI resource and matches exactly (`AZURE_FAST_MODEL`, `AZURE_LARGE_MODEL`, `AZURE_VISION_MODEL`, `AZURE_CODE_MODEL`, `AZURE_REASONING_MODEL`, and any `*_MODEL_NAME` overrides). If the deployment was just created, wait a few minutes and retry. |
 | `The model associated with the deployment is deprecated and no longer available for use` | The model version backing an Azure deployment has been retired by Microsoft. This error comes directly from Azure and is unrelated to the Copilot version. The same request would fail on any Copilot version once the underlying model is retired. | In Azure AI Studio, check the status of the affected deployment. Either update it to a supported model version in-place, or create a new deployment with a currently active model and update your `AZURE_*_MODEL` env vars to reference the new deployment name. |
-| `Rate limit exceeded` | LLM provider rate limit | This error comes from the upstream LLM provider (OpenAI, Bedrock, etc.), not from the orchestrator. Reduce request frequency or increase your provider's rate limits. The orchestrator itself rate-limits only auth endpoints (5/min for admin login, 20/min for client tokens). |
+| `Rate limit exceeded` | LLM provider rate limit | This error (HTTP 429) comes from the upstream LLM provider (OpenAI, Bedrock, etc.), not from the orchestrator. See **[Appendix E](#appendix-e--llm-rate-limits-and-tpm-best-practices) — LLM Rate Limits and TPM Best Practices**. The orchestrator itself rate-limits only auth endpoints (5/min for admin login, 20/min for client tokens). |
+| HTTP 422 `token_budget_exceeded` | The OAuth2 client has used its monthly token budget | Not a provider rate limit. Raise or extend the client's budget in the admin console — see the [Admin Console Guide §5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets). |
 | Timeout on first request | Model cold start (Bedrock, Vertex AI) | First request may take 10-30 seconds — subsequent requests are faster |
 | IAM/role errors on AWS | Explicit keys override IAM role | Remove `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from the task definition — only set `AWS_REGION` |
 
@@ -2565,6 +2573,77 @@ Released May 2026. Backwards-compatible with 2.3.0 deployments.
 - **Milvus auto-detect metric type** — Milvus retriever now auto-detects `IP` vs `L2` from the collection index instead of hard-coding `L2`.
 
 Full env-var details are in **[§11](#11-environment-variable-reference) Environment Variable Reference** — 2.3.1-only variables are marked **(2.3.1)**.
+
+---
+
+## Appendix E — LLM Rate Limits and TPM Best Practices
+
+Spotfire Copilot does not host language models. Every answer, embedding, and summary is produced by the model deployments you configure (see **[§4](#4-step-2--choose-and-configure-your-llm-provider)** and **[§11 → Model category overrides](#model-category-overrides)**). Your LLM provider limits how fast those deployments can be used. This appendix explains how Copilot consumes that capacity, what to consider when configuring deployments, and how to troubleshoot rate-limit errors.
+
+> **No minimum TPM or RPM is prescribed.** Spotfire has not published validated performance benchmarks for Copilot. Size capacity from your provider's quota documentation and your own observed usage.
+
+### E.1 TPM, RPM, and Copilot token budgets
+
+| Limit | Set by | Controls | When exceeded, the orchestrator returns |
+|---|---|---|---|
+| **Tokens per minute (TPM)** | Your LLM provider, per deployment or quota | How many tokens a deployment accepts per minute | HTTP **429**, `error_type: rate_limit` (with `retry_after` when the provider supplies one) |
+| **Requests per minute (RPM)** | Your LLM provider | How many calls a deployment accepts per minute, regardless of size | HTTP **429**, `error_type: rate_limit` |
+| **Provider usage quota** | Your LLM provider account or subscription | Total usage allowed on the account | HTTP **503**, `error_type: quota_exceeded` |
+| **Copilot monthly token budget** | Your Copilot administrator, per OAuth2 client | Total tokens a client may consume in a calendar month | HTTP **422**, `error_type: token_budget_exceeded` — rejected before any model call |
+
+TPM and RPM limit **throughput** — how much traffic a deployment accepts at once. A token budget limits **monthly consumption**. They are independent: a client can be well within its budget and still receive 429 errors in a busy minute, and raising provider TPM does not lift an exhausted budget. Budgets are described in the [Admin Console Guide §5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets).
+
+The orchestrator does not queue or throttle requests, and does not add its own retry logic for chat requests. A provider rate-limit error is returned to the Spotfire client, which shows the error type and suggested action in the Copilot panel (see [E.5](#e5-troubleshooting-rate-limit-errors)).
+
+### E.2 What drives Copilot's LLM usage
+
+| Factor | Configured in | Effect |
+|---|---|---|
+| **RAG Top K** | Spotfire preferences **RAG Top K** (default `5`) and **RAG Min Relevance Score** ([Frontend Setup → RAG Settings](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md#rag-retrieval-augmented-generation-settings)) | For each selected knowledge base, the Spotfire client retrieves up to *Top K* chunks, drops chunks below the minimum relevance score, and caps the retrieved context at about 12,000 characters per message. Higher values mean more tokens per knowledge-base question. (`DEFAULT_RAG_TOPK` in [§11](#knowledge-base--rag-variables) applies only to callers that send no value.) |
+| **Message History Size** | Spotfire preference **Message History Size** ([Frontend Setup → Chat & History Settings](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md#chat--history-settings)) | Previous exchanges are re-sent with each request. Progressive summarisation compresses long conversations ([§11 → Summarization variables](#summarization-variables)). |
+| **Strip RAG Context from History** | Spotfire preference (default enabled) | When disabled, retrieved chunks from earlier turns are re-sent with later requests. |
+| **Intent detection** | — | When a user types a free-text question, the Spotfire client first sends a short classification request to the `fast` model to choose the feature. Welcome buttons and intents chosen from the `/` menu skip this call. Each typed question therefore uses at least two requests. |
+| **Multi-step operations** | — | Some features call the model more than once per user question. For example, *Specific Data Question* generates SQL, Spotfire runs it, and the result is returned for a further model call; failed SQL is regenerated up to five times. A tool-using answer can take up to 15 round trips before Copilot pauses and asks the user whether to continue. Each step is a separate request and counts toward both TPM and RPM. |
+| **Image processing** | — | *Explain Visualization* and *Explain Page* send a screenshot to the model mapped to the `vision` category. Providers convert images to tokens using their own rules. |
+| **Document ingestion** | Data Loader ([Data Loaders Guide §5](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md#5-step-2--choose-your-llm-and-embedding-provider)) | Loading documents sends all extracted text to the embedding model. The Advanced (Unstructured) loader image also sends each extracted image to the loader's configured LLM to generate a searchable summary. Large loads produce sustained bursts of requests. |
+| **Background tasks** | [§11 → Summarization variables](#summarization-variables); [§10 → Knowledge base index enrichment](#knowledge-base-index-enrichment) | Thread titles, conversation summaries, and nightly index enrichment make additional calls to the model mapped to the `fast` category. |
+
+The Admin Console's Token Usage tab shows only part of this usage — see [Admin Console Guide §5.2 → What the Token Usage tab does not include](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#what-the-token-usage-tab-does-not-include).
+
+### E.3 Which models and deployments share a quota
+
+Copilot can use several models and deployments. Whether they share a rate limit depends on your configuration and on your provider's quota rules.
+
+- **Model categories.** The orchestrator serves each request with the model mapped to its category — `fast`, `large`, `vision`, `code`, or `reasoning` — and each category can point to a different model or deployment ([§11 → Model category overrides](#model-category-overrides)). The Spotfire client requests `fast` for intent detection and short helper tasks, `vision` for screenshot-based features, and leaves all other requests to the orchestrator default, `large`. Categories mapped to the same deployment share its limits. Separate deployments may still share a subscription-, project-, or region-level quota, depending on the provider.
+- **Secondary model.** `SECONDARY_MODEL_PLUGIN_ENTRY_POINT` is required at startup but supports a deprecated internal feature and is not used by Spotfire clients at runtime ([§4](#4-step-2--choose-and-configure-your-llm-provider)). It adds no load; set it to the same value as `MODEL_PLUGIN_ENTRY_POINT`.
+- **Embeddings.** The orchestrator embeds each knowledge-base question with the model set by `EMBEDDINGS_PLUGIN_ENTRY_POINT`. The Data Loader has its own embedding configuration. If both use the same embedding deployment, document loads and live questions compete for the same limit.
+- **Domain Agents (Agent Registry).** Agents do not hold LLM credentials. The Agent Registry relays their LLM and knowledge-base calls to the orchestrator, which forwards them to its configured models ([Agent Registry Installation Guide](../Spotfire%20Copilot%20Agent%20Registry%20-%20Domain%20Agents/Spotfire%20Copilot%20-%20Agent%20Registry%20Installation%20Guide.md)). Domain Agent traffic therefore uses the orchestrator's deployments and quotas.
+- **Ecosystem Agents (Agent Server).** These agents call models through the agent server's own model configuration — directly or through an LLM gateway ([LLM Gateway Guide](../Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agent-server-deployment/Spotfire%20Copilot%20-%20LLM%20Gateway%20%28Model%20Access%20via%20agentgateway%29%20Guide.md)). They use whichever deployment that configuration points to, which may or may not be shared with the orchestrator.
+- **Other applications.** Any other workload using the same deployment, API key, or regional quota draws on the same limits.
+
+<!-- REVIEW: confirm whether Domain Agent calls relayed through the orchestrator appear in Token Usage and count against the Agent Registry OAuth2 client's budget. -->
+
+### E.4 Best practices
+
+1. **Verify provider quotas for every deployment Copilot uses** — the models mapped to `fast`, `large`, and `vision`, the orchestrator and Data Loader embedding models, and any Ecosystem Agent models. Check per-deployment limits and any shared subscription, project, or regional quota in your provider's documentation. The Spotfire client does not set a maximum output length on its requests, so the model's default output limit applies; if your provider counts requested output tokens toward TPM, take this into account.
+2. **Monitor representative usage.** During pilot and rollout, review your provider's monitoring for requests, tokens, and throttled (429) requests at busy times. Use the Admin Console Token Usage tab ([§5.2](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#52-token-usage-tab)) to see which users and OAuth2 clients drive Copilot's share.
+3. **Adjust capacity based on observed throttling.** If users see 429 errors at busy times, raise the affected deployment's limits, request a quota increase, or move a heavily used category or workload to its own deployment. After a change, confirm that throttled requests have dropped over a comparable busy period.
+4. **Isolate document ingestion.** Run large loads outside business hours, or give the Data Loader its own embedding deployment, so loads do not throttle live knowledge-base questions.
+5. **Tune Copilot settings before adding capacity.** Lower **RAG Top K** or **Message History Size** for user groups that do not need high values, and keep **Strip RAG Context from History** enabled.
+6. **Control monthly spend separately.** Use token budgets ([§5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets)) to cap monthly consumption per OAuth2 client; they do not protect against bursts.
+
+### E.5 Troubleshooting rate-limit errors
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| HTTP 429 `rate_limit` at busy times. The Copilot panel shows *"I encountered an issue while processing your request"* with **Type: rate_limit** and *"Rate limit exceeded. Please wait N seconds before retrying"* | A model deployment reached its TPM or RPM limit | Wait for the `retry_after` period. Use provider monitoring to identify the throttled deployment, then raise its limits or move a category to a separate deployment ([E.3](#e3-which-models-and-deployments-share-a-quota), [E.4](#e4-best-practices)). |
+| HTTP 429 on knowledge-base questions while a document load is running | The Data Loader and the orchestrator share an embedding deployment | Load off-peak, or use a separate embedding deployment for the Data Loader. |
+| Document load reports failed files, with rate-limit errors in the Data Loader logs | The load exceeded the embedding deployment's limits (or, for the Unstructured loader, the LLM deployment's). The loader retries rate-limit errors with backoff before giving up on a file. | Raise limits or load during quieter periods. Then reload only the failed documents with `drop_old=false`, or reload the whole collection with `drop_old=true` ([Data Loaders Guide §9](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md#9-step-6--load-documents-via-the-api)). |
+| HTTP 429 although per-minute usage looks below the limit | The provider enforces limits over shorter intervals, an RPM limit was reached, a shared subscription or regional quota applies, or another application uses the same deployment | Review the provider's quota rules and other consumers of the deployment. |
+| HTTP 429 in one long conversation only | A large prompt from accumulated history and retrieved context | Start a new conversation; keep **Strip RAG Context from History** enabled. |
+| HTTP 429 when using an Ecosystem Agent | The agent server's model deployment or LLM gateway reached its limit | Check the agent server's model configuration and gateway limits ([LLM Gateway Guide](../Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agent-server-deployment/Spotfire%20Copilot%20-%20LLM%20Gateway%20%28Model%20Access%20via%20agentgateway%29%20Guide.md)). |
+| HTTP 503 `quota_exceeded` | The provider account's usage or billing quota is exhausted | Check your provider subscription and billing. |
+| HTTP 422 `token_budget_exceeded`. The Copilot panel shows **Monthly token budget exhausted** | The OAuth2 client's Copilot monthly token budget is used up — **not** a provider limit | Raise or extend the budget ([Admin Console Guide §5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets)). Increasing provider TPM does not help. |
 
 ---
 

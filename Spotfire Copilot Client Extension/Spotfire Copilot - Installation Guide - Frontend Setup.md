@@ -724,8 +724,9 @@ Common mismatches to look for:
 **Steps:**
 1. Open the Spotfire **notifications panel** to see the detailed error.
 2. **HTTP 401 (Unauthorized):** Verify that the Orchestrator Client ID and Client Secret in Copilot preferences are correct and have not expired.
-3. **HTTP 429 (Rate Limit):** The underlying LLM has rate-limited requests. Wait a moment and try again. If this occurs frequently, contact your Orchestrator administrator about rate limit configuration.
-4. **Connection refused / timeout:** Verify the Orchestrator Base URL is correct and reachable from the Spotfire client. Check for firewall rules or proxy configurations.
+3. **HTTP 429 (Rate Limit):** The underlying LLM has rate-limited requests. Wait a moment and try again. If this occurs frequently, contact your Orchestrator administrator about rate limit configuration (see **Appendix E — LLM Rate Limits and TPM Best Practices** in the [Backend Setup guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md#appendix-e--llm-rate-limits-and-tpm-best-practices)).
+4. **HTTP 422 (`token_budget_exceeded`):** The monthly token budget for this Copilot client has been used up. Contact your Orchestrator administrator to raise or extend the budget (see the [Admin Console Guide §5.3](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets)).
+5. **Connection refused / timeout:** Verify the Orchestrator Base URL is correct and reachable from the Spotfire client. Check for firewall rules or proxy configurations.
 
 ### "I'm sorry, I've become a bit stuck. Can you try again, rephrasing your question?"
 

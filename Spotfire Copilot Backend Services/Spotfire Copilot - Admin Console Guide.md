@@ -22,6 +22,7 @@
 - [5. Conversations and Token Usage](#5-conversations-and-token-usage)
   - [5.1 Conversations tab](#51-conversations-tab)
   - [5.2 Token Usage tab](#52-token-usage-tab)
+  - [5.3 Token Budgets](#53-token-budgets)
 - [6. User Management](#6-user-management)
   - [6.1 Common actions](#61-common-actions)
   - [6.2 The temporary-password-shown-once gotcha](#62-the-temporary-password-shown-once-gotcha)
@@ -68,7 +69,7 @@ The **admin console** is a browser-based **operations dashboard** for Spotfire C
 - **User management** — create users, assign roles, reset passwords, enable/disable accounts.
 - **OAuth2 client management** — issue and revoke machine-to-machine credentials for Spotfire clients, scripts, and CI/CD integrations.
 - **Conversation monitoring** — read across all users' conversations to investigate support issues, study usage, and audit activity.
-- **Token usage analytics** — track LLM token spend per user and per client.
+- **Token usage analytics and budgets** — track LLM token spend per user and per client, and set monthly token budgets per OAuth2 client.
 - **RAG index management** — list knowledge-base collections, view indexed sources, trigger enrichment.
 - **A2A agent registry** — view and manage agents the orchestrator routes to.
 - **MCP tunnel management** — see active tunnels for tools that bridge to local Spotfire instances.
@@ -116,9 +117,9 @@ The admin console has **three roles**, stored in the `role` column of the `users
 
 | Role | Internal value | Who it's for | Can do |
 |------|---------------|--------------|--------|
-| **Admin** | `admin` | Operations team, IT administrators | Everything — user management, OAuth2 clients, security policy, system logs, all conversations, all token usage |
+| **Admin** | `admin` | Operations team, IT administrators | Everything — user management, OAuth2 clients, security policy, system logs, all conversations, token usage and token budgets |
 | **Power user** | `power_user` | Analysts, support engineers, team leads | View **all** conversations, view system-wide stats, trigger summarisation and RAG enrichment — but **not** create users, manage OAuth2 clients, or change security policy |
-| **User** | `user` (default) | End users | Their own conversations only, their own token usage, their own password change |
+| **User** | `user` (default) | End users | Their own conversations only, their own password change |
 
 > **Why role separation matters:** the most common operator confusion is "my power user can't reset passwords". That's deliberate. Password resets, OAuth2 client creation, and security-policy changes are admin-only because they affect other users' ability to authenticate. Power users get **read access** to everything operational; admins get **write access** to identity and policy.
 
@@ -176,7 +177,7 @@ Quirks worth knowing:
 
 ### 5.2 Token Usage tab
 
-The **Token Usage** tab analyses LLM token consumption from message metadata.
+The **Token Usage** tab is **admin-only**. It analyses LLM token consumption from message metadata.
 
 *[Screenshot: Token Usage tab with a bar chart of tokens-per-day over a selected period and a table broken down by user]*
 
@@ -184,9 +185,135 @@ What you can do:
 
 - **Pick a period** — week, month, quarter, year, all, or a custom `days=N`.
 - **Filter by user or client** — `user_id=alice` or `client_id=<oauth2-client>`.
+- **View each OAuth2 client's usage for the current month against its budget** — see **[§5.3](#53-token-budgets) Token Budgets**.
 - **Purge token-usage metadata for a user** — useful when offboarding (deletes the `token_usage` dict from each message's metadata while keeping the conversation text intact).
 
 Where the numbers come from: every assistant message is stamped with the provider's reported prompt/completion/total token counts in `metadata_.token_usage`. The Token Usage tab simply aggregates this JSONB field. If your LLM provider doesn't return usage (rare), the count is zero — the answer was still generated, but it's not visible here.
+
+#### What the token metrics mean
+
+LLM providers measure and bill usage in **tokens** — fragments of text roughly 4 characters (about ¾ of an English word) long. Non-English text, code, and JSON usually produce more tokens per character.
+
+| Metric | What it measures | What drives it in Spotfire Copilot |
+|---|---|---|
+| **Prompt tokens** (input) | Everything the orchestrator *sends* to the model for one call | System prompt for the feature, the user's question, conversation history, retrieved knowledge-base chunks, tool definitions, tool/query results returned by the Spotfire client, and any image (for example *Explain Visualization* screenshots) |
+| **Completion tokens** (output) | Everything the model *writes back* | Length of the answer, generated SQL, visualization specification, or Python data function code |
+| **Total tokens** | Prompt + completion | The value counted against token budgets (see **[§5.3](#53-token-budgets)**) |
+
+Prompt tokens are almost always the larger share. A typical knowledge-base question sends several thousand prompt tokens and receives a few hundred completion tokens.
+
+#### What makes prompt tokens grow
+
+| Factor | Setting | Effect |
+|---|---|---|
+| **Conversation history** | Spotfire client preference **Message History Size** | Prior question/answer pairs are re-sent on every turn, so long conversations cost more per question. Older turns are periodically summarised to keep this bounded. |
+| **Knowledge-base chunks** | Spotfire client preferences **RAG Top K** (default `5`) and **RAG Min Relevance Score** | For each selected knowledge base, the client retrieves up to *Top K* chunks, drops chunks below the minimum relevance score, and caps the retrieved context at about 12,000 characters (roughly 3,000 tokens) per message. |
+| **Repeated RAG context in history** | Spotfire client preference **Strip RAG Context from History** (default `true`) | When disabled, retrieved chunks from earlier turns are re-sent with every later turn. Keep enabled. |
+| **Intent detection** | — | When a user types a free-text question, the client first makes a short classification call to the `fast` model to choose the feature. Welcome buttons and intents picked from the `/` menu skip this call. |
+| **Multi-step features** | — | Features where Copilot calls a tool and then continues (for example *Specific Data Question*: generate SQL → Spotfire executes it → model reads the result) make **one model call per step**. Failed SQL is regenerated up to five times, and a tool-using answer can take up to 15 round trips before Copilot pauses and asks the user whether to continue. |
+| **Images** | — | *Explain Visualization* and *Explain Page* send screenshots. Image tokens depend on the provider and image size. |
+
+#### What the Token Usage tab does not include
+
+The tab shows **chat-model tokens consumed by user requests through `/orchestrator`**. It does **not** include:
+
+| Not included | Where it is consumed | Why it matters |
+|---|---|---|
+| **Embedding tokens when loading documents** | Data Loader (`/load`, `/load_spotfire_docs`) | Large document loads can consume a significant number of embedding tokens. See **Appendix E — LLM Rate Limits and TPM Best Practices** in the [Backend Setup guide](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md#appendix-e--llm-rate-limits-and-tpm-best-practices). |
+| **Embedding tokens for each knowledge-base question** | Orchestrator, one short embedding call per RAG query | Small (tens of tokens per question), but billed by your provider. |
+| **Background conversation summarisation** | Orchestrator background daemon (`SUMMARIZER_MAX_TOKENS`, default `4096`) | Periodic, proportional to conversation volume. |
+| **Nightly RAG index enrichment** | Orchestrator daemon, ~02:00 UTC | One short LLM call per new or changed index to generate a display name and description. |
+| **Calls made by Ecosystem Agents** | Agent Server, using its own model configuration or an LLM gateway | Tracked by the agent server or your LLM gateway, not by the orchestrator. Domain Agents (Agent Registry) relay their LLM calls through the orchestrator instead. |
+
+<!-- REVIEW: confirm whether Domain Agent calls relayed through the orchestrator appear on this tab and count against the Agent Registry OAuth2 client's budget. -->
+
+**Consequence:** your LLM provider's bill will be **higher** than the Token Usage tab total. Use the tab to compare users, clients, and trends; use your provider's billing console for cost reconciliation.
+
+### 5.3 Token Budgets
+
+<!-- REVIEW: token budgets were added after the 2.3.5 tag (migrations 021/022, July 2026). Confirm the first release that ships them and add a version marker here. -->
+
+An administrator can set a **monthly token budget** on any **OAuth2 client**. When a client has used its budget for the current month, the orchestrator rejects further requests from that client until the next month starts, or until an administrator raises or extends the budget.
+
+| Property | Value |
+|---|---|
+| **Unit** | Tokens (prompt + completion, as reported by the LLM provider). There is **no** currency or cost conversion. |
+| **Period** | Calendar month, **UTC**. Usage resets automatically on the first request of a new month. |
+| **Scope** | Per **OAuth2 client** — not per individual user. |
+| **Default** | Unlimited (no budget). |
+| **Applies to** | Requests authenticated with an OAuth2 client token (the Spotfire client, scripts, integrations). Requests from users signed in with a username and password are not subject to a client budget. |
+| **Counts** | Chat-model tokens on `/orchestrator` requests — the same calls shown in the Token Usage tab. The exclusions listed in **[§5.2](#52-token-usage-tab)** also apply. |
+
+#### Budgets are shared by everyone using the same client
+
+The Spotfire client authenticates with the **Orchestrator Client ID** and **Orchestrator Client Secret** preferences. Every Spotfire user whose group resolves to the same client ID **shares one budget**.
+
+To give different departments separate budgets:
+
+1. Create one OAuth2 client per department (**OAuth Clients → Create Client**, profile `spotfire_client`).
+2. In Spotfire **Administration Manager → Preferences → Copilot → Orchestrator Configuration**, set the matching client ID and secret on each department's group.
+3. Set a budget on each client.
+
+#### Setting, extending, and clearing a budget
+
+All budget actions are **admin-only** and are performed on the **Token Usage** tab, in the per-client view.
+
+*[Screenshot: Token Usage tab per-client view showing a usage bar with a budget marker and the "Set budget" and "Extend" buttons]*
+
+| Action | Button | Effect |
+|---|---|---|
+| **Set a budget** | **✏️ Set budget** | Enter a whole number of tokens per month (for example `20000000`). Takes effect on the client's next request. |
+| **Set and reset usage** | **✏️ Set budget** → *reset usage* option | Sets the budget **and** resets this month's consumed tokens to `0`, giving the client a fresh allowance starting now. |
+| **Remove the budget** | **✏️ Set budget** → leave the value blank | Client becomes unlimited. |
+| **Temporary top-up** | **➕ Extend** | Adds extra tokens for the **current month only**. The extension expires automatically at month rollover; you do not need to remember to remove it. Only available on clients that already have a budget. |
+
+The per-client usage bar shows usage against the budget. When an extension is active, it shows both the base budget and the effective (base + extension) budget.
+
+Equivalent REST calls (admin token required):
+
+```bash
+# Set a 20M token monthly budget (blank value = unlimited)
+curl -X PUT "http://<host>:8081/admin/oauth2-clients/<client_id>/budget" \
+  -H "Authorization: Bearer <admin_token>" \
+  -F monthly_token_budget=20000000 -F reset_usage=false
+
+# Grant 2M extra tokens for this month only
+curl -X POST "http://<host>:8081/admin/oauth2-clients/<client_id>/budget/extend" \
+  -H "Authorization: Bearer <admin_token>" \
+  -F extra_tokens=2000000
+```
+
+#### What happens as the budget is used
+
+| Usage | Behaviour |
+|---|---|
+| Below the warning threshold | Normal. |
+| At or above the warning threshold (default **90%** of the effective budget) | Requests still succeed. Each response carries a `token_budget` object with `warning: true` and the `remaining` tokens, and the Copilot panel shows a banner: *"Monthly token budget is running low. N of M tokens remain for YYYY-MM. Contact your administrator if you need more capacity."* Change the threshold with the orchestrator environment variable `TOKEN_BUDGET_WARN_PCT` (for example `0.8` for 80%). |
+| At or over the effective budget | Requests are rejected **before** the model is called with **HTTP 422**, `error_type: token_budget_exceeded`, and a message such as *"Monthly token budget exhausted for 2026-07: 150000 of 150000 tokens used. Contact your administrator to increase the budget."* The Copilot panel shows **Monthly token budget exhausted** with the period, tokens used, and tokens remaining. |
+
+Notes:
+
+- HTTP **422** means "budget exhausted". HTTP **429** means "the LLM provider rate-limited the request". They have different causes and fixes — for 429s see **Appendix E — LLM Rate Limits and TPM Best Practices** in the [Backend Setup guide](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md#appendix-e--llm-rate-limits-and-tpm-best-practices).
+- The check happens before each request, but usage is only known after the model responds. The request that crosses the limit is allowed to finish, so a client can end the month slightly over budget.
+- If the orchestrator cannot read budget data from its database, it logs a warning and **allows** the request. Budgets never take the service down.
+
+#### Why the budget bar and the enforcement counter can differ
+
+The orchestrator enforces budgets with a running per-client counter for the current month. The budget history view recalculates usage from stored conversation messages. The two can differ slightly, for example after conversations are deleted, after a **reset usage**, or for months before budgets were enabled. **Enforcement always uses the running counter.**
+
+#### Choosing a budget value
+
+Base the budget on your own measured usage rather than a generic figure:
+
+1. Run Copilot without a budget (or with a generous one) for a representative period — at least two to four weeks.
+2. On the **Token Usage** tab, filter by the client and note the total tokens and the number of active users for that period.
+3. Scale to a month and add headroom for growth:
+
+$$
+\text{Monthly budget} \approx \frac{\text{Measured tokens}}{\text{Measured days}} \times \text{Days in month} \times \text{Expected user growth} \times \text{Headroom}
+$$
+
+4. Review the per-client usage bar after the first month and adjust. The 90% warning gives early notice before requests start being rejected.
 
 ## 6. User Management
 
@@ -232,6 +359,8 @@ On creation, the dialog shows the `client_id` and the **plaintext `client_secret
 
 - **Toggle** flips `is_active` between `true` and `false` without deleting the row. Use this to temporarily quarantine a client (e.g. while you investigate a suspected leak) without destroying the audit trail of which integrations were configured.
 - **Delete** removes the row entirely. The `client_id` is freed for re-use, but you almost never want to re-use one — generate a fresh client for the new integration.
+
+To cap a client's monthly LLM usage, set a token budget on the **Token Usage** tab — see **[§5.3](#53-token-budgets) Token Budgets**.
 
 ### 7.3 Cross-reference
 

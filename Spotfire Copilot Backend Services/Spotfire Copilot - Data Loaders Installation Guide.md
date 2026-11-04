@@ -950,6 +950,12 @@ curl -X POST "http://localhost:8080/load?index_name=api-docs&drop_old=true" \
 > and `page` (page number) metadata. The Orchestrator includes these in its responses so
 > users can trace answers back to specific documents and pages.
 
+> **📈 Large document sets and provider rate limits.** Loading sends all extracted text to
+> your embedding model (and, with the Advanced (Unstructured) loader, each extracted image to
+> your LLM for summarisation). Large loads can exceed your provider's tokens-per-minute (TPM)
+> or requests-per-minute limits. See **Appendix E — LLM Rate Limits and TPM Best Practices** in the
+> [Backend Setup guide](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md#appendix-e--llm-rate-limits-and-tpm-best-practices).
+
 ### API documentation
 
 Interactive API docs are available at:
