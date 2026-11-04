@@ -470,7 +470,16 @@ OPENAI_API_KEY=sk-your-openai-api-key
 
 # Custom endpoint (optional) — use for OpenAI-compatible gateways/proxies
 # OPENAI_API_BASE=https://your-gateway.example.com/v1
+# EMBEDDING_MODEL_NAME=your-embedding-model   # must match the Data Loader that built the index
+# OPENAI_DEFAULT_HEADERS={"X-Api-Key": "your-gateway-key"}
 ```
+
+> **OpenAI-compatible servers (vLLM, LM Studio, Ollama `/v1`, gateways).** On orchestrator
+> images later than 2.3.7, knowledge-base questions are embedded as plain text whenever
+> `OPENAI_API_BASE` is set, because most compatible servers reject pre-tokenized input
+> (override with `OPENAI_EMBEDDING_CHECK_CTX_LENGTH`). Use the same base URL and
+> `EMBEDDING_MODEL_NAME` as the Data Loader that built the index — see **§5 → OpenAI-compatible
+> endpoints** in the [Data Loaders Installation Guide](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md#openai-compatible-endpoints).
 
 Default models: `gpt-4o-mini` (fast), `gpt-4o` (large / vision / code), `o1-preview` (reasoning). To override per-category models or temperatures, see **[§11](#11-environment-variable-reference) Environment Variable Reference → Model category overrides**.
 
@@ -1736,7 +1745,9 @@ Set credentials only for the provider matching `MODEL_PLUGIN_ENTRY_POINT`. Other
 |---|---|---|---|
 | **OpenAI** | `OPENAI_API_TYPE` | Yes | Must be `openai`. |
 | **OpenAI** | `OPENAI_API_KEY` | Yes | OpenAI API key. |
-| **OpenAI** | `OPENAI_API_BASE` | Optional | Override base URL for OpenAI-compatible gateways/proxies. |
+| **OpenAI** | `OPENAI_API_BASE` | Optional | Override base URL for OpenAI-compatible gateways/proxies. `OPENAI_BASE_URL` is also accepted. |
+| **OpenAI / Azure OpenAI** | `OPENAI_DEFAULT_HEADERS` | Optional | Extra request headers as a JSON object, e.g. `{"X-Api-Key": "..."}`. Any other value is rejected with an error that names `OPENAI_DEFAULT_HEADERS`. |
+| **OpenAI** | `OPENAI_EMBEDDING_CHECK_CTX_LENGTH` | Optional | Defaults to `false` when `OPENAI_API_BASE` is set (questions are embedded as plain text), otherwise `true`. Images later than 2.3.7. |
 | **Azure OpenAI** | `OPENAI_API_TYPE` | Yes | Must be `azure`. |
 | **Azure OpenAI** | `OPENAI_API_KEY` | Yes | Azure OpenAI key. |
 | **Azure OpenAI** | `AZURE_OPENAI_ENDPOINT` | Yes | `https://<resource>.openai.azure.com/`. |

@@ -34,6 +34,7 @@
   - [Google Vertex AI](#google-vertex-ai)
   - [Ollama (Local)](#ollama-local)
   - [NVIDIA NIM](#nvidia-nim)
+  - [OpenAI-compatible endpoints](#openai-compatible-endpoints)
 - [6. Step 3 — Choose Your Knowledge Base (Vector Database)](#6-step-3--choose-your-knowledge-base-vector-database)
   - [Zilliz Cloud](#zilliz-cloud)
   - [Milvus (self-hosted)](#milvus-self-hosted)
@@ -293,6 +294,49 @@ NVIDIA_API_KEY=your-nvidia-api-key
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
+### OpenAI-compatible endpoints
+
+> **Requires a Data Loader image later than 2.3.7.**
+
+<!-- REVIEW: replace "later than 2.3.7" with the first release that includes OpenAI-compatible endpoint support (copilot-backend-services branch fix/openai-compatible-embeddings). -->
+
+Use the OpenAI plugins with a custom base URL to load documents through any server that implements the OpenAI `/v1/embeddings` API (and `/v1/chat/completions` for summarisation) — for example vLLM, LM Studio, LocalAI, Ollama's `/v1` endpoint, or an LLM gateway.
+
+```bash
+MODEL_PLUGIN_ENTRY_POINT=plugins.models.openai:OpenAIPlugin
+EMBEDDINGS_PLUGIN_ENTRY_POINT=plugins.embeddings.openai:OpenAIEmbeddingsPlugin
+
+OPENAI_API_TYPE=openai
+OPENAI_API_BASE=http://your-server:8000/v1
+OPENAI_API_KEY=your-server-key          # any non-empty value if the server has no authentication
+MODEL_NAME=your-chat-model
+EMBEDDING_MODEL_NAME=your-embedding-model
+
+# Optional
+# OPENAI_DEFAULT_HEADERS={"X-Api-Key": "your-gateway-key"}
+# OPENAI_EMBEDDING_CHECK_CTX_LENGTH=false
+```
+
+| Setting | Behaviour |
+|---|---|
+| `OPENAI_API_BASE` | Base URL of the server, including `/v1`. `OPENAI_BASE_URL` is also accepted and takes precedence if both are set. |
+| `EMBEDDING_MODEL_NAME` | **Required.** The embedding model name exactly as the server exposes it. |
+| `OPENAI_DEFAULT_HEADERS` | Extra HTTP headers sent with every request, as a **JSON object**. Any other value is rejected with an error that names `OPENAI_DEFAULT_HEADERS`. |
+| `OPENAI_EMBEDDING_CHECK_CTX_LENGTH` | When `OPENAI_API_BASE` is set, defaults to `false`: document text is sent as plain strings. Most OpenAI-compatible servers reject the pre-tokenized input that the OpenAI client sends otherwise. Set `true` only if the endpoint is OpenAI itself behind a proxy. |
+
+> **Use the same embedding model for loading and for questions.** The Orchestrator embeds
+> each knowledge-base question with its own embedding settings. Configure it with the same
+> `OPENAI_API_BASE` and `EMBEDDING_MODEL_NAME` (see **§4 Step 2 — Choose and Configure Your
+> LLM Provider → OpenAI** in the [Backend Setup guide](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md#openai)).
+> If the models differ, the question and document vectors do not match and retrieval returns
+> irrelevant results or none.
+
+> **Vector size.** Many open embedding models produce 384, 768, or 1024 dimensions rather
+> than OpenAI's 1536. The collection or index must be created with the model's size. For
+> Azure Cognitive Search, see **[§6](#6-step-3--choose-your-knowledge-base-vector-database) → Azure Cognitive Search**;
+> for MongoDB Atlas, set `MONGODB_ATLAS_INDEX_DIMENSIONS`. To switch an existing collection to a
+> different embedding model, reload it with `drop_old=true`.
+
 ---
 
 ## 6. Step 3 — Choose Your Knowledge Base (Vector Database)
@@ -365,7 +409,20 @@ AZSEARCH_KEY=your-search-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-azure-openai-key
 OPENAI_API_VERSION=2024-02-15-preview
+
+# Or OpenAI / an OpenAI-compatible server (leave AZURE_OPENAI_ENDPOINT unset; images later than 2.3.7)
+# OPENAI_API_KEY=your-key
+# OPENAI_API_BASE=http://your-server:8000/v1
+# EMBEDDING_MODEL_NAME=nomic-embed-text
+# EMBEDDING_DIMENSIONS=768
 ```
+
+> **Index vector size.** When `azcog-data-loader-pdf` creates a new index (`create_index=true`),
+> it sizes the `contentVector` field from `EMBEDDING_DIMENSIONS` or, if that is unset, by
+> embedding a short test text with the configured model. An existing index keeps the size it
+> was created with; to change embedding model, recreate the index. Images 2.3.7 and earlier
+> always create a 1536-dimension index and, when using OpenAI, ignore `EMBEDDING_MODEL_NAME`
+> and `OPENAI_API_BASE`.
 
 ### Vertex AI Vector Search
 
@@ -1028,6 +1085,10 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 | `ACCESS_TOKEN_EXPIRE_DAYS` | `30` | How long JWT tokens remain valid |
 | `MODEL_NAME` | Provider default | LLM model for summarisation |
 | `EMBEDDING_MODEL_NAME` | Provider default | Embedding model name |
+| `OPENAI_API_BASE` | OpenAI | Base URL of an OpenAI-compatible server, including `/v1` (`OPENAI_BASE_URL` also accepted). See **[§5](#5-step-2--choose-your-llm-and-embedding-provider) → OpenAI-compatible endpoints**. |
+| `OPENAI_DEFAULT_HEADERS` | — | Extra request headers for OpenAI / Azure OpenAI, as a JSON object, e.g. `{"X-Api-Key": "..."}`. |
+| `OPENAI_EMBEDDING_CHECK_CTX_LENGTH` | `false` with `OPENAI_API_BASE`, otherwise `true` | `false` sends document text as plain strings, which OpenAI-compatible servers require. |
+| `EMBEDDING_DIMENSIONS` | Measured from the model | **`azcog-data-loader-pdf` only.** Vector size used when creating a new Azure Cognitive Search index. |
 | `DEFAULT_CLIENT_ID` | — | Pre-seeded OAuth2 client ID (survives restart) |
 | `DEFAULT_CLIENT_SECRET` | — | Pre-seeded OAuth2 client secret (survives restart) |
 | `DOCS_DIR` | `./pdf_docs` | **Docker Compose only.** Host folder that `docker-compose.yml` mounts at `/docs`. The Data Loader does not read this variable; on cloud platforms, mount your storage at `/docs` instead. |
@@ -1319,6 +1380,10 @@ services:
 |---|---|---|
 | `/docs` directory empty in container | Docker Compose: `DOCS_DIR` not set or wrong path. Cloud: file share not mounted at `/docs` | Docker Compose: verify `DOCS_DIR` in `.env` points to a real host directory with files. Cloud: mount the share at exactly `/docs` — setting `DOCS_DIR` on the container has no effect |
 | Embedding errors | Wrong embedding model or API key | Verify `EMBEDDING_MODEL_NAME` and API credentials |
+| HTTP 400 or 422 from an OpenAI-compatible server on every embedding request | The server rejects pre-tokenized input, or the model name is unknown to it | Set `OPENAI_EMBEDDING_CHECK_CTX_LENGTH=false` (the default when `OPENAI_API_BASE` is set on images later than 2.3.7) and verify `EMBEDDING_MODEL_NAME` against the server's model list |
+| Error `OPENAI_DEFAULT_HEADERS must be a JSON object` | Headers given as `Name: value` text | Use JSON: `OPENAI_DEFAULT_HEADERS={"X-Api-Key": "..."}` |
+| Azure Cognitive Search rejects documents with a vector dimension error | The index was created for a different embedding size | Recreate the index with `create_index=true`, setting `EMBEDDING_DIMENSIONS` if needed |
+| Load succeeds but Copilot answers ignore the documents | The Orchestrator embeds questions with a different embedding model or endpoint | Use the same `OPENAI_API_BASE` and `EMBEDDING_MODEL_NAME` on the Orchestrator as on the Data Loader |
 | Vector DB connection refused | Wrong URI/host or DB not running | Check `VECTORDB_URI` / `ZILLIZ_CLOUD_URI` / `PGVECTOR_CONNECTION_STRING` and connectivity |
 | `ConnectionNotExistException` during `/load` with Milvus or Zilliz | Running an older image that predates the connection-alias fix | Upgrade the data-loader image to `2.3.7`, redeploy, and retry the load |
 | pgvector "extension not found" | `vector` extension not installed | Run `CREATE EXTENSION IF NOT EXISTS vector;` on the target database |
