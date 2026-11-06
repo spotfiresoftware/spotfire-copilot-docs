@@ -446,7 +446,7 @@ Shows the live MCP (Model Context Protocol) tunnels currently open between Spotf
 
 *[Screenshot: Tunnels tab showing a list of active tunnels with columns User, Tunnel ID, Opened, Last activity]*
 
-You can't create tunnels here — they are opened by the Spotfire client when a user signs in. The tab is read-only and is most useful for:
+You can't create tunnels here — they are opened by the Spotfire client when a user signs in. From 2.3.8, each user can have only one active tunnel; a second tunnel for the same user is rejected until the first one is stopped or goes stale. The tab is read-only and is most useful for:
 
 - Confirming a user's Spotfire client has successfully connected after install.
 - Debugging a "the agent says it can't read my Spotfire" support ticket.

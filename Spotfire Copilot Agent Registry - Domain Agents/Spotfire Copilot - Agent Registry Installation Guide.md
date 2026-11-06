@@ -446,6 +446,8 @@ MCP_ENABLED=true                         # enable the MCP development server
 
 > **⚠️ `TUNNEL_USER_ID` must exactly match the username of your active Spotfire session.** The orchestrator routes inbound A2A requests to a tunnel based on this value: if Spotfire is logged in as `alice.smith@company.com` and the tunnel announces itself as `Alice.Smith@COMPANY.COM`, the tunneled agents will not appear in that Spotfire session. The match is case-sensitive and includes any domain/realm portion. If your tunneled agents are not visible in Spotfire Copilot, this is almost always the cause.
 
+> **One tunnel per user (orchestrator 2.3.8 and later).** The orchestrator accepts only one active tunnel per Spotfire user. If you start a second Agent Registry with the same `TUNNEL_USER_ID`, it is rejected with *"You already have an active tunnel … stop the existing tunnel before starting a new one."* Stop the first container before starting another.
+
 Requirements:
 
 - The orchestrator must have the `/tunnel/connect` endpoint enabled (`TUNNEL_ENABLED=true` on the orchestrator side — see the [Spotfire Copilot™ Installation Guide](../Spotfire%20Copilot%20Backend%20Services/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md) for the corresponding orchestrator-side variables).

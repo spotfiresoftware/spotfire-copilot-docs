@@ -196,7 +196,7 @@ python generate_credentials.py
 ```
 
 You need two values from the output:
-- **`SECRET_KEY`** — for JWT token signing
+- **`SECRET_KEY`** — for JWT token signing. From 2.3.8, the Data Loader refuses to start if the key is shorter than 16 characters.
 - **`HASHED_ADMIN_PASSWORD`** — bcrypt hash of the admin password
 
 > **Save the plaintext password** — it is shown only once. You will need it to authenticate
@@ -296,9 +296,7 @@ NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 
 ### OpenAI-compatible endpoints
 
-> **Requires a Data Loader image later than 2.3.7.**
-
-<!-- REVIEW: replace "later than 2.3.7" with the first release that includes OpenAI-compatible endpoint support (copilot-backend-services branch fix/openai-compatible-embeddings). -->
+> **Requires Data Loader 2.3.8 or later.**
 
 Use the OpenAI plugins with a custom base URL to load documents through any server that implements the OpenAI `/v1/embeddings` API (and `/v1/chat/completions` for summarisation) — for example vLLM, LM Studio, LocalAI, Ollama's `/v1` endpoint, or an LLM gateway.
 
@@ -410,7 +408,7 @@ AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-azure-openai-key
 OPENAI_API_VERSION=2024-02-15-preview
 
-# Or OpenAI / an OpenAI-compatible server (leave AZURE_OPENAI_ENDPOINT unset; images later than 2.3.7)
+# Or OpenAI / an OpenAI-compatible server (leave AZURE_OPENAI_ENDPOINT unset; 2.3.8 or later)
 # OPENAI_API_KEY=your-key
 # OPENAI_API_BASE=http://your-server:8000/v1
 # EMBEDDING_MODEL_NAME=nomic-embed-text
@@ -1069,7 +1067,7 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 
 | Variable | Description |
 |---|---|
-| `SECRET_KEY` | 64-character hex string for JWT signing |
+| `SECRET_KEY` | 64-character hex string for JWT signing. **2.3.8 and later:** must be at least 16 characters. |
 | `HASHED_ADMIN_PASSWORD` | Bcrypt hash of the admin password. **Wrap in single quotes in `.env` files.** |
 | `VECTORDB_PLUGIN_ENTRY_POINT` | Vector database plugin (e.g., `plugins.vectordbs.zilliz:ZillizRetrieverPlugin`) |
 | `MODEL_PLUGIN_ENTRY_POINT` | LLM plugin (e.g., `plugins.models.openai:OpenAIPlugin`) |
@@ -1363,6 +1361,7 @@ services:
 | Symptom | Cause | Fix |
 |---|---|---|
 | Exits immediately | Missing `SECRET_KEY` or `HASHED_ADMIN_PASSWORD` | Ensure both are set in your `.env` or environment |
+| Exits with *"SECRET_KEY must be configured and at least 16 characters long"* (2.3.8 and later) | `SECRET_KEY` is empty or too short | Set a longer key. You can reuse the orchestrator's `SECRET_KEY`, or generate one with `python -c "import secrets; print(secrets.token_hex(32))"`. |
 | Plugin import error | Wrong plugin entry point string | Check spelling against the plugin tables in **[§11](#11-environment-variable-reference) Environment Variable Reference** |
 | Image pull fails | Missing registry login or network/firewall blocking OCI registry | Authenticate Docker to `copilotoci.azurecr.io` and ensure outbound HTTPS is allowed |
 
@@ -1380,7 +1379,7 @@ services:
 |---|---|---|
 | `/docs` directory empty in container | Docker Compose: `DOCS_DIR` not set or wrong path. Cloud: file share not mounted at `/docs` | Docker Compose: verify `DOCS_DIR` in `.env` points to a real host directory with files. Cloud: mount the share at exactly `/docs` — setting `DOCS_DIR` on the container has no effect |
 | Embedding errors | Wrong embedding model or API key | Verify `EMBEDDING_MODEL_NAME` and API credentials |
-| HTTP 400 or 422 from an OpenAI-compatible server on every embedding request | The server rejects pre-tokenized input, or the model name is unknown to it | Set `OPENAI_EMBEDDING_CHECK_CTX_LENGTH=false` (the default when `OPENAI_API_BASE` is set on images later than 2.3.7) and verify `EMBEDDING_MODEL_NAME` against the server's model list |
+| HTTP 400 or 422 from an OpenAI-compatible server on every embedding request | The server rejects pre-tokenized input, or the model name is unknown to it | Set `OPENAI_EMBEDDING_CHECK_CTX_LENGTH=false` (the default when `OPENAI_API_BASE` is set on 2.3.8 or later) and verify `EMBEDDING_MODEL_NAME` against the server's model list |
 | Error `OPENAI_DEFAULT_HEADERS must be a JSON object` | Headers given as `Name: value` text | Use JSON: `OPENAI_DEFAULT_HEADERS={"X-Api-Key": "..."}` |
 | Azure Cognitive Search rejects documents with a vector dimension error | The index was created for a different embedding size | Recreate the index with `create_index=true`, setting `EMBEDDING_DIMENSIONS` if needed |
 | Load succeeds but Copilot answers ignore the documents | The Orchestrator embeds questions with a different embedding model or endpoint | Use the same `OPENAI_API_BASE` and `EMBEDDING_MODEL_NAME` on the Orchestrator as on the Data Loader |
