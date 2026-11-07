@@ -12,7 +12,7 @@
 
 # Spotfire Copilot™ — Agent Registry Installation Guide
 
-> **Version:** `1.1.1` &nbsp;|&nbsp; **Last updated:** 17 September 2026 &nbsp;|&nbsp; **Applies to:** Agent Registry Container
+> **Version:** `1.1.3` &nbsp;|&nbsp; **Last updated:** 6 November 2026 &nbsp;|&nbsp; **Applies to:** Agent Registry Container
 >
 > The **Agent Registry** is a Docker container that hosts one or more A2A (Agent-to-Agent) agents on a single port and exposes them for registration with the Spotfire Copilot™ orchestrator. In development mode it also enables optional tools (MCP server, WebSocket reverse tunnel, type-stub generator) for building custom agents locally.
 >
@@ -142,9 +142,9 @@ The container provides:
 
 The Agent Registry runs as **one container** from a single Docker image. There is no database to provision and no separate admin console — registration state lives in the orchestrator.
 
-| Container | Default Port | Image (`1.1.1`) | Required? | Role |
+| Container | Default Port | Image (`1.1.3`) | Required? | Role |
 |---|---|---|---|---|
-| **Agent Registry** | `8050` | `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1` | **Yes** | Hosts agents, issues bearer tokens, relays LLM calls to the orchestrator |
+| **Agent Registry** | `8050` | `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3` | **Yes** | Hosts agents, issues bearer tokens, relays LLM calls to the orchestrator |
 | **Orchestrator** | `8080` | `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.4` | **Yes** *(separate install)* | LLM orchestration, thread management, agent registration. Compatible with orchestrator `2.3.1` and later; `2.3.4` is the latest. |
 
 > **One image, two deployment shapes.** The same image binary serves production and development. Production deployments run the image with its default startup command and minimal environment. Local development sets `MCP_ENABLED=true` and `TUNNEL_ENABLED=true` and bind-mounts a custom-agents directory; nothing about the image itself changes.
@@ -243,7 +243,7 @@ The Agent Registry is distributed exclusively via the **Azure Container Registry
    ```
 3. **Pull the image:**
    ```bash
-   docker pull copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
+   docker pull copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3
    ```
 
 For login command details, version policy, troubleshooting registry auth errors, and the complete artifact catalog, consult the [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
@@ -263,10 +263,10 @@ If your deployment environment cannot reach the upstream registry, pull on an in
 
 ```bash
 docker login copilotoci.azurecr.io
-docker pull copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
-docker tag  copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1 \
-            your-registry.example.com/agent-container:1.1.1
-docker push your-registry.example.com/agent-container:1.1.1
+docker pull copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3
+docker tag  copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3 \
+            your-registry.example.com/agent-container:1.1.3
+docker push your-registry.example.com/agent-container:1.1.3
 ```
 
 Update all deployment manifests and compose files to reference your internal registry URL.
@@ -460,7 +460,7 @@ Requirements:
 
 ## 5. Step 3 — Deploy
 
-> **Image references below pin version `1.1.1`.** All snippets pull from `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1`. You must already have logged in to that registry with credentials issued by Spotfire Support — see *Pulling the Docker Image* in [section 1](#1-get-the-wheel-into-your-workspace) and the [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
+> **Image references below pin version `1.1.3`.** All snippets pull from `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3`. You must already have logged in to that registry with credentials issued by Spotfire Support — see *Pulling the Docker Image* in [section 1](#1-get-the-wheel-into-your-workspace) and the [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
 
 > **Key pattern for all platforms:** You deploy the **same Docker image** in every environment. The differences are the environment variables (`MCP_ENABLED`/`TUNNEL_ENABLED` for development), the volumes (mounting your custom-agents directory at `CUSTOM_WORKFLOWS_DIR`), and how you supply secrets.
 
@@ -524,7 +524,7 @@ In cloud deployments, you **do not use `.env` files**. Each cloud platform has i
    ```yaml
    services:
      agent-registry:
-       image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
+       image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3
        ports:
          - "8050:8050"
        env_file: .env
@@ -634,7 +634,7 @@ az containerapp create \
   --name agent-registry \
   --resource-group SpotfireAgents \
   --environment agents-env \
-  --image copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1 \
+  --image copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3 \
   --target-port 8050 \
   --ingress external \
   --min-replicas 1 \
@@ -686,7 +686,7 @@ Cloud Run can pull from Azure Container Registry using a service-account-mounted
 
 ```bash
 gcloud run deploy agent-registry \
-  --image copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1 \
+  --image copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3 \
   --port 8050 \
   --region us-central1 \
   --min-instances 1 \
@@ -753,7 +753,7 @@ The Agent Registry itself does not require AWS service permissions. The task rol
   "containerDefinitions": [
     {
       "name": "agent-registry",
-      "image": "copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1",
+      "image": "copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3",
       "portMappings": [{ "containerPort": 8050 }],
       "environment": [
         { "name": "AUTH_CLIENT_ID",         "value": "<AUTH_CLIENT_ID>" },
@@ -852,7 +852,7 @@ spec:
         fsGroup: 0
       containers:
         - name: agent-registry
-          image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
+          image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -958,7 +958,7 @@ Pick any directory on the host \u2014 for example `/opt/spotfire-agent-registry/
 ```yaml
 services:
   agent-registry:
-    image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1
+    image: copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3
     ports:
       - "${PORT:-8050}:8050"
     env_file: .env
@@ -1372,8 +1372,8 @@ curl -s https://agents.example.com/readyz  | python -m json.tool
 
 ### Container security
 
-- **Always pull pinned versions.** Reference `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.1`, not `:latest`. Pinned tags make rollback deterministic.
-- **Run as non-root where your platform requires it.** The current GA image (`1.1.1`) does not set a `USER` directive, so by default it starts as **root (UID 0)** and its `Config.User` image metadata is empty. To satisfy hardened runtimes (Kubernetes `runAsNonRoot`, OpenShift SCC, CIS Docker Benchmark), supply an explicit non-root user at deploy time:
+- **Always pull pinned versions.** Reference `copilotoci.azurecr.io/spotfirecopilot/agent-container:1.1.3`, not `:latest`. Pinned tags make rollback deterministic.
+- **Run as non-root where your platform requires it.** The GA `1.1.1` image does not set a `USER` directive, so by default it starts as **root (UID 0)** and its `Config.User` image metadata is empty. To satisfy hardened runtimes (Kubernetes `runAsNonRoot`, OpenShift SCC, CIS Docker Benchmark), supply an explicit non-root user at deploy time:
   - **Docker:** `docker run --user 1000:0 …`
   - **Compose:** `user: "1000:0"`
   - **Kubernetes:** a pod/container `securityContext` (see the example in [§5.5](#55-kubernetes)).
