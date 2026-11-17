@@ -14,7 +14,7 @@ This repository is the canonical home for the Spotfire Copilot documentation.
 | [Spotfire client packages](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md) | **2.3.10** |
 | [Kubernetes / Helm charts](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agent-server-deployment/README.md) (DeepAgents + [MCP servers](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/mcp-servers/README.md)) | **0.3.5** |
 | [Ecosystem Agent Server](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/README.md) | **1.0.9** |
-| [Ecosystem Agent MCP Servers](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/mcp-servers/README.md) | **1.1.0** |
+| [Ecosystem Agent MCP Servers](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/mcp-servers/README.md) | **1.1.1** |
 | [Agent Registry Toolkit](https://github.com/spotfiresoftware/spotfire-copilot-docs/blob/main/Spotfire%20Copilot%20Agent%20Registry%20Toolkit/Spotfire%20Copilot%20-%20Agent%20Registry%20Toolkit%20User%20Guide.md) | **1.1.3** |
 
 ## Where to start
