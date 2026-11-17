@@ -59,6 +59,8 @@ Two deployment paths are available depending on your licensing model:
 - [Agent for Spotfire® Server (Library)](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Spotfire%20Library%20Metadata%20Agent%20User%20Guide.md)
 - [Agent for Spotfire® Server (License Management)](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Spotfire%20License%20Management%20Agent%20User%20Guide.md)
 - [Agent for Tavily](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Tavily%20Web%20Search%20Agent%20User%20Guide.md)
+- [Agent for GraphRAG (Spotfire Knowledge & Documentation)](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20GraphRAG%20Agent%20User%20Guide.md)
+- [Agent for Semantica (Oil & Gas Data Model)](Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agents/Spotfire%20Copilot%20-%20Semantica%20Oil%20%26%20Gas%20Agent%20User%20Guide.md)
 
 **Continuous Expansion:** The list of available agents will continue to grow as we expand vertical coverage and ecosystem integrations.
 
