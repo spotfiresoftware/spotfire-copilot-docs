@@ -1,8 +1,8 @@
 # Spotfire Copilot™ — Data Loaders Installation Guide
 
-> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, and 2.3.7 &nbsp;|&nbsp; **Last updated:** 8 September 2026 &nbsp;|&nbsp; **Applies to:** Data Loader Services
+> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, 2.3.7, and 2.3.8 &nbsp;|&nbsp; **Last updated:** 8 September 2026 &nbsp;|&nbsp; **Applies to:** Data Loader Services
 >
-> This guide covers data-loader versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, and **2.3.7**. For new deployments, use **2.3.7**.
+> This guide covers data-loader versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, **2.3.7**, and **2.3.8**. For new deployments, use **2.3.8** (requires a `SECRET_KEY` of at least 16 characters).
 >
 > ## Before you start: registry access is required for current images
 >
@@ -10,7 +10,7 @@
 >
 > ## Milvus PDF loading fix
 >
-> The Milvus / Zilliz PDF-ingestion failure that surfaces as **`ConnectionNotExistException`** during `/load` was fixed in **2.3.2**. That fix remains included in **2.3.7**, which is the recommended tag for all current data-loader deployments.
+> The Milvus / Zilliz PDF-ingestion failure that surfaces as **`ConnectionNotExistException`** during `/load` was fixed in **2.3.2**. That fix remains included in **2.3.8**, which is the recommended tag for all current data-loader deployments.
 >
 > ## Tip: automate the setup
 >
@@ -34,6 +34,7 @@
   - [Google Vertex AI](#google-vertex-ai)
   - [Ollama (Local)](#ollama-local)
   - [NVIDIA NIM](#nvidia-nim)
+  - [OpenAI-compatible endpoints](#openai-compatible-endpoints)
 - [6. Step 3 — Choose Your Knowledge Base (Vector Database)](#6-step-3--choose-your-knowledge-base-vector-database)
   - [Zilliz Cloud](#zilliz-cloud)
   - [Milvus (self-hosted)](#milvus-self-hosted)
@@ -126,8 +127,8 @@ All current images are hosted on the credentialed OCI registry at **`copilotoci.
 
 | Image | Description | Best For |
 |---|---|---|
-| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7` | **Basic text loader.** Extracts text from PDFs using PyPDF. Fast, lightweight, reliable. | Text-heavy PDFs, simple documents |
-| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.7` | **Advanced OCR loader.** Uses Unstructured.io for full document analysis — OCR, table extraction, layout preservation. | Scanned documents, image-heavy PDFs, complex layouts |
+| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8` | **Basic text loader.** Extracts text from PDFs using PyPDF. Fast, lightweight, reliable. | Text-heavy PDFs, simple documents |
+| `copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.8` | **Advanced OCR loader.** Uses Unstructured.io for full document analysis — OCR, table extraction, layout preservation. | Scanned documents, image-heavy PDFs, complex layouts |
 
 > **Which one should I use?** Start with the **Basic (PyPDF)** loader. It handles most
 > text-based PDFs well and is significantly faster. Only use the Advanced (Unstructured)
@@ -140,8 +141,8 @@ local PDFs or Azure Blob Storage:
 
 | Image | Description |
 |---|---|
-| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.7` | Load PDFs into Azure Cognitive Search |
-| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-azblob:2.3.7` | Load documents from Azure Blob Storage into Azure Cognitive Search |
+| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.8` | Load PDFs into Azure Cognitive Search |
+| `copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-azblob:2.3.8` | Load documents from Azure Blob Storage into Azure Cognitive Search |
 
 ### Plugin-based approach (recommended)
 
@@ -195,7 +196,7 @@ python generate_credentials.py
 ```
 
 You need two values from the output:
-- **`SECRET_KEY`** — for JWT token signing
+- **`SECRET_KEY`** — for JWT token signing. From 2.3.8, the Data Loader refuses to start if the key is shorter than 16 characters.
 - **`HASHED_ADMIN_PASSWORD`** — bcrypt hash of the admin password
 
 > **Save the plaintext password** — it is shown only once. You will need it to authenticate
@@ -293,6 +294,47 @@ NVIDIA_API_KEY=your-nvidia-api-key
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
+### OpenAI-compatible endpoints
+
+> **Requires Data Loader 2.3.8 or later.**
+
+Use the OpenAI plugins with a custom base URL to load documents through any server that implements the OpenAI `/v1/embeddings` API (and `/v1/chat/completions` for summarisation) — for example vLLM, LM Studio, LocalAI, Ollama's `/v1` endpoint, or an LLM gateway.
+
+```bash
+MODEL_PLUGIN_ENTRY_POINT=plugins.models.openai:OpenAIPlugin
+EMBEDDINGS_PLUGIN_ENTRY_POINT=plugins.embeddings.openai:OpenAIEmbeddingsPlugin
+
+OPENAI_API_TYPE=openai
+OPENAI_API_BASE=http://your-server:8000/v1
+OPENAI_API_KEY=your-server-key          # any non-empty value if the server has no authentication
+MODEL_NAME=your-chat-model
+EMBEDDING_MODEL_NAME=your-embedding-model
+
+# Optional
+# OPENAI_DEFAULT_HEADERS={"X-Api-Key": "your-gateway-key"}
+# OPENAI_EMBEDDING_CHECK_CTX_LENGTH=false
+```
+
+| Setting | Behaviour |
+|---|---|
+| `OPENAI_API_BASE` | Base URL of the server, including `/v1`. `OPENAI_BASE_URL` is also accepted and takes precedence if both are set. |
+| `EMBEDDING_MODEL_NAME` | **Required.** The embedding model name exactly as the server exposes it. |
+| `OPENAI_DEFAULT_HEADERS` | Extra HTTP headers sent with every request, as a **JSON object**. Any other value is rejected with an error that names `OPENAI_DEFAULT_HEADERS`. |
+| `OPENAI_EMBEDDING_CHECK_CTX_LENGTH` | When `OPENAI_API_BASE` is set, defaults to `false`: document text is sent as plain strings. Most OpenAI-compatible servers reject the pre-tokenized input that the OpenAI client sends otherwise. Set `true` only if the endpoint is OpenAI itself behind a proxy. |
+
+> **Use the same embedding model for loading and for questions.** The Orchestrator embeds
+> each knowledge-base question with its own embedding settings. Configure it with the same
+> `OPENAI_API_BASE` and `EMBEDDING_MODEL_NAME` (see **§4 Step 2 — Choose and Configure Your
+> LLM Provider → OpenAI** in the [Backend Setup guide](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md#openai)).
+> If the models differ, the question and document vectors do not match and retrieval returns
+> irrelevant results or none.
+
+> **Vector size.** Many open embedding models produce 384, 768, or 1024 dimensions rather
+> than OpenAI's 1536. The collection or index must be created with the model's size. For
+> Azure Cognitive Search, see **[§6](#6-step-3--choose-your-knowledge-base-vector-database) → Azure Cognitive Search**;
+> for MongoDB Atlas, set `MONGODB_ATLAS_INDEX_DIMENSIONS`. To switch an existing collection to a
+> different embedding model, reload it with `drop_old=true`.
+
 ---
 
 ## 6. Step 3 — Choose Your Knowledge Base (Vector Database)
@@ -317,7 +359,7 @@ VECTORDB_URI=http://your-milvus-host:19530
 VECTORDB_TOKEN=root:Milvus
 ```
 
-Use **2.3.7** for Milvus and Zilliz deployments. Versions before **2.3.2** can fail during document ingestion with `ConnectionNotExistException` even though the target collection or index is created.
+Use **2.3.8** for Milvus and Zilliz deployments. Versions before **2.3.2** can fail during document ingestion with `ConnectionNotExistException` even though the target collection or index is created.
 
 ### Qdrant
 
@@ -357,7 +399,7 @@ REDIS_URL=redis://your-redis-host:6379
 > *retrieve* from Azure Cognitive Search at query time — they cannot load into it.
 
 ```bash
-# Use image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.7
+# Use image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.8
 AZSEARCH_EP=https://your-service.search.windows.net/
 AZSEARCH_KEY=your-search-key
 
@@ -365,7 +407,20 @@ AZSEARCH_KEY=your-search-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-azure-openai-key
 OPENAI_API_VERSION=2024-02-15-preview
+
+# Or OpenAI / an OpenAI-compatible server (leave AZURE_OPENAI_ENDPOINT unset; 2.3.8 or later)
+# OPENAI_API_KEY=your-key
+# OPENAI_API_BASE=http://your-server:8000/v1
+# EMBEDDING_MODEL_NAME=nomic-embed-text
+# EMBEDDING_DIMENSIONS=768
 ```
+
+> **Index vector size.** When `azcog-data-loader-pdf` creates a new index (`create_index=true`),
+> it sizes the `contentVector` field from `EMBEDDING_DIMENSIONS` or, if that is unset, by
+> embedding a short test text with the configured model. An existing index keeps the size it
+> was created with; to change embedding model, recreate the index. Images 2.3.7 and earlier
+> always create a 1536-dimension index and, when using OpenAI, ignore `EMBEDDING_MODEL_NAME`
+> and `OPENAI_API_BASE`.
 
 ### Vertex AI Vector Search
 
@@ -453,6 +508,12 @@ This directory will be mounted into the container at `/docs`. When you call the 
 endpoint, the Data Loader processes every PDF in this directory, splits them into chunks,
 generates embeddings, and stores the results in your vector database.
 
+> **Note — `DOCS_DIR` is a Docker Compose setting, not a container setting.** `DOCS_DIR`
+> tells Docker Compose which folder **on your host** to mount at `/docs`. The Data Loader
+> itself always reads PDFs from `/docs` inside the container and ignores `DOCS_DIR`. On
+> cloud platforms, mount your storage at `/docs` instead — see **§8 Step 5 — Deploy →
+> Cloud deployment (AWS ECS / Azure Container Apps)**.
+
 **Tips for best results:**
 
 - **Keep documents focused** — a collection of related documents (e.g., all admin guides)
@@ -511,7 +572,7 @@ DOCS_DIR=./pdf_docs
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8
     ports:
       - 8080:8080
     container_name: data-loader
@@ -570,6 +631,12 @@ does **not** need to run permanently. That changes how you deploy it in the clou
 > HowTo, deploy the loader with **no volume at all**, call `/load_spotfire_docs`, then
 > delete it. You never touch `/docs`.
 
+> **Important — mount at exactly `/docs`, and do not set `DOCS_DIR`.** The Data Loader
+> always reads your PDFs from `/docs` inside the container. `DOCS_DIR` is only used by
+> Docker Compose to choose a host folder; setting it as a container environment variable
+> (for example `DOCS_DIR=./docs`) has no effect. If your file share is mounted anywhere
+> other than `/docs`, `/load` will not find your PDFs.
+
 #### AWS ECS / Fargate
 
 Run the loader as a one-off **Fargate task**. Store secrets in AWS Secrets Manager and (if
@@ -593,7 +660,7 @@ you need your own PDFs) mount an EFS file system at `/docs`.
   "containerDefinitions": [
     {
       "name": "data-loader",
-      "image": "copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7",
+      "image": "copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8",
       "portMappings": [{ "containerPort": 8080 }],
       "mountPoints": [{ "sourceVolume": "docs", "containerPath": "/docs", "readOnly": true }],
       "environment": [
@@ -658,7 +725,7 @@ az containerapp create \
   --name copilot-data-loader \
   --resource-group SpotfireCopilot \
   --environment copilot-env \
-  --image copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.7 \
+  --image copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.8 \
   --target-port 8080 \
   --ingress external \
   --min-replicas 1 --max-replicas 1 \
@@ -744,7 +811,7 @@ properties:
   template:
     containers:
       - name: copilot-data-loader
-        image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
+        image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8
         volumeMounts:
           - volumeName: docs
             mountPath: /docs
@@ -909,7 +976,8 @@ Parameters:
 
 **Typical workflow:**
 
-1. Place your PDFs in the directory specified by `DOCS_DIR` (mounted as `/docs`)
+1. Place your PDFs where the container will see them at `/docs` — the host folder set by
+   `DOCS_DIR` (Docker Compose), or the file share mounted at `/docs` (cloud)
 2. Start the Data Loader container
 3. Authenticate (see above)
 4. Call `/load` with your chosen `index_name`
@@ -936,6 +1004,12 @@ curl -X POST "http://localhost:8080/load?index_name=api-docs&drop_old=true" \
 > **💡 Tip:** Each document chunk stored in the vector database includes `source` (filename)
 > and `page` (page number) metadata. The Orchestrator includes these in its responses so
 > users can trace answers back to specific documents and pages.
+
+> **📈 Large document sets and provider rate limits.** Loading sends all extracted text to
+> your embedding model (and, with the Advanced (Unstructured) loader, each extracted image to
+> your LLM for summarisation). Large loads can exceed your provider's tokens-per-minute (TPM)
+> or requests-per-minute limits. See **Appendix E — LLM Rate Limits and TPM Best Practices** in the
+> [Backend Setup guide](Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Backend%20Setup.md#appendix-e--llm-rate-limits-and-tpm-best-practices).
 
 ### API documentation
 
@@ -993,7 +1067,7 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 
 | Variable | Description |
 |---|---|
-| `SECRET_KEY` | 64-character hex string for JWT signing |
+| `SECRET_KEY` | 64-character hex string for JWT signing. **2.3.8 and later:** must be at least 16 characters. |
 | `HASHED_ADMIN_PASSWORD` | Bcrypt hash of the admin password. **Wrap in single quotes in `.env` files.** |
 | `VECTORDB_PLUGIN_ENTRY_POINT` | Vector database plugin (e.g., `plugins.vectordbs.zilliz:ZillizRetrieverPlugin`) |
 | `MODEL_PLUGIN_ENTRY_POINT` | LLM plugin (e.g., `plugins.models.openai:OpenAIPlugin`) |
@@ -1009,9 +1083,13 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 | `ACCESS_TOKEN_EXPIRE_DAYS` | `30` | How long JWT tokens remain valid |
 | `MODEL_NAME` | Provider default | LLM model for summarisation |
 | `EMBEDDING_MODEL_NAME` | Provider default | Embedding model name |
+| `OPENAI_API_BASE` | OpenAI | Base URL of an OpenAI-compatible server, including `/v1` (`OPENAI_BASE_URL` also accepted). See **[§5](#5-step-2--choose-your-llm-and-embedding-provider) → OpenAI-compatible endpoints**. |
+| `OPENAI_DEFAULT_HEADERS` | — | Extra request headers for OpenAI / Azure OpenAI, as a JSON object, e.g. `{"X-Api-Key": "..."}`. |
+| `OPENAI_EMBEDDING_CHECK_CTX_LENGTH` | `false` with `OPENAI_API_BASE`, otherwise `true` | `false` sends document text as plain strings, which OpenAI-compatible servers require. |
+| `EMBEDDING_DIMENSIONS` | Measured from the model | **`azcog-data-loader-pdf` only.** Vector size used when creating a new Azure Cognitive Search index. |
 | `DEFAULT_CLIENT_ID` | — | Pre-seeded OAuth2 client ID (survives restart) |
 | `DEFAULT_CLIENT_SECRET` | — | Pre-seeded OAuth2 client secret (survives restart) |
-| `DOCS_DIR` | `./pdf_docs` | Host path to mount as `/docs` in the container |
+| `DOCS_DIR` | `./pdf_docs` | **Docker Compose only.** Host folder that `docker-compose.yml` mounts at `/docs`. The Data Loader does not read this variable; on cloud platforms, mount your storage at `/docs` instead. |
 
 ### LangSmith tracing (optional)
 
@@ -1090,7 +1168,7 @@ The Data Loader uses the same OAuth2 authentication flow as the Orchestrator.
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1120,7 +1198,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1156,7 +1234,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.7
+    image: copilotoci.azurecr.io/spotfirecopilot/azcog-data-loader-pdf:2.3.8
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1180,7 +1258,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1209,7 +1287,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1240,7 +1318,7 @@ Use the same patterns above but replace the image:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.7
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.8
     # ... rest of configuration is identical
 ```
 
@@ -1249,7 +1327,7 @@ services:
 ```yaml
 services:
   data-loader:
-    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
+    image: copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8
     ports:
       - 8080:8080
     container_name: data-loader
@@ -1283,6 +1361,7 @@ services:
 | Symptom | Cause | Fix |
 |---|---|---|
 | Exits immediately | Missing `SECRET_KEY` or `HASHED_ADMIN_PASSWORD` | Ensure both are set in your `.env` or environment |
+| Exits with *"SECRET_KEY must be configured and at least 16 characters long"* (2.3.8 and later) | `SECRET_KEY` is empty or too short | Set a longer key. You can reuse the orchestrator's `SECRET_KEY`, or generate one with `python -c "import secrets; print(secrets.token_hex(32))"`. |
 | Plugin import error | Wrong plugin entry point string | Check spelling against the plugin tables in **[§11](#11-environment-variable-reference) Environment Variable Reference** |
 | Image pull fails | Missing registry login or network/firewall blocking OCI registry | Authenticate Docker to `copilotoci.azurecr.io` and ensure outbound HTTPS is allowed |
 
@@ -1298,10 +1377,14 @@ services:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `/docs` directory empty in container | `DOCS_DIR` not set or wrong path | Verify `DOCS_DIR` in `.env` points to a real directory with files |
+| `/docs` directory empty in container | Docker Compose: `DOCS_DIR` not set or wrong path. Cloud: file share not mounted at `/docs` | Docker Compose: verify `DOCS_DIR` in `.env` points to a real host directory with files. Cloud: mount the share at exactly `/docs` — setting `DOCS_DIR` on the container has no effect |
 | Embedding errors | Wrong embedding model or API key | Verify `EMBEDDING_MODEL_NAME` and API credentials |
+| HTTP 400 or 422 from an OpenAI-compatible server on every embedding request | The server rejects pre-tokenized input, or the model name is unknown to it | Set `OPENAI_EMBEDDING_CHECK_CTX_LENGTH=false` (the default when `OPENAI_API_BASE` is set on 2.3.8 or later) and verify `EMBEDDING_MODEL_NAME` against the server's model list |
+| Error `OPENAI_DEFAULT_HEADERS must be a JSON object` | Headers given as `Name: value` text | Use JSON: `OPENAI_DEFAULT_HEADERS={"X-Api-Key": "..."}` |
+| Azure Cognitive Search rejects documents with a vector dimension error | The index was created for a different embedding size | Recreate the index with `create_index=true`, setting `EMBEDDING_DIMENSIONS` if needed |
+| Load succeeds but Copilot answers ignore the documents | The Orchestrator embeds questions with a different embedding model or endpoint | Use the same `OPENAI_API_BASE` and `EMBEDDING_MODEL_NAME` on the Orchestrator as on the Data Loader |
 | Vector DB connection refused | Wrong URI/host or DB not running | Check `VECTORDB_URI` / `ZILLIZ_CLOUD_URI` / `PGVECTOR_CONNECTION_STRING` and connectivity |
-| `ConnectionNotExistException` during `/load` with Milvus or Zilliz | Running an older image that predates the connection-alias fix | Upgrade the data-loader image to `2.3.7`, redeploy, and retry the load |
+| `ConnectionNotExistException` during `/load` with Milvus or Zilliz | Running an older image that predates the connection-alias fix | Upgrade the data-loader image to `2.3.8`, redeploy, and retry the load |
 | pgvector "extension not found" | `vector` extension not installed | Run `CREATE EXTENSION IF NOT EXISTS vector;` on the target database |
 | Timeout during loading | Large documents or slow network | Check logs; consider splitting large PDFs |
 
@@ -1342,7 +1425,7 @@ docker compose pull && docker compose up -d
 - **Rotate credentials regularly** — regenerate and restart
 - **Run containers as non-root** — the Data Loader images already run as a non-root user (`spotuser`)
 - **Limit network exposure** — if the Data Loader is only used internally, don't expose port 8080 externally
-- **Keep images up to date** — always use the latest tagged version (`2.3.7`)
+- **Keep images up to date** — always use the latest tagged version (`2.3.8`)
 - **Use TLS in production** — place a reverse proxy in front of the container for HTTPS
 
 ---

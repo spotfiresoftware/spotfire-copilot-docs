@@ -1,8 +1,8 @@
 # Spotfire Copilot™ Installation Guide — Backend Setup
 
-> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, 2.3.5, and 2.3.7 &nbsp;|&nbsp; **Last updated:** 8 September 2026 &nbsp;|&nbsp; **Applies to:** Orchestrator Service
+> **Versions covered:** 2.3.0, 2.3.1, 2.3.2, 2.3.4, 2.3.5, 2.3.7, and 2.3.8 &nbsp;|&nbsp; **Last updated:** 8 September 2026 &nbsp;|&nbsp; **Applies to:** Orchestrator Service
 >
-> This guide covers backend versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, **2.3.5**, and **2.3.7**. New configuration introduced in 2.3.1, 2.3.2, and 2.3.4 is called out inline and summarised in **[Appendix D](#appendix-d--release-notes) — Release notes** at the end of this guide. **2.3.5 is a security release for the Admin Console** — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**. **2.3.7 is the current latest orchestrator release** and is a drop-in replacement for 2.3.0–2.3.6.
+> This guide covers backend versions **2.3.0**, **2.3.1**, **2.3.2**, **2.3.4**, **2.3.5**, **2.3.7**, and **2.3.8**. New configuration introduced in 2.3.1, 2.3.2, 2.3.4, and 2.3.8 is called out inline and summarised in **[Appendix D](#appendix-d--release-notes) — Release notes** at the end of this guide. **2.3.5 is a security release for the Admin Console** — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**. **2.3.8 is the current latest orchestrator release** and requires a `SECRET_KEY` of at least 32 characters — read **[What's new in 2.3.8](#whats-new-in-238)** before upgrading.
 >
 > **Tip — prefer a guided install?** Rather than hand-writing your `.env` and `docker-compose.yml`, you can run the interactive installer documented in the [Backend Deployment Scripts User Guide](../Spotfire%20Copilot%20Deployment%20Scripts/Spotfire%20Copilot%20-%20Backend%20Deployment%20Scripts%20User%20Guide.md). It walks you through credentials, LLM provider, knowledge base, and Docker or Kubernetes output. This guide remains the reference for what each setting does.
 
@@ -103,10 +103,17 @@
   - [Performance tuning](#performance-tuning)
   - [Sizing reference](#sizing-reference)
 - [Appendix D — Release notes](#appendix-d--release-notes)
+  - [What's new in 2.3.8](#whats-new-in-238)
   - [What's new in 2.3.5](#whats-new-in-235)
   - [What's new in 2.3.4](#whats-new-in-234)
   - [What's new in 2.3.2](#whats-new-in-232)
   - [What's new in 2.3.1](#whats-new-in-231)
+- [Appendix E — LLM Rate Limits and TPM Best Practices](#appendix-e--llm-rate-limits-and-tpm-best-practices)
+  - [E.1 TPM, RPM, and Copilot token budgets](#e1-tpm-rpm-and-copilot-token-budgets)
+  - [E.2 What drives Copilot's LLM usage](#e2-what-drives-copilots-llm-usage)
+  - [E.3 Which models and deployments share a quota](#e3-which-models-and-deployments-share-a-quota)
+  - [E.4 Best practices](#e4-best-practices)
+  - [E.5 Troubleshooting rate-limit errors](#e5-troubleshooting-rate-limit-errors)
 
 ---
 
@@ -116,12 +123,12 @@
 
 | Component | Latest Version | Notes |
 |-----------|---------------|-------|
-| **Orchestrator (backend)** | **2.3.7** | Drop-in replacement for 2.3.0–2.3.6 (no breaking changes, no required migrations). **Operators running the Admin Console should be on 2.3.5 or later** — 2.3.5 was a security release for the Admin Console. See **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**. Still **required for GPT-5.x or o-series (`o1` / `o3` / `o4`) Azure OpenAI deployments** — set `OPENAI_GPT5_COMPATIBLE=true` (introduced in 2.3.4) in addition to upgrading the image. Existing deployments on GPT-4o, Claude, Bedrock, Gemini, Vertex AI, Mistral, Ollama, Cohere, Hugging Face, or NVIDIA NIM continue to be supported. See **[§11](#11-environment-variable-reference) Environment Variable Reference → GPT-5+ / o-series deployment flag** and **[Appendix D](#appendix-d--release-notes) — Release notes**. |
-| [**Data loaders**](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md) | **2.3.7** | Existing deployments on 2.3.2 or later do not need to upgrade. |
-| [**Spotfire client packages**](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md) | **2.3.6** | Compatible with the 2.3.0 through 2.3.7 backends. |
-| [**Ecosystem Agent Server**](../Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/README.md) | **1.0.7** | *Optional.* Ecosystem integration agents (Databricks, Snowflake, OSDU, and more) hosted on a LangGraph DeepAgents server — [Licensed](https://community.spotfire.com/articles/spotfire/langgraph-deepagents-server-licensed-deployment-guide/) or [OSS](https://community.spotfire.com/articles/spotfire/langgraph-deepagents-server-oss-deployment-guide/). See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
+| **Orchestrator (backend)** | **2.3.8** | Requires a `SECRET_KEY` of at least 32 characters (not a sample value) — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.8** before upgrading. **Operators running the Admin Console should be on 2.3.5 or later** — 2.3.5 was a security release for the Admin Console. See **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.5**. Still **required for GPT-5.x or o-series (`o1` / `o3` / `o4`) Azure OpenAI deployments** — set `OPENAI_GPT5_COMPATIBLE=true` (introduced in 2.3.4) in addition to upgrading the image. Existing deployments on GPT-4o, Claude, Bedrock, Gemini, Vertex AI, Mistral, Ollama, Cohere, Hugging Face, or NVIDIA NIM continue to be supported. See **[§11](#11-environment-variable-reference) Environment Variable Reference → GPT-5+ / o-series deployment flag** and **[Appendix D](#appendix-d--release-notes) — Release notes**. |
+| [**Data loaders**](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md) | **2.3.8** | Requires a `SECRET_KEY` of at least 16 characters. Includes the eMudhra certificate fix and OpenAI-compatible endpoint support. |
+| [**Spotfire client packages**](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md) | **2.3.10** | Compatible with the 2.3.0 through 2.3.8 backends. |
+| [**Ecosystem Agent Server**](../Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/README.md) | **1.0.9** | *Optional.* Ecosystem integration agents (Databricks, Snowflake, OSDU, and more) hosted on a LangGraph DeepAgents server — [Licensed](https://community.spotfire.com/articles/spotfire/langgraph-deepagents-server-licensed-deployment-guide/) or [OSS](https://community.spotfire.com/articles/spotfire/langgraph-deepagents-server-oss-deployment-guide/). See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
 | [**Ecosystem Agent MCP Servers**](../Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/mcp-servers/README.md) | **1.1.0** | *Optional.* MCP servers that back the ecosystem agents (OSDU, Databricks, Data Virtualization, and more), exposing tools over `streamable-http`. See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
-| [**Agent Registry Toolkit**](../Spotfire%20Copilot%20Agent%20Registry%20Toolkit/Spotfire%20Copilot%20-%20Agent%20Registry%20Toolkit%20User%20Guide.md) | **1.1.1** | *Optional.* Build and serve your own domain-targeted agents; the same container also hosts industry-vertical agents such as Well Recompletions. See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
+| [**Agent Registry Toolkit**](../Spotfire%20Copilot%20Agent%20Registry%20Toolkit/Spotfire%20Copilot%20-%20Agent%20Registry%20Toolkit%20User%20Guide.md) | **1.1.3** | *Optional.* Build and serve your own domain-targeted agents; the same container also hosts industry-vertical agents such as Well Recompletions. See the [Agent Registry overview](https://community.spotfire.com/articles/spotfire/agent-registry-for-spotfire/). |
 
 > ## 🔑 Before you start: registry access is required
 >
@@ -181,7 +188,7 @@ The backend is **two services from one Docker image**, sharing one PostgreSQL da
 |---|---|---|
 | **Purpose** | LLM inference, conversation persistence, RAG retrieval, OAuth2 token issuance, agent routing | Web UI for user / OAuth2-client management, conversation monitoring, knowledge-base inspection, system diagnostics |
 | **Required?** | **Yes** — Spotfire clients depend on it | No — orchestrator is fully usable on its own via the REST API |
-| **Image** | `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7` | Same image |
+| **Image** | `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8` | Same image |
 | **Startup command** | *(default — no override)* | `python /app/admin_console/admin_main.py` |
 | **Container port** | `8080` | `8081` |
 | **Health check** | `GET /` → `200` *(note: there is no `/health` path)* | `GET /health` → `200` *(note: `/` returns `302 → /login`)* |
@@ -314,6 +321,8 @@ This outputs:
 1. **`SECRET_KEY`** — a 64-character hex string for JWT signing
 2. **Admin password** — a random 24-character password + its bcrypt hash
 3. **OAuth2 client credentials** — a `client_id` and `client_secret` + the secret's bcrypt hash
+
+> **`SECRET_KEY` requirements (2.3.8 and later).** The orchestrator and admin console refuse to start if `SECRET_KEY` is empty, shorter than 32 characters, or a sample value published in documentation or example files. The key generated by `generate_credentials.py` already meets these requirements. Data loaders require at least 16 characters, so the same key can be reused there.
 
 > **Save the plaintext passwords immediately** — they are shown only once. The bcrypt
 > hashes go into your environment configuration (`.env` file for on-premise, or your
@@ -464,7 +473,16 @@ OPENAI_API_KEY=sk-your-openai-api-key
 
 # Custom endpoint (optional) — use for OpenAI-compatible gateways/proxies
 # OPENAI_API_BASE=https://your-gateway.example.com/v1
+# EMBEDDING_MODEL_NAME=your-embedding-model   # must match the Data Loader that built the index
+# OPENAI_DEFAULT_HEADERS={"X-Api-Key": "your-gateway-key"}
 ```
+
+> **OpenAI-compatible servers (vLLM, LM Studio, Ollama `/v1`, gateways).** On orchestrator
+> 2.3.8 and later, knowledge-base questions are embedded as plain text whenever
+> `OPENAI_API_BASE` is set, because most compatible servers reject pre-tokenized input
+> (override with `OPENAI_EMBEDDING_CHECK_CTX_LENGTH`). Use the same base URL and
+> `EMBEDDING_MODEL_NAME` as the Data Loader that built the index — see **§5 → OpenAI-compatible
+> endpoints** in the [Data Loaders Installation Guide](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md#openai-compatible-endpoints).
 
 Default models: `gpt-4o-mini` (fast), `gpt-4o` (large / vision / code), `o1-preview` (reasoning). To override per-category models or temperatures, see **[§11](#11-environment-variable-reference) Environment Variable Reference → Model category overrides**.
 
@@ -536,13 +554,13 @@ Defaults work for most deployments. To tune retrieval (chunks per query, score t
 
 ## 6. Step 4 — Deploy
 
-> **Image references in the examples below assume 2.3.7 (latest).** All snippets pull from
-> `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7`. You must have already
+> **Image references in the examples below assume 2.3.8 (latest).** All snippets pull from
+> `copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8`. You must have already
 > logged in to the registry with credentials issued by Spotfire Support — see
 > **[§6.1](#61-pulling-the-docker-images) Pulling the Docker Images** below and the
 > [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
 >
-> **Already on 2.3.2?** You only need to redeploy with the 2.3.7 image tag if you use a GPT-5.x or o-series (`o1` / `o3` / `o4`) Azure OpenAI deployment. Otherwise 2.3.2 is fully supported — see **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.4**.
+> **Upgrading to 2.3.8?** Check your `SECRET_KEY` first — 2.3.8 will not start with a key shorter than 32 characters or a published sample value. See **[Appendix D](#appendix-d--release-notes) — Release notes → What's new in 2.3.8**.
 >
 > **Deploying 2.3.0?** Substitute `public.ecr.aws/tds/llm-orchestrator:2.3.0` for the image
 > in every snippet and omit any registry-credential / image-pull-secret configuration
@@ -564,12 +582,13 @@ The container image source depends on the version you are installing.
 
 | Version | Registry | Authentication | Reference |
 |---|---|---|---|
-| **2.3.7** *(latest — use for new deployments)* | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
-| **2.3.2** *(previous release — fully supported)* | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
+| **2.3.8** *(latest — use for new deployments)* | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
+| **2.3.7** *(previous release)* | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
+| **2.3.2** *(fully supported)* | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
 | **2.3.1** | `copilotoci.azurecr.io/spotfirecopilot/` (Azure Container Registry) | **Required** — credentials issued by Spotfire Support | [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/) |
 | **2.3.0** | `public.ecr.aws/tds/` (Amazon ECR Public) | None — anonymous pull | n/a |
 
-#### 2.3.7 / 2.3.4 / 2.3.2 / 2.3.1 — OCI registry
+#### 2.3.8 / 2.3.7 / 2.3.4 / 2.3.2 / 2.3.1 — OCI registry
 
 Starting with 2.3.1, all Spotfire Copilot container images are distributed via an OCI registry hosted in Azure Container Registry. **You must obtain credentials before deploying.**
 
@@ -580,14 +599,14 @@ Starting with 2.3.1, all Spotfire Copilot container images are distributed via a
    # (optional, for Helm-based deployments)
    helm registry login copilotoci.azurecr.io
    ```
-3. **Pull the images** (substitute the tag for the version you want — `2.3.7` for new deployments):
+3. **Pull the images** (substitute the tag for the version you want — `2.3.8` for new deployments):
    ```bash
    # Orchestrator (also used for the admin console — same image)
-   docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7
+   docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8
 
   # Data loaders (pull only the ones you need)
-  docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
-  docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.7
+  docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8
+  docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-unstruct:2.3.8
    ```
 
 For login command details, version policy, troubleshooting registry auth errors, and the complete artifact catalog, consult the [OCI Registry Access Guide](https://community.spotfire.com/articles/spotfire/oci-registry-access-guide/).
@@ -619,11 +638,11 @@ docker pull public.ecr.aws/tds/llm-orchestrator:2.3.0
 If your deployment environment cannot reach the upstream registry, pull on an internet-connected machine, then retag and push to your internal registry:
 
 ```bash
-# 2.3.7 (latest)
+# 2.3.8 (latest)
 docker login copilotoci.azurecr.io
-docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7
-docker tag  copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 your-registry.example.com/llm-orchestrator:2.3.7
-docker push your-registry.example.com/llm-orchestrator:2.3.7
+docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8
+docker tag  copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8 your-registry.example.com/llm-orchestrator:2.3.8
+docker push your-registry.example.com/llm-orchestrator:2.3.8
 
 # 2.3.2 (previous release — still supported)
 docker pull copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.2
@@ -731,7 +750,7 @@ az containerapp create \
   --name orch-orchestrator \
   --resource-group SpotfireCopilot \
   --environment copilot-env \
-  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
+  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8 \
   --target-port 8080 \
   --ingress external \
   --min-replicas 1 \
@@ -764,7 +783,7 @@ az containerapp create \
   --name orch-console \
   --resource-group SpotfireCopilot \
   --environment copilot-env \
-  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
+  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8 \
   --target-port 8081 \
   --ingress external \
   --min-replicas 1 \
@@ -826,7 +845,7 @@ gcloud secrets add-iam-policy-binding secret-key \
 
 ```bash
 gcloud run deploy llm-orchestrator \
-  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
+  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8 \
   --port 8080 \
   --set-env-vars \
     MODEL_PLUGIN_ENTRY_POINT=plugins.models.vertexai_enhanced:VertexAIPlugin,\
@@ -853,7 +872,7 @@ gcloud run deploy llm-orchestrator \
 
 ```bash
 gcloud run deploy llm-orchestrator-console \
-  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
+  --image copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8 \
   --port 8081 \
   --command "python","/app/admin_console/admin_main.py" \
   --set-env-vars \
@@ -949,7 +968,7 @@ Create an ECS task role with the following permissions:
   "containerDefinitions": [
     {
       "name": "orchestrator",
-      "image": "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7",
+      "image": "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8",
       "portMappings": [{ "containerPort": 8080 }],
       "environment": [
         { "name": "MODEL_PLUGIN_ENTRY_POINT", "value": "plugins.models.bedrock_enhanced:BedrockPlugin" },
@@ -990,7 +1009,7 @@ Use the same image but override the command and port:
   "containerDefinitions": [
     {
       "name": "admin-console",
-      "image": "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7",
+      "image": "copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8",
       "command": ["python", "/app/admin_console/admin_main.py"],
       "portMappings": [{ "containerPort": 8081 }],
       "environment": [
@@ -1091,7 +1110,7 @@ spec:
     spec:
       containers:
         - name: orchestrator
-          image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7
+          image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8
           ports:
             - containerPort: 8080
           envFrom:
@@ -1142,7 +1161,7 @@ spec:
     spec:
       containers:
         - name: admin-console
-          image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7
+          image: copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8
           command: ["python", "/app/admin_console/admin_main.py"]
           ports:
             - containerPort: 8081
@@ -1341,8 +1360,8 @@ The orchestrator automatically runs Alembic migrations on startup. To verify man
 docker run --rm \
   -e DATABASE_URL="postgresql+asyncpg://orchestrator:pass@your-pg-host:5432/orchestrator" \
   -e SYNC_DATABASE_URL="postgresql://orchestrator:pass@your-pg-host:5432/orchestrator" \
-  -e SECRET_KEY="dummy-for-migration-only" \
-  copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.7 \
+  -e SECRET_KEY="$(openssl rand -hex 32)" \
+  copilotoci.azurecr.io/spotfirecopilot/llm-orchestrator:2.3.8 \
   alembic upgrade head
 
 # If running bare (Python environment with the source)
@@ -1455,7 +1474,7 @@ your vector database.
 Quick summary:
 ```bash
 # Pull and run the basic data loader
-docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.7
+docker pull copilotoci.azurecr.io/spotfirecopilot/data-loader-pdf-pypdf:2.3.8
 
 # Configure .env with your LLM + vector DB credentials, then:
 docker compose -f docker-compose-data-loader.yml up -d
@@ -1699,7 +1718,7 @@ RAG_COLLECTIONS_METADATA=[{"name":"my-index","description":"Product documentatio
 
 | Variable | Example | Description |
 |---|---|---|
-| `SECRET_KEY` | `a1b2c3d4e5f6...` (64 hex chars) | JWT signing key. Must be identical in orchestrator and admin console. |
+| `SECRET_KEY` | `a1b2c3d4e5f6...` (64 hex chars) | JWT signing key. Must be identical in orchestrator and admin console. **2.3.8 and later:** must be at least 32 characters and must not be a published sample value, or the service will not start. |
 | `IMAGE_TAG` | `2.3.2` | Docker image tag. Must be explicitly set for Docker Compose deployments (e.g., `IMAGE_TAG=2.3.2 docker compose up`, or `IMAGE_TAG=2.3.4 docker compose up` for GPT-5.x / o-series deployments). Cloud deployments specify this in their deployment manifest. |
 | `POSTGRES_PASSWORD` | `your-db-password` | PostgreSQL password. Used by Docker Compose to construct `DATABASE_URL`. Not needed for cloud deployments (use `DATABASE_URL` directly). |
 | At least one LLM API key | `OPENAI_API_KEY=sk-...` | Provider-specific (see Step 2). |
@@ -1730,7 +1749,9 @@ Set credentials only for the provider matching `MODEL_PLUGIN_ENTRY_POINT`. Other
 |---|---|---|---|
 | **OpenAI** | `OPENAI_API_TYPE` | Yes | Must be `openai`. |
 | **OpenAI** | `OPENAI_API_KEY` | Yes | OpenAI API key. |
-| **OpenAI** | `OPENAI_API_BASE` | Optional | Override base URL for OpenAI-compatible gateways/proxies. |
+| **OpenAI** | `OPENAI_API_BASE` | Optional | Override base URL for OpenAI-compatible gateways/proxies. `OPENAI_BASE_URL` is also accepted. |
+| **OpenAI / Azure OpenAI** | `OPENAI_DEFAULT_HEADERS` | Optional | Extra request headers as a JSON object, e.g. `{"X-Api-Key": "..."}`. Any other value is rejected with an error that names `OPENAI_DEFAULT_HEADERS`. |
+| **OpenAI** | `OPENAI_EMBEDDING_CHECK_CTX_LENGTH` | Optional | Defaults to `false` when `OPENAI_API_BASE` is set (questions are embedded as plain text), otherwise `true`. 2.3.8 or later. |
 | **Azure OpenAI** | `OPENAI_API_TYPE` | Yes | Must be `azure`. |
 | **Azure OpenAI** | `OPENAI_API_KEY` | Yes | Azure OpenAI key. |
 | **Azure OpenAI** | `AZURE_OPENAI_ENDPOINT` | Yes | `https://<resource>.openai.azure.com/`. |
@@ -1833,6 +1854,7 @@ If the flag is left unset but the configured model name looks like a GPT-5+ or o
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 | `ORCHESTRATOR_INTERNAL_URL` | `http://orchestrator:8080` | URL used by admin console to reach the orchestrator. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:8081,http://localhost:3000` | Comma-separated list of origins allowed to make cross-origin requests. **Must be set in production** — include every domain that hosts a Spotfire client or custom UI that calls the API. Both the orchestrator and admin console read this variable. |
+| `TOKEN_BUDGET_WARN_PCT` | `0.9` | Fraction of an OAuth2 client's monthly token budget at which responses start carrying `token_budget.warning: true` (for example `0.8` for 80%). Budgets themselves are set per client in the admin console — see the [Admin Console Guide §5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets). |
 
 ### Database variables
 
@@ -1891,6 +1913,8 @@ Introduced in 2.3.1. Enables locally-running agent containers to register with a
 | `TUNNEL_PING_INTERVAL` | `30` | WebSocket ping interval (seconds). |
 | `TUNNEL_PONG_TIMEOUT` | `60` | Drop the tunnel connection if no pong is received within this many seconds. |
 
+> **One active tunnel per user (2.3.8 and later).** Each Spotfire user can have only one active tunnel at a time. A second tunnel for the same user is rejected with *"You already have an active tunnel … Only one tunnel per user is allowed — stop the existing tunnel before starting a new one."* A tunnel that disconnected without closing cleanly stops counting once its heartbeat goes stale, so reconnecting after a crash is not blocked.
+
 ---
 
 > **Canonical source.** The `.env.example` file shipped with the orchestrator distribution is the canonical, comment-annotated list of every variable the orchestrator reads, with inline guidance, example values, and lifecycle notes (especially for the bootstrap-credential variables). The tables above reorganise that content by purpose; when in doubt or when looking for a variable that doesn't appear here, consult `.env.example` from the distribution.
@@ -1930,6 +1954,8 @@ This issue has been observed in traditional on-premise installs hosted on AWS wh
 | Symptom | Cause | Fix |
 |---|---|---|
 | Orchestrator exits immediately | Missing `SECRET_KEY` | Ensure `SECRET_KEY` is set in your environment (secrets store or `.env`) |
+| Orchestrator or admin console exits with *"SECRET_KEY must be at least 32 bytes (256 bits) for HS256"* (2.3.8 and later) | `SECRET_KEY` is too short | Generate a new key with `python -c "import secrets; print(secrets.token_hex(32))"` (or `generate_credentials.py`), set the same value on the orchestrator and admin console, and restart. Existing tokens become invalid; users sign in again and clients request new tokens. |
+| Orchestrator or admin console exits with *"SECRET_KEY is a publicly known placeholder/sample value and must be replaced"* (2.3.8 and later) | `SECRET_KEY` was copied from a documentation or example file | Replace it with a newly generated key as above. |
 | Orchestrator container keeps restarting | Health probe hitting `/health` instead of `/` | The orchestrator has **no `/health` endpoint**. Set the health check path to **`/`** on port 8080. See **[§7](#7-step-5--verify-and-first-login) Health check endpoints**. |
 | Admin console health check fails with 302 | Health probe hitting `/` instead of `/health` | The admin console root path (`/`) redirects to `/login` (HTTP 302), which most health checkers treat as a failure. Set the health check path to **`/health`** on port 8081. |
 | PostgreSQL not healthy | Wrong password or port conflict | On-premise: `docker compose logs orchestrator-postgres`. Cloud: check managed DB instance status and firewall rules. |
@@ -1955,7 +1981,8 @@ This issue has been observed in traditional on-premise installs hosted on AWS wh
 | `Warning: Missing configuration for AZURE fast category`, requests to `/deployments/UNCONFIGURED/chat/completions`, and `DeploymentNotFound` | Azure model-category env vars are incomplete; the enhanced plugin loads a category only when both `AZURE_<CATEGORY>_MODEL` and `AZURE_<CATEGORY>_TEMPERATURE` are set | Set complete pairs for every category you use, especially `AZURE_FAST_MODEL` + `AZURE_FAST_TEMPERATURE` (summarization/title generation uses `fast`). Keep `MODEL_PLUGIN_ENTRY_POINT=plugins.models.azure_openai_enhanced:AzureOpenAIPlugin` and verify deployment names exactly match Azure deployment names |
 | `DeploymentNotFound` with a non-`UNCONFIGURED` deployment in the request URL | The configured Azure deployment name does not exist in that Azure OpenAI resource (typo, deleted deployment, wrong environment/resource, or propagation delay right after creation) | Verify every configured deployment value exists in the same Azure OpenAI resource and matches exactly (`AZURE_FAST_MODEL`, `AZURE_LARGE_MODEL`, `AZURE_VISION_MODEL`, `AZURE_CODE_MODEL`, `AZURE_REASONING_MODEL`, and any `*_MODEL_NAME` overrides). If the deployment was just created, wait a few minutes and retry. |
 | `The model associated with the deployment is deprecated and no longer available for use` | The model version backing an Azure deployment has been retired by Microsoft. This error comes directly from Azure and is unrelated to the Copilot version. The same request would fail on any Copilot version once the underlying model is retired. | In Azure AI Studio, check the status of the affected deployment. Either update it to a supported model version in-place, or create a new deployment with a currently active model and update your `AZURE_*_MODEL` env vars to reference the new deployment name. |
-| `Rate limit exceeded` | LLM provider rate limit | This error comes from the upstream LLM provider (OpenAI, Bedrock, etc.), not from the orchestrator. Reduce request frequency or increase your provider's rate limits. The orchestrator itself rate-limits only auth endpoints (5/min for admin login, 20/min for client tokens). |
+| `Rate limit exceeded` | LLM provider rate limit | This error (HTTP 429) comes from the upstream LLM provider (OpenAI, Bedrock, etc.), not from the orchestrator. See **[Appendix E](#appendix-e--llm-rate-limits-and-tpm-best-practices) — LLM Rate Limits and TPM Best Practices**. The orchestrator itself rate-limits only auth endpoints (5/min for admin login, 20/min for client tokens). |
+| HTTP 422 `token_budget_exceeded` | The OAuth2 client has used its monthly token budget | Not a provider rate limit. Raise or extend the client's budget in the admin console — see the [Admin Console Guide §5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets). |
 | Timeout on first request | Model cold start (Bedrock, Vertex AI) | First request may take 10-30 seconds — subsequent requests are faster |
 | IAM/role errors on AWS | Explicit keys override IAM role | Remove `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from the task definition — only set `AWS_REGION` |
 
@@ -2482,6 +2509,40 @@ max_wal_senders = 0                 # only during initial data load
 
 ## Appendix D — Release notes
 
+### What's new in 2.3.8
+
+<!-- REVIEW: add the release date. -->
+
+> **⚠️ Upgrade note — `SECRET_KEY`.** Before upgrading, make sure `SECRET_KEY` is **at least 32 characters** on the orchestrator and admin console, and **at least 16 characters** on the data loaders, and that it is not a sample value copied from documentation or example files. Otherwise the service will not start. Keys generated by `generate_credentials.py` already comply. If you need a new key, generate one with `python -c "import secrets; print(secrets.token_hex(32))"` and set the same value on the orchestrator and admin console. Changing the key invalidates existing tokens: users sign in again and clients request new tokens.
+
+**New features:**
+
+- **Rules applied automatically** — rules from the Rules library are now applied automatically to every Copilot request.
+- **OpenAI-compatible AI servers** — the PDF data loaders and the orchestrator support OpenAI-compatible servers (for example vLLM, LM Studio, Ollama, or an LLM gateway) through `OPENAI_API_BASE`. See **[§4](#4-step-2--choose-and-configure-your-llm-provider)** and the [Data Loaders Installation Guide §5](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md#5-step-2--choose-your-llm-and-embedding-provider).
+- **Azure AI Search loader** — supports other embedding models and sizes new indexes to match the model (`EMBEDDING_DIMENSIONS`). See the [Data Loaders Installation Guide](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md).
+- **One active tunnel per user** — each Spotfire user is limited to one active tunnel. See **[§11 → WebSocket tunnel](#websocket-tunnel--developer-agent-containers-231)**.
+
+**Security fixes:**
+
+- **eMudhra certificate authority compromise** — the orchestrator and all published data loader images now trust an updated certificate list that excludes the compromised eMudhra certificates. If you applied the interim mitigation from the knowledge-base article, switch to the 2.3.8 images and remove the patched images or the extra volume mounts and environment variables you added.
+- **`SECRET_KEY` validation** — the orchestrator and admin console refuse to start with an empty, short (under 32 characters), or published sample `SECRET_KEY`.
+- **Data loader token signing** — fixed data loaders signing login tokens with an empty key. Data loaders now require a `SECRET_KEY` of at least 16 characters.
+
+**Bug fixes:**
+
+- **Swagger Authorize** — fixed the **Authorize** button in the Swagger UI for client ID/secret login.
+
+**Upgrade procedure:**
+
+1. Check `SECRET_KEY` as described in the upgrade note above.
+2. For Docker Compose deployments, change `IMAGE_TAG` to `2.3.8` and restart:
+
+   ```bash
+   IMAGE_TAG=2.3.8 docker compose up -d
+   ```
+
+3. For Kubernetes, AWS ECS, Azure Container Apps, GCP Cloud Run, and other manifest-driven deployments, update the image tag to `:2.3.8` for the orchestrator and admin-console workloads and for any data loaders you run, then apply.
+
 ### What's new in 2.3.5
 
 Released 29 June 2026. **Backwards-compatible drop-in replacement for 2.3.0–2.3.4** — no breaking changes, no required migrations, and no new mandatory environment variables.
@@ -2565,6 +2626,77 @@ Released May 2026. Backwards-compatible with 2.3.0 deployments.
 - **Milvus auto-detect metric type** — Milvus retriever now auto-detects `IP` vs `L2` from the collection index instead of hard-coding `L2`.
 
 Full env-var details are in **[§11](#11-environment-variable-reference) Environment Variable Reference** — 2.3.1-only variables are marked **(2.3.1)**.
+
+---
+
+## Appendix E — LLM Rate Limits and TPM Best Practices
+
+Spotfire Copilot does not host language models. Every answer, embedding, and summary is produced by the model deployments you configure (see **[§4](#4-step-2--choose-and-configure-your-llm-provider)** and **[§11 → Model category overrides](#model-category-overrides)**). Your LLM provider limits how fast those deployments can be used. This appendix explains how Copilot consumes that capacity, what to consider when configuring deployments, and how to troubleshoot rate-limit errors.
+
+> **No minimum TPM or RPM is prescribed.** Spotfire has not published validated performance benchmarks for Copilot. Size capacity from your provider's quota documentation and your own observed usage.
+
+### E.1 TPM, RPM, and Copilot token budgets
+
+| Limit | Set by | Controls | When exceeded, the orchestrator returns |
+|---|---|---|---|
+| **Tokens per minute (TPM)** | Your LLM provider, per deployment or quota | How many tokens a deployment accepts per minute | HTTP **429**, `error_type: rate_limit` (with `retry_after` when the provider supplies one) |
+| **Requests per minute (RPM)** | Your LLM provider | How many calls a deployment accepts per minute, regardless of size | HTTP **429**, `error_type: rate_limit` |
+| **Provider usage quota** | Your LLM provider account or subscription | Total usage allowed on the account | HTTP **503**, `error_type: quota_exceeded` |
+| **Copilot monthly token budget** | Your Copilot administrator, per OAuth2 client | Total tokens a client may consume in a calendar month | HTTP **422**, `error_type: token_budget_exceeded` — rejected before any model call |
+
+TPM and RPM limit **throughput** — how much traffic a deployment accepts at once. A token budget limits **monthly consumption**. They are independent: a client can be well within its budget and still receive 429 errors in a busy minute, and raising provider TPM does not lift an exhausted budget. Budgets are described in the [Admin Console Guide §5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets).
+
+The orchestrator does not queue or throttle requests, and does not add its own retry logic for chat requests. A provider rate-limit error is returned to the Spotfire client, which shows the error type and suggested action in the Copilot panel (see [E.5](#e5-troubleshooting-rate-limit-errors)).
+
+### E.2 What drives Copilot's LLM usage
+
+| Factor | Configured in | Effect |
+|---|---|---|
+| **RAG Top K** | Spotfire preferences **RAG Top K** (default `5`) and **RAG Min Relevance Score** ([Frontend Setup → RAG Settings](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md#rag-retrieval-augmented-generation-settings)) | For each selected knowledge base, the Spotfire client retrieves up to *Top K* chunks, drops chunks below the minimum relevance score, and caps the retrieved context at about 12,000 characters per message. Higher values mean more tokens per knowledge-base question. (`DEFAULT_RAG_TOPK` in [§11](#knowledge-base--rag-variables) applies only to callers that send no value.) |
+| **Message History Size** | Spotfire preference **Message History Size** ([Frontend Setup → Chat & History Settings](../Spotfire%20Copilot%20Client%20Extension/Spotfire%20Copilot%20-%20Installation%20Guide%20-%20Frontend%20Setup.md#chat--history-settings)) | Previous exchanges are re-sent with each request. Progressive summarisation compresses long conversations ([§11 → Summarization variables](#summarization-variables)). |
+| **Strip RAG Context from History** | Spotfire preference (default enabled) | When disabled, retrieved chunks from earlier turns are re-sent with later requests. |
+| **Intent detection** | — | When a user types a free-text question, the Spotfire client first sends a short classification request to the `fast` model to choose the feature. Welcome buttons and intents chosen from the `/` menu skip this call. Each typed question therefore uses at least two requests. |
+| **Multi-step operations** | — | Some features call the model more than once per user question. For example, *Specific Data Question* generates SQL, Spotfire runs it, and the result is returned for a further model call; failed SQL is regenerated up to five times. A tool-using answer can take up to 15 round trips before Copilot pauses and asks the user whether to continue. Each step is a separate request and counts toward both TPM and RPM. |
+| **Image processing** | — | *Explain Visualization* and *Explain Page* send a screenshot to the model mapped to the `vision` category. Providers convert images to tokens using their own rules. |
+| **Document ingestion** | Data Loader ([Data Loaders Guide §5](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md#5-step-2--choose-your-llm-and-embedding-provider)) | Loading documents sends all extracted text to the embedding model. The Advanced (Unstructured) loader image also sends each extracted image to the loader's configured LLM to generate a searchable summary. Large loads produce sustained bursts of requests. |
+| **Background tasks** | [§11 → Summarization variables](#summarization-variables); [§10 → Knowledge base index enrichment](#knowledge-base-index-enrichment) | Thread titles, conversation summaries, and nightly index enrichment make additional calls to the model mapped to the `fast` category. |
+
+The Admin Console's Token Usage tab shows only part of this usage — see [Admin Console Guide §5.2 → What the Token Usage tab does not include](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#what-the-token-usage-tab-does-not-include).
+
+### E.3 Which models and deployments share a quota
+
+Copilot can use several models and deployments. Whether they share a rate limit depends on your configuration and on your provider's quota rules.
+
+- **Model categories.** The orchestrator serves each request with the model mapped to its category — `fast`, `large`, `vision`, `code`, or `reasoning` — and each category can point to a different model or deployment ([§11 → Model category overrides](#model-category-overrides)). The Spotfire client requests `fast` for intent detection and short helper tasks, `vision` for screenshot-based features, and leaves all other requests to the orchestrator default, `large`. Categories mapped to the same deployment share its limits. Separate deployments may still share a subscription-, project-, or region-level quota, depending on the provider.
+- **Secondary model.** `SECONDARY_MODEL_PLUGIN_ENTRY_POINT` is required at startup but supports a deprecated internal feature and is not used by Spotfire clients at runtime ([§4](#4-step-2--choose-and-configure-your-llm-provider)). It adds no load; set it to the same value as `MODEL_PLUGIN_ENTRY_POINT`.
+- **Embeddings.** The orchestrator embeds each knowledge-base question with the model set by `EMBEDDINGS_PLUGIN_ENTRY_POINT`. The Data Loader has its own embedding configuration. If both use the same embedding deployment, document loads and live questions compete for the same limit.
+- **Domain Agents (Agent Registry).** Agents do not hold LLM credentials. The Agent Registry relays their LLM and knowledge-base calls to the orchestrator, which forwards them to its configured models ([Agent Registry Installation Guide](../Spotfire%20Copilot%20Agent%20Registry%20-%20Domain%20Agents/Spotfire%20Copilot%20-%20Agent%20Registry%20Installation%20Guide.md)). Domain Agent traffic therefore uses the orchestrator's deployments and quotas.
+- **Ecosystem Agents (Agent Server).** These agents call models through the agent server's own model configuration — directly or through an LLM gateway ([LLM Gateway Guide](../Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agent-server-deployment/Spotfire%20Copilot%20-%20LLM%20Gateway%20%28Model%20Access%20via%20agentgateway%29%20Guide.md)). They use whichever deployment that configuration points to, which may or may not be shared with the orchestrator.
+- **Other applications.** Any other workload using the same deployment, API key, or regional quota draws on the same limits.
+
+<!-- REVIEW: confirm whether Domain Agent calls relayed through the orchestrator appear in Token Usage and count against the Agent Registry OAuth2 client's budget. -->
+
+### E.4 Best practices
+
+1. **Verify provider quotas for every deployment Copilot uses** — the models mapped to `fast`, `large`, and `vision`, the orchestrator and Data Loader embedding models, and any Ecosystem Agent models. Check per-deployment limits and any shared subscription, project, or regional quota in your provider's documentation. The Spotfire client does not set a maximum output length on its requests, so the model's default output limit applies; if your provider counts requested output tokens toward TPM, take this into account.
+2. **Monitor representative usage.** During pilot and rollout, review your provider's monitoring for requests, tokens, and throttled (429) requests at busy times. Use the Admin Console Token Usage tab ([§5.2](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#52-token-usage-tab)) to see which users and OAuth2 clients drive Copilot's share.
+3. **Adjust capacity based on observed throttling.** If users see 429 errors at busy times, raise the affected deployment's limits, request a quota increase, or move a heavily used category or workload to its own deployment. After a change, confirm that throttled requests have dropped over a comparable busy period.
+4. **Isolate document ingestion.** Run large loads outside business hours, or give the Data Loader its own embedding deployment, so loads do not throttle live knowledge-base questions.
+5. **Tune Copilot settings before adding capacity.** Lower **RAG Top K** or **Message History Size** for user groups that do not need high values, and keep **Strip RAG Context from History** enabled.
+6. **Control monthly spend separately.** Use token budgets ([§5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets)) to cap monthly consumption per OAuth2 client; they do not protect against bursts.
+
+### E.5 Troubleshooting rate-limit errors
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| HTTP 429 `rate_limit` at busy times. The Copilot panel shows *"I encountered an issue while processing your request"* with **Type: rate_limit** and *"Rate limit exceeded. Please wait N seconds before retrying"* | A model deployment reached its TPM or RPM limit | Wait for the `retry_after` period. Use provider monitoring to identify the throttled deployment, then raise its limits or move a category to a separate deployment ([E.3](#e3-which-models-and-deployments-share-a-quota), [E.4](#e4-best-practices)). |
+| HTTP 429 on knowledge-base questions while a document load is running | The Data Loader and the orchestrator share an embedding deployment | Load off-peak, or use a separate embedding deployment for the Data Loader. |
+| Document load reports failed files, with rate-limit errors in the Data Loader logs | The load exceeded the embedding deployment's limits (or, for the Unstructured loader, the LLM deployment's). The loader retries rate-limit errors with backoff before giving up on a file. | Raise limits or load during quieter periods. Then reload only the failed documents with `drop_old=false`, or reload the whole collection with `drop_old=true` ([Data Loaders Guide §9](Spotfire%20Copilot%20-%20Data%20Loaders%20Installation%20Guide.md#9-step-6--load-documents-via-the-api)). |
+| HTTP 429 although per-minute usage looks below the limit | The provider enforces limits over shorter intervals, an RPM limit was reached, a shared subscription or regional quota applies, or another application uses the same deployment | Review the provider's quota rules and other consumers of the deployment. |
+| HTTP 429 in one long conversation only | A large prompt from accumulated history and retrieved context | Start a new conversation; keep **Strip RAG Context from History** enabled. |
+| HTTP 429 when using an Ecosystem Agent | The agent server's model deployment or LLM gateway reached its limit | Check the agent server's model configuration and gateway limits ([LLM Gateway Guide](../Spotfire%20Copilot%20Agent%20Registry%20-%20Ecosystem%20Agents/agent-server-deployment/Spotfire%20Copilot%20-%20LLM%20Gateway%20%28Model%20Access%20via%20agentgateway%29%20Guide.md)). |
+| HTTP 503 `quota_exceeded` | The provider account's usage or billing quota is exhausted | Check your provider subscription and billing. |
+| HTTP 422 `token_budget_exceeded`. The Copilot panel shows **Monthly token budget exhausted** | The OAuth2 client's Copilot monthly token budget is used up — **not** a provider limit | Raise or extend the budget ([Admin Console Guide §5.3](Spotfire%20Copilot%20-%20Admin%20Console%20Guide.md#53-token-budgets)). Increasing provider TPM does not help. |
 
 ---
 

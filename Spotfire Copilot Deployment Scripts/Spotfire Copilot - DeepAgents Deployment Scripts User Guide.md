@@ -125,7 +125,7 @@ Non-interactive examples that pre-seed some choices:
 
 ```bash
 # Compose, local Postgres/Redis, a fixed image tag
-./spotfire-copilot-ecosystem-deploy.sh --compose --local --image-tag 1.0.0
+./spotfire-copilot-ecosystem-deploy.sh --compose --local --image-tag 1.0.9
 
 # Kubernetes values bundle in a custom directory
 ./spotfire-copilot-ecosystem-deploy.sh --kubernetes --dir /opt/deepagents-oss --namespace deepagents
@@ -133,7 +133,7 @@ Non-interactive examples that pre-seed some choices:
 
 ```powershell
 # Compose, external Postgres/Redis
-.\spotfire-copilot-ecosystem-deploy.ps1 -Compose -External -ImageTag 1.0.0
+.\spotfire-copilot-ecosystem-deploy.ps1 -Compose -External -ImageTag 1.0.9
 
 # Kubernetes values bundle
 .\spotfire-copilot-ecosystem-deploy.ps1 -Kubernetes -Dir C:\opt\deepagents-oss -Namespace deepagents
@@ -346,11 +346,11 @@ re-validates the Compose file, and prints restart commands. It requires the targ
 directory to already contain `.env` and `docker-compose.yml`.
 
 ```bash
-./spotfire-copilot-ecosystem-deploy.sh --upgrade --image-tag 1.0.1 --dir ./deepagents-oss-deploy
+./spotfire-copilot-ecosystem-deploy.sh --upgrade --image-tag 1.0.9 --dir ./deepagents-oss-deploy
 ```
 
 ```powershell
-.\spotfire-copilot-ecosystem-deploy.ps1 -Upgrade -ImageTag 1.0.1 -Dir .\deepagents-oss-deploy
+.\spotfire-copilot-ecosystem-deploy.ps1 -Upgrade -ImageTag 1.0.9 -Dir .\deepagents-oss-deploy
 ```
 
 Then apply it:
